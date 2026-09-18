@@ -20,6 +20,10 @@ concurrency:
 
 jobs:
 
+  # ========================================================
+  # BUILD
+  # ========================================================
+
   build:
 
     runs-on: ubuntu-latest
@@ -236,22 +240,35 @@ jobs:
       - name: Assemble Pages site
         run: |
 
+          echo "=========================================="
+          echo "BUILDING GITHUB PAGES SITE"
+          echo "=========================================="
+
+          # Start completely fresh.
+          rm -rf site
+
           mkdir -p site/outputs
 
-          cp index.html \
-             site/index.html
+          # --------------------------------------------------
+          # Main HTML
+          # --------------------------------------------------
+
+          echo "Copying index.html..."
+
+          cp index.html site/index.html
+
+
+          # --------------------------------------------------
+          # Images
+          # --------------------------------------------------
+
+          echo "Copying images..."
 
           cp outputs/mrms_current.png \
              site/outputs/mrms_current.png
 
-          cp outputs/mrms_current.json \
-             site/outputs/mrms_current.json
-
           cp outputs/mrms_diagnostics.png \
              site/outputs/mrms_diagnostics.png
-
-          cp outputs/mrms_diagnostics.json \
-             site/outputs/mrms_diagnostics.json
 
           cp outputs/mrms_vertical_dualpol.png \
              site/outputs/mrms_vertical_dualpol.png
@@ -259,8 +276,68 @@ jobs:
           cp outputs/winter_mask_diagnostics.png \
              site/outputs/winter_mask_diagnostics.png
 
+
+          # --------------------------------------------------
+          # JSON
+          # --------------------------------------------------
+
+          echo "Copying JSON..."
+
+          cp outputs/mrms_current.json \
+             site/outputs/mrms_current.json
+
+          cp outputs/mrms_diagnostics.json \
+             site/outputs/mrms_diagnostics.json
+
           cp outputs/winter_mask_diagnostics.json \
              site/outputs/winter_mask_diagnostics.json
+
+
+          # ==================================================
+          # VERIFY ACTUAL PAGES DIRECTORY
+          # ==================================================
+
+          echo ""
+          echo "=========================================="
+          echo "FINAL PAGES DIRECTORY"
+          echo "=========================================="
+
+          find site -type f -printf '%p (%s bytes)\n' | sort
+
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFYING PAGES IMAGES"
+          echo "=========================================="
+
+          pages_files=(
+            "site/index.html"
+            "site/outputs/mrms_current.png"
+            "site/outputs/mrms_diagnostics.png"
+            "site/outputs/mrms_vertical_dualpol.png"
+            "site/outputs/winter_mask_diagnostics.png"
+            "site/outputs/mrms_current.json"
+            "site/outputs/mrms_diagnostics.json"
+            "site/outputs/winter_mask_diagnostics.json"
+          )
+
+          for file in "${pages_files[@]}"; do
+
+            if [ ! -f "$file" ]; then
+              echo "ERROR: Pages artifact is missing:"
+              echo "       $file"
+              exit 1
+            fi
+
+            echo "OK: $file"
+
+          done
+
+
+          echo ""
+          echo "=========================================="
+          echo "PAGES SITE READY"
+          echo "=========================================="
 
 
       # ======================================================
