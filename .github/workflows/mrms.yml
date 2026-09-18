@@ -87,6 +87,9 @@ jobs:
         working-directory: src
         run: python build_vertical_dualpol_diagnostic.py
 
+      - name: Inspect winter precipitation inputs
+        working-directory: src
+        run: python build_winter_mask.py
 
       # ------------------------------------------------------
       # Normalize vertical dual-pol output filename
@@ -146,6 +149,8 @@ jobs:
           cp outputs/mrms_vertical_dualpol.png \
              site/outputs/mrms_vertical_dualpol.png
 
+          cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
+          cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
 
       # ------------------------------------------------------
       # Upload GitHub Pages artifact
