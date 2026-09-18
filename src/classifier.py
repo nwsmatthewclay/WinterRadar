@@ -96,14 +96,25 @@ def classify_initial(
     )
 
     # MRMS flag 3 = snow.
+
+    valid_precip_flag = np.isfinite(
+        precip_flag
+    )
+
+    precip_flag_safe = np.where(
+        valid_precip_flag,
+        precip_flag,
+        -999,
+    ).astype(np.int16)
+
     snow_flag = (
-        np.isfinite(precip_flag)
+        valid_precip_flag
         & (
-            precip_flag.astype(np.int16)
+            precip_flag_safe
             == PRECIPFLAG_SNOW
         )
     )
-
+    
     has_bb = (
         np.isfinite(bb_top_m)
         & np.isfinite(bb_bottom_m)
