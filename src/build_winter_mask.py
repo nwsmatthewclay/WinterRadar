@@ -317,7 +317,8 @@ def load_vertical_dualpol():
 
             rho_data, rho_units, _ = load_grib(rho_path)
 
-            rho_data = clean_mrms(rho_data, (-999, -99))\n            rhohv[level] = rho_data
+            rho_data = clean_mrms(rho_data, (-999, -99))
+            rhohv[level] = rho_data
 
             print_stats(
                 f"RHOHV {level:.2f} km",
@@ -339,7 +340,8 @@ def load_vertical_dualpol():
 
             zdr_data, zdr_units, _ = load_grib(zdr_path)
 
-            zdr_data = clean_mrms(zdr_data, (-999, -99))\n            zdr[level] = zdr_data
+            zdr_data = clean_mrms(zdr_data, (-999, -99))
+            zdr[level] = zdr_data
 
             print_stats(
                 f"ZDR {level:.2f} km",
