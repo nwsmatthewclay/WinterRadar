@@ -3,3 +3,4 @@ requests>=2.32
 Pillow>=10.4
 xarray>=2024.10
 cfgrib>=0.9.15
+matplotlib>=3.9
