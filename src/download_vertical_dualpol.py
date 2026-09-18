@@ -29,21 +29,18 @@ SESSION.headers.update(
     }
 )
 
-LEVEL_PATTERN = re.compile(
-    r"_(\d+\.\d{2})_(\d{8}-\d{6})\.grib2\.gz"
-)
-
 
 def discover_files(product: str) -> list[tuple[float, datetime, str]]:
     """
-    Find recent historical MRMS files for a product.
+    Find timestamped MRMS 3-D files for a product.
 
-    Returns:
-        (level_km, timestamp, filename)
+    Example:
+        MRMS_MergedRhoHV_00.50_20260918-184541.grib2.gz
     """
 
-    url = f"{MRMS_BASE}/{product}/?C=M;O=D"
+    url = f"{MRMS_BASE}/{product}/"
 
+    print("")
     print(f"Scanning MRMS directory:")
     print(f"  {url}")
 
@@ -56,15 +53,23 @@ def discover_files(product: str) -> list[tuple[float, datetime, str]]:
 
     page = html.unescape(response.text)
 
+    # IMPORTANT:
+    # Require the full MRMS product name so we don't accidentally
+    # capture only "_00.50_..." from the middle of the filename.
+    pattern = re.compile(
+        rf"MRMS_{re.escape(product)}_"
+        rf"(\d+\.\d{{2}})_"
+        rf"(\d{{8}}-\d{{6}})\.grib2\.gz"
+    )
+
     results = []
 
-    for match in LEVEL_PATTERN.finditer(page):
+    for match in pattern.finditer(page):
 
-        level = float(match.group(1))
-        timestamp_string = match.group(2)
+        level_km = float(match.group(1))
 
         timestamp = datetime.strptime(
-            timestamp_string,
+            match.group(2),
             "%Y%m%d-%H%M%S",
         )
 
@@ -72,13 +77,25 @@ def discover_files(product: str) -> list[tuple[float, datetime, str]]:
 
         results.append(
             (
-                level,
+                level_km,
                 timestamp,
                 filename,
             )
         )
 
-    return results
+    # Remove duplicates while preserving the newest instance.
+    unique = {}
+
+    for level, timestamp, filename in results:
+        key = (level, timestamp)
+
+        unique[key] = (
+            level,
+            timestamp,
+            filename,
+        )
+
+    return list(unique.values())
 
 
 def find_latest_level_file(
@@ -100,7 +117,7 @@ def find_latest_level_file(
 
     if not matches:
         raise RuntimeError(
-            f"No {product} file found for "
+            f"No MRMS {product} file found for "
             f"{target_level:.2f} km"
         )
 
@@ -116,7 +133,6 @@ def normalized_path(
     product: str,
     level_km: float,
 ) -> Path:
-    """Return our stable local filename."""
 
     directory = (
         DATA_DIR
@@ -131,7 +147,10 @@ def normalized_path(
 
     return (
         directory
-        / f"MRMS_{product}_{level_km:.2f}.latest.grib2"
+        / (
+            f"MRMS_{product}_"
+            f"{level_km:.2f}.latest.grib2"
+        )
     )
 
 
@@ -139,8 +158,7 @@ def write_timestamp(
     product: str,
     level_km: float,
     timestamp: datetime,
-):
-    """Record the source timestamp."""
+) -> None:
 
     directory = (
         DATA_DIR
@@ -154,7 +172,9 @@ def write_timestamp(
     )
 
     timestamp_path.write_text(
-        timestamp.isoformat(),
+        timestamp.strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
         encoding="utf-8",
     )
 
@@ -162,14 +182,19 @@ def write_timestamp(
 def download_level(
     product: str,
     level_km: float,
-):
+) -> None:
+
     print("")
     print(
         f"{product} @ {level_km:.2f} km"
     )
     print("-" * 60)
 
-    _, timestamp, filename = find_latest_level_file(
+    (
+        found_level,
+        timestamp,
+        filename,
+    ) = find_latest_level_file(
         product,
         level_km,
     )
@@ -180,12 +205,25 @@ def download_level(
 
     destination = normalized_path(
         product,
-        level_km,
+        found_level,
     )
 
-    print(f"Source time: {timestamp} UTC")
-    print(f"Source file: {filename}")
-    print(f"Destination: {destination}")
+    print(
+        f"Source level: {found_level:.2f} km"
+    )
+
+    print(
+        f"Source time:  "
+        f"{timestamp.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+    )
+
+    print(
+        f"Source file:  {filename}"
+    )
+
+    print(
+        f"Destination:  {destination}"
+    )
 
     download_gzip(
         url,
@@ -194,12 +232,13 @@ def download_level(
 
     write_timestamp(
         product,
-        level_km,
+        found_level,
         timestamp,
     )
 
 
-def main():
+def main() -> None:
+
     print("")
     print("=" * 72)
     print("MRMS VERTICAL DUAL-POL DOWNLOAD")
@@ -207,7 +246,7 @@ def main():
 
     total = 0
 
-    for name, product in VERTICAL_DUALPOL_PRODUCTS.items():
+    for _, product in VERTICAL_DUALPOL_PRODUCTS.items():
 
         for level_km in VERTICAL_DUALPOL_LEVELS_KM:
 
