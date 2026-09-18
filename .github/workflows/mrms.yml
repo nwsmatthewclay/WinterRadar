@@ -2,71 +2,108 @@ name: MRMS Winter Radar
 
 on:
   workflow_dispatch:
+
   schedule:
     - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
+
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+
 concurrency:
   group: mrms-radar
   cancel-in-progress: true
 
+
 jobs:
+
   build:
+
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout
         uses: actions/checkout@v6
+
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libeccodes-dev libeccodes-tools
+          sudo apt-get install -y \
+            libeccodes-dev \
+            libeccodes-tools
+
 
       - name: Set up Python
         uses: actions/setup-python@v5
+
         with:
           python-version: '3.12'
           cache: 'pip'
 
+
       - name: Install Python packages
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+
+      # ------------------------------------------------------
+      # Standard MRMS processing
+      # ------------------------------------------------------
 
       - name: Process latest MRMS data
         working-directory: src
         run: python main.py
 
+
+      # ------------------------------------------------------
+      # Vertical dual-pol processing
+      # ------------------------------------------------------
+
       - name: Download vertical dual-pol MRMS
         working-directory: src
         run: python download_vertical_dualpol.py
+
 
       - name: Build vertical dual-pol diagnostic
         working-directory: src
         run: python build_vertical_dualpol_diagnostic.py
 
+
+      # ------------------------------------------------------
+      # Diagnostics
+      # ------------------------------------------------------
+
       - name: Inspect MRMS fields
         working-directory: src
         run: python inspect_mrms.py
+
 
       - name: Build MRMS diagnostic image
         working-directory: src
         run: python build_mrms_diagnostics.py
 
-      - name: Inspect MRMS fields
-        working-directory: src
-        run: python inspect_mrms.py
+
+      # ------------------------------------------------------
+      # Build GitHub Pages site
+      # ------------------------------------------------------
 
       - name: Assemble Pages site
         run: |
+
           mkdir -p site/outputs
 
-          cp index.html site/index.html
+          cp index.html \
+             site/index.html
 
           cp outputs/mrms_current.png \
              site/outputs/mrms_current.png
@@ -83,18 +120,30 @@ jobs:
           cp outputs/mrms_vertical_dualpol.png \
              site/outputs/mrms_vertical_dualpol.png
 
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
+
         with:
           path: 'site'
 
+
   deploy:
+
     needs: build
+
     runs-on: ubuntu-latest
+
     environment:
+
       name: github-pages
+
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
+
       - name: Deploy to GitHub Pages
+
         id: deployment
+
         uses: actions/deploy-pages@v5
