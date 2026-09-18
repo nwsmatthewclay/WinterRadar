@@ -5,12 +5,16 @@ import sys
 
 import numpy as np
 
+
 ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(
     0,
-    str(Path(__file__).resolve().parent),
+    str(
+        Path(__file__).resolve().parent
+    ),
 )
+
 
 from classifier import classify_initial
 from config import (
@@ -28,22 +32,44 @@ from render import (
 
 
 def load(name: str):
+
     product = PRODUCTS[name]
 
-    return get_values(
+    path = (
         DATA_DIR
-        / f"MRMS_{product}.latest.grib2",
+        / f"MRMS_{product}.latest.grib2"
+    )
+
+    print(
+        f"Loading {name}: {path}"
+    )
+
+    return get_values(
+        path,
         product=product,
     )
 
 
-def main() -> None:
+def main():
+
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
+    print(
+        "Downloading latest MRMS fields..."
+    )
+
     download_all()
+
+    print(
+        "Loading MRMS fields..."
+    )
+
+    # ---------------------------------------------------------------
+    # Core radar / precipitation fields
+    # ---------------------------------------------------------------
 
     ref, lats, lons = load(
         "reflectivity"
@@ -69,18 +95,25 @@ def main() -> None:
         "wetbulb"
     )
 
-    frz, _, _ = load(
+    freezing_level, _, _ = load(
         "freezing_level"
     )
 
-    # Download/read PrecipRate now so it is part of the
-    # synchronized science dataset. The classifier will use it
-    # in a later iteration.
+    # Precipitation rate is retained in the pipeline for future
+    # accumulation/intensity work.
     precip_rate, _, _ = load(
         "precip_rate"
     )
 
     del precip_rate
+
+    # ---------------------------------------------------------------
+    # Classification
+    # ---------------------------------------------------------------
+
+    print(
+        "Classifying precipitation phase..."
+    )
 
     result = classify_initial(
         reflectivity=ref,
@@ -88,25 +121,52 @@ def main() -> None:
         bb_top_m=bb_top,
         bb_bottom_m=bb_bottom,
         wetbulb_c=wetbulb,
-        freezing_level_m=frz,
+        freezing_level_m=freezing_level,
         rqi=rqi,
     )
+
+    # ---------------------------------------------------------------
+    # Winter-only transparent overlay
+    # ---------------------------------------------------------------
 
     rgba = result_to_rgba(
         result
     )
 
+    current_png = (
+        OUTPUT_DIR
+        / "mrms_current.png"
+    )
+
+    winter_png = (
+        OUTPUT_DIR
+        / "winter_phase_mask.png"
+    )
+
+    metadata_json = (
+        OUTPUT_DIR
+        / "mrms_current.json"
+    )
+
     save_rgba_png(
         rgba,
-        OUTPUT_DIR
-        / "mrms_current.png",
+        current_png,
+    )
+
+    # Separate copy with an explicit winter-mask filename.
+    save_rgba_png(
+        rgba,
+        winter_png,
     )
 
     write_metadata(
         result,
-        OUTPUT_DIR
-        / "mrms_current.json",
+        metadata_json,
     )
+
+    # ---------------------------------------------------------------
+    # Save grid coordinates
+    # ---------------------------------------------------------------
 
     np.save(
         OUTPUT_DIR / "latitude.npy",
@@ -118,10 +178,72 @@ def main() -> None:
         lons,
     )
 
+    # ---------------------------------------------------------------
+    # Console summary
+    # ---------------------------------------------------------------
+
+    unique, counts = np.unique(
+        result.phase,
+        return_counts=True,
+    )
+
+    names = {
+        0: "CLEAR",
+        1: "RAIN",
+        2: "SNOW",
+        3: "SLEET",
+        4: "FZRA",
+        5: "MIXED",
+        9: "UNKNOWN",
+    }
+
+    print("")
     print(
-        "Wrote outputs/"
-        "mrms_current.png and "
-        "mrms_current.json"
+        "========================================"
+    )
+    print(
+        " MRMS WINTER PHASE SUMMARY"
+    )
+    print(
+        "========================================"
+    )
+
+    for phase, count in zip(
+        unique,
+        counts,
+    ):
+
+        name = names.get(
+            int(phase),
+            f"PHASE_{int(phase)}",
+        )
+
+        pct = (
+            100.0
+            * float(count)
+            / float(result.phase.size)
+        )
+
+        print(
+            f"{name:8s}: "
+            f"{int(count):10d} "
+            f"({pct:6.2f}%)"
+        )
+
+    print(
+        "========================================"
+    )
+
+    print(
+        f"Wrote {current_png}"
+    )
+
+    print(
+        f"Wrote {winter_png}"
+    )
+
+    print(
+        f"Wrote {metadata_json}"
     )
 
 
