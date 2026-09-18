@@ -42,6 +42,10 @@ jobs:
         working-directory: src
         run: python main.py
 
+      - name: Download vertical dual-pol MRMS
+        working-directory: src
+        run: python download_vertical_dualpol.py
+
       - name: Inspect MRMS fields
         working-directory: src
         run: python inspect_mrms.py
