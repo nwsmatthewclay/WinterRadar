@@ -12,7 +12,6 @@ class ClassificationResult:
     intensity: np.ndarray
 
 
-# Phase codes used in the raster and JSON output.
 CLEAR = 0
 RAIN = 1
 SNOW = 2
@@ -22,14 +21,29 @@ MIXED = 5
 UNKNOWN = 9
 
 
+# Current MRMS PrecipFlag definitions.
+PRECIPFLAG_NO_PRECIP = 0
+PRECIPFLAG_WARM_STRATIFORM = 1
+PRECIPFLAG_SNOW = 3
+PRECIPFLAG_CONVECTION = 6
+PRECIPFLAG_HAIL = 7
+PRECIPFLAG_COOL_STRATIFORM = 10
+PRECIPFLAG_TROPICAL_STRATIFORM = 91
+PRECIPFLAG_TROPICAL_CONVECTION = 96
+
+
 def rain_intensity_dbz(dbz: np.ndarray) -> np.ndarray:
-    """Rain intensity class: 0 none, then 1-5 increasing intensity."""
+    """Rain intensity class: 0 none, 1-5 increasing."""
     out = np.zeros(dbz.shape, dtype=np.uint8)
-    out[(dbz >= 15) & (dbz < 25)] = 1
-    out[(dbz >= 25) & (dbz < 35)] = 2
-    out[(dbz >= 35) & (dbz < 45)] = 3
-    out[(dbz >= 45) & (dbz < 55)] = 4
-    out[dbz >= 55] = 5
+
+    valid = np.isfinite(dbz)
+
+    out[valid & (dbz >= 15) & (dbz < 25)] = 1
+    out[valid & (dbz >= 25) & (dbz < 35)] = 2
+    out[valid & (dbz >= 35) & (dbz < 45)] = 3
+    out[valid & (dbz >= 45) & (dbz < 55)] = 4
+    out[valid & (dbz >= 55)] = 5
+
     return out
 
 
@@ -42,59 +56,118 @@ def classify_initial(
     freezing_level_m: np.ndarray,
     rqi: np.ndarray,
 ) -> ClassificationResult:
-    """Initial radar-assisted winter classifier.
-
-    This is deliberately conservative. It does not claim to replace a full
-    vertical thermodynamic precipitation-type algorithm yet.
     """
-    phase = np.full(reflectivity.shape, CLEAR, dtype=np.uint8)
-    confidence = np.zeros(reflectivity.shape, dtype=np.float32)
+    Clean first-pass radar-assisted classifier.
 
-    precip = reflectivity >= 10
+    This does NOT yet distinguish sleet from freezing rain.
+    That requires the vertical thermodynamic profile that we will
+    add in the next science stage.
+    """
+    phase = np.full(
+        reflectivity.shape,
+        CLEAR,
+        dtype=np.uint8,
+    )
+
+    confidence = np.zeros(
+        reflectivity.shape,
+        dtype=np.float32,
+    )
+
+    valid_ref = np.isfinite(reflectivity)
+
+    precip = (
+        valid_ref
+        & (reflectivity >= 10.0)
+    )
+
     phase[precip] = RAIN
 
-    valid_wb = np.isfinite(wetbulb_c) & (wetbulb_c > -90)
-    cold_surface = valid_wb & (wetbulb_c <= 0.0)
-    warm_surface = valid_wb & (wetbulb_c > 0.5)
+    valid_wb = np.isfinite(wetbulb_c)
 
-    # MRMS PrecipFlag contains broad surface-precipitation context. We treat
-    # its snow flag as a strong prior, but not as the final surface-phase answer.
-    snow_flag = np.isin(precip_flag.astype(np.int16), [4, 5])
+    cold_surface = (
+        valid_wb
+        & (wetbulb_c <= 0.0)
+    )
 
-    # Bright band presence: positive top/bottom heights are the first proxy for
-    # a melting layer in this prototype.
-    has_bb = (bb_top_m > 0) & (bb_bottom_m > 0) & (bb_top_m >= bb_bottom_m)
-    bb_depth = np.where(has_bb, bb_top_m - bb_bottom_m, 0.0)
+    warm_surface = (
+        valid_wb
+        & (wetbulb_c > 0.5)
+    )
 
-    # Snow: cold surface and snow/limited melting evidence.
-    snow = precip & cold_surface & (snow_flag | ~has_bb)
+    # MRMS flag 3 = snow.
+    snow_flag = (
+        np.isfinite(precip_flag)
+        & (
+            precip_flag.astype(np.int16)
+            == PRECIPFLAG_SNOW
+        )
+    )
+
+    has_bb = (
+        np.isfinite(bb_top_m)
+        & np.isfinite(bb_bottom_m)
+        & (bb_top_m >= 0.0)
+        & (bb_bottom_m >= 0.0)
+        & (bb_top_m >= bb_bottom_m)
+    )
+
+    # Cold surface + explicit snow flag OR no detected melting layer.
+    snow = (
+        precip
+        & cold_surface
+        & (snow_flag | ~has_bb)
+    )
+
     phase[snow] = SNOW
     confidence[snow] = 0.72
 
-    # Shallow-below-zero surface with a detected melting layer: mixed winter
-    # precipitation until a vertical thermal profile is available.
-    mixed = precip & cold_surface & has_bb
+    # Cold surface + melting layer = mixed for now.
+    mixed = (
+        precip
+        & cold_surface
+        & has_bb
+    )
+
     phase[mixed] = MIXED
     confidence[mixed] = 0.55
 
-    # When the surface is warm enough, retain rain even if a melting layer exists.
-    rain = precip & warm_surface
+    # Warm surface = rain.
+    rain = (
+        precip
+        & warm_surface
+    )
+
     phase[rain] = RAIN
     confidence[rain] = 0.70
 
-    # Ice/sleet are deliberately represented as MIXED in this first pass.
-    # The HRRR/RAP profile module will split this using warm/cold layer energy.
-    
-    # RQI reduces confidence where radar coverage is poor.
-    good_rqi = np.clip(np.nan_to_num(rqi, nan=0.0), 0.0, 1.0)
-    confidence *= (0.5 + 0.5 * good_rqi)
+    # Reduce confidence when radar quality is poor.
+    good_rqi = np.clip(
+        np.nan_to_num(rqi, nan=0.0),
+        0.0,
+        1.0,
+    )
 
-    intensity = rain_intensity_dbz(reflectivity)
-    intensity[(phase != RAIN) & (reflectivity < 10)] = 0
+    confidence *= (
+        0.5
+        + 0.5 * good_rqi
+    )
 
-    # Clean obvious non-precipitation/no-coverage pixels.
-    bad = ~precip | (reflectivity <= -10)
+    intensity = rain_intensity_dbz(
+        reflectivity
+    )
+
+    # Winter precip isn't using the rain intensity scale yet.
+    intensity[phase != RAIN] = 0
+
+    bad = ~precip
+
     phase[bad] = CLEAR
     confidence[bad] = 0.0
+    intensity[bad] = 0
 
-    return ClassificationResult(phase, confidence, intensity)
+    return ClassificationResult(
+        phase=phase,
+        confidence=confidence,
+        intensity=intensity,
+    )
