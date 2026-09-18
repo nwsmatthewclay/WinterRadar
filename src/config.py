@@ -11,6 +11,7 @@ MRMS_BASE = "https://mrms.ncep.noaa.gov/2D"
 # Operational MRMS CONUS 2-D fields used by the WinterRadar project.
 PRODUCTS = {
     "reflectivity": "ReflectivityAtLowestAltitude",
+    "reflectivity_0c": "Reflectivity_0C",
     "precip_flag": "PrecipFlag",
     "precip_rate": "PrecipRate",
     "rhohv": "MergedRhoHV",
@@ -95,3 +96,22 @@ def field_info(product: str) -> dict:
             "no_coverage": (),
         },
     )
+# ------------------------------------------------------------
+# Vertical dual-polarization MRMS CAPPIs
+# ------------------------------------------------------------
+
+VERTICAL_DUALPOL_LEVELS_KM = [
+    0.50,
+    1.00,
+    1.50,
+    2.00,
+    2.50,
+    3.00,
+    3.50,
+    4.00,
+]
+
+VERTICAL_DUALPOL_PRODUCTS = {
+    "rhohv": "MergedRhoHV",
+    "zdr": "MergedZdr",
+}
