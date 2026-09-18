@@ -63,7 +63,7 @@ jobs:
       - name: Process latest MRMS data
         working-directory: src
         run: |
-          set -o pipefail
+          mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/main.log
 
       - name: Show main log
