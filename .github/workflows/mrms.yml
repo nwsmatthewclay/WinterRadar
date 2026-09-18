@@ -62,8 +62,15 @@ jobs:
 
       - name: Process latest MRMS data
         working-directory: src
-        run: python main.py
+        run: |
+          set -o pipefail
+          python -u main.py 2>&1 | tee ../outputs/main.log
 
+      - name: Show main log
+        if: always()
+        run: |
+          echo "===== MAIN.PY LOG ====="
+          cat outputs/main.log || true
 
       # ------------------------------------------------------
       # Vertical dual-pol processing
