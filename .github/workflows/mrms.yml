@@ -42,6 +42,10 @@ jobs:
         working-directory: src
         run: python main.py
 
+      - name: Inspect MRMS fields
+        working-directory: src
+        run: python inspect_mrms.py
+
       - name: Assemble Pages site
         run: |
           mkdir -p site/outputs
