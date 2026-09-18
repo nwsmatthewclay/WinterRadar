@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -6,27 +8,90 @@ OUTPUT_DIR = BASE_DIR / "outputs"
 
 MRMS_BASE = "https://mrms.ncep.noaa.gov/2D"
 
+# Operational MRMS CONUS 2-D fields used by the WinterRadar project.
 PRODUCTS = {
     "reflectivity": "ReflectivityAtLowestAltitude",
     "precip_flag": "PrecipFlag",
-
-    # Dual-polarization fields
+    "precip_rate": "PrecipRate",
     "rhohv": "MergedRhoHV",
     "zdr": "MergedZdr",
-
-    # Melting-layer information
     "bb_top": "BrightBandTopHeight",
     "bb_bottom": "BrightBandBottomHeight",
-
-    # Radar quality
     "rqi": "RadarQualityIndex",
-
-    # 2-D environmental fields
     "surface_temp": "Model_SurfaceTemp",
     "wetbulb": "Model_WetBulbTemp",
     "freezing_level": "Model_0degC_Height",
 }
 
-# MRMS grid approximately covers the CONUS on a 0.01-degree grid.
-# We retain the native grid in the first prototype.
+# Product-specific units and MRMS sentinel values.
+FIELD_INFO = {
+    "ReflectivityAtLowestAltitude": {
+        "units": "dBZ",
+        "missing": (-99.0,),
+        "no_coverage": (-999.0,),
+    },
+    "PrecipFlag": {
+        "units": "flag",
+        "missing": (-1.0,),
+        "no_coverage": (-3.0,),
+    },
+    "PrecipRate": {
+        "units": "mm/hr",
+        "missing": (-1.0,),
+        "no_coverage": (-3.0,),
+    },
+    "MergedRhoHV": {
+        "units": "non-dim",
+        "missing": (-99.0,),
+        "no_coverage": (-999.0,),
+    },
+    "MergedZdr": {
+        "units": "dB",
+        "missing": (-99.0,),
+        "no_coverage": (-999.0,),
+    },
+    "BrightBandTopHeight": {
+        "units": "m AGL",
+        "missing": (-1.0,),
+        "no_coverage": (-3.0,),
+    },
+    "BrightBandBottomHeight": {
+        "units": "m AGL",
+        "missing": (-1.0,),
+        "no_coverage": (-3.0,),
+    },
+    "RadarQualityIndex": {
+        "units": "non-dim",
+        "missing": (-1.0,),
+        "no_coverage": (-3.0,),
+    },
+    "Model_SurfaceTemp": {
+        "units": "C",
+        "missing": (-99.0,),
+        "no_coverage": (-999.0,),
+    },
+    "Model_WetBulbTemp": {
+        "units": "C",
+        "missing": (-99.0,),
+        "no_coverage": (-999.0,),
+    },
+    "Model_0degC_Height": {
+        "units": "m MSL",
+        "missing": (-1.0,),
+        "no_coverage": (-3.0,),
+    },
+}
+
 MISSING = -999.0
+
+
+def field_info(product: str) -> dict:
+    """Return metadata and sentinel values for an MRMS product."""
+    return FIELD_INFO.get(
+        product,
+        {
+            "units": "unknown",
+            "missing": (),
+            "no_coverage": (),
+        },
+    )
