@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -15,15 +14,11 @@ OUTPUT_DIR = ROOT / "outputs"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import PRODUCTS, MRMS_BASE  # noqa: E402
+from config import PRODUCTS, MRMS_BASE, field_info
+from read_mrms import clean_mrms_values, get_variable_name
 
-
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
 
 def safe_float(value):
-    """Convert a value to a JSON-safe float."""
     try:
         value = float(value)
     except (TypeError, ValueError):
@@ -47,7 +42,6 @@ def human_size(size_bytes: int) -> str:
 
 
 def open_grib(path: Path):
-    """Open the first GRIB dataset."""
     datasets = cfgrib.open_datasets(
         str(path),
         backend_kwargs={"indexpath": ""},
@@ -59,54 +53,8 @@ def open_grib(path: Path):
     return datasets[0]
 
 
-def get_primary_variable(ds):
-    """Find the meteorological data variable."""
-    variables = []
-
-    for name in ds.data_vars:
-        if name not in {"latitude", "longitude"}:
-            variables.append(name)
-
-    if not variables:
-        raise RuntimeError("No meteorological data variable found.")
-
-    return variables[0]
-
-
-def mask_missing(product: str, data: np.ndarray) -> np.ndarray:
-    """
-    Convert known MRMS fill/sentinel values to NaN.
-
-    We intentionally do not assume every product uses the same
-    missing value.
-    """
-    data = np.asarray(data, dtype=np.float32).copy()
-
-    if product in {
-        "ReflectivityAtLowestAltitude",
-        "MergedRhoHV",
-        "MergedZdr",
-        "Model_SurfaceTemp",
-        "Model_WetBulbTemp",
-    }:
-        data[data <= -900] = np.nan
-
-    elif product in {
-        "BrightBandTopHeight",
-        "BrightBandBottomHeight",
-        "RadarQualityIndex",
-        "Model_0degC_Height",
-    }:
-        data[data <= -2] = np.nan
-
-    elif product == "PrecipFlag":
-        data[data <= -2] = np.nan
-
-    return data
-
-
-def summarize(data: np.ndarray) -> dict:
-    """Create useful statistics for one field."""
+def summarize(data: np.ndarray, product: str) -> dict:
+    """Create statistics from cleaned MRMS data."""
     finite = np.isfinite(data)
 
     result = {
@@ -117,6 +65,7 @@ def summarize(data: np.ndarray) -> dict:
         "missing_fraction": float(
             1.0 - (np.count_nonzero(finite) / data.size)
         ),
+        "units": field_info(product)["units"],
     }
 
     if np.any(finite):
@@ -138,33 +87,39 @@ def summarize(data: np.ndarray) -> dict:
             }
         )
 
-        # Helpful for categorical fields like PrecipFlag.
-        if values.size <= 30_000_000:
+        if product == "PrecipFlag":
             unique, counts = np.unique(values, return_counts=True)
 
-            result["unique_values"] = [
+            result["flag_counts"] = [
                 {
-                    "value": safe_float(value),
+                    "flag": int(round(float(value))),
                     "count": int(count),
                 }
-                for value, count in zip(unique[:200], counts[:200])
+                for value, count in zip(unique, counts)
             ]
 
     return result
 
 
-def extract_metadata(ds, var_name: str) -> dict:
-    """Extract useful GRIB/xarray metadata."""
-    attrs = dict(ds.attrs)
+def extract_metadata(ds, var_name: str, product: str) -> dict:
+    """Extract useful GRIB metadata."""
+    attrs = {}
+    attrs.update(ds.attrs)
+    attrs.update(ds[var_name].attrs)
 
-    if var_name in ds:
-        attrs.update(ds[var_name].attrs)
+    output = {
+        "product": product,
+        "variable": var_name,
+        "expected_units": field_info(product)["units"],
+    }
 
-    keep = [
+    keys = (
         "GRIB_shortName",
         "GRIB_name",
         "GRIB_units",
         "GRIB_cfName",
+        "GRIB_cfVarName",
+        "GRIB_paramId",
         "GRIB_typeOfLevel",
         "GRIB_gridType",
         "GRIB_Nx",
@@ -173,11 +128,9 @@ def extract_metadata(ds, var_name: str) -> dict:
         "GRIB_dataTime",
         "GRIB_validityDate",
         "GRIB_validityTime",
-    ]
+    )
 
-    output = {}
-
-    for key in keep:
+    for key in keys:
         if key in attrs:
             value = attrs[key]
 
@@ -189,23 +142,20 @@ def extract_metadata(ds, var_name: str) -> dict:
     return output
 
 
-# ------------------------------------------------------------
-# Main inspector
-# ------------------------------------------------------------
-
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    run_time = datetime.now(timezone.utc).isoformat()
 
     print("")
     print("MRMS WINTER RADAR FIELD INSPECTOR")
     print("=" * 72)
     print(f"MRMS base: {MRMS_BASE}")
-    print(f"Run time:  {datetime.now(timezone.utc).isoformat()}")
-    print("")
+    print(f"Run time:  {run_time}")
 
     report = {
-        "run_time_utc": datetime.now(timezone.utc).isoformat(),
+        "run_time_utc": run_time,
         "mrms_base": MRMS_BASE,
         "fields": {},
         "grid": {},
@@ -216,7 +166,6 @@ def main():
     reference_lon_shape = None
 
     for name, product in PRODUCTS.items():
-
         print("")
         print("-" * 72)
         print(f"{name.upper()} : {product}")
@@ -224,7 +173,7 @@ def main():
 
         path = DATA_DIR / f"MRMS_{product}.latest.grib2"
 
-        field_report = {
+        item = {
             "name": name,
             "product": product,
             "path": str(path.relative_to(ROOT)),
@@ -233,29 +182,28 @@ def main():
         if not path.exists():
             message = f"Missing file: {path}"
             print(f"ERROR: {message}")
-            field_report["error"] = message
-            report["fields"][name] = field_report
+            item["error"] = message
+            report["fields"][name] = item
             continue
 
         try:
-            size = path.stat().st_size
-
+            file_size = path.stat().st_size
             ds = open_grib(path)
-            var_name = get_primary_variable(ds)
+            var_name = get_variable_name(ds)
 
             raw = np.asarray(ds[var_name].values, dtype=np.float32)
-            data = mask_missing(product, raw)
+            data = clean_mrms_values(raw, product)
 
             lats = np.asarray(ds.latitude.values)
             lons = np.asarray(ds.longitude.values)
 
-            metadata = extract_metadata(ds, var_name)
-            stats = summarize(data)
+            stats = summarize(data, product)
+            metadata = extract_metadata(ds, var_name, product)
 
-            field_report.update(
+            item.update(
                 {
-                    "file_size_bytes": int(size),
-                    "file_size": human_size(size),
+                    "file_size_bytes": int(file_size),
+                    "file_size": human_size(file_size),
                     "variable": var_name,
                     "metadata": metadata,
                     "summary": stats,
@@ -264,8 +212,9 @@ def main():
                 }
             )
 
-            print(f"File size:       {human_size(size)}")
+            print(f"File size:       {human_size(file_size)}")
             print(f"Variable:        {var_name}")
+            print(f"Expected units:  {field_info(product)['units']}")
             print(f"Shape:           {data.shape}")
             print(f"Valid:           {stats['valid_points']:,}")
             print(f"Missing:         {stats['missing_fraction']:.2%}")
@@ -273,8 +222,11 @@ def main():
             print(f"Max:             {stats.get('max')}")
             print(f"Mean:            {stats.get('mean')}")
 
-            if "GRIB_units" in metadata:
-                print(f"Units:           {metadata['GRIB_units']}")
+            if product == "PrecipFlag":
+                print(
+                    f"Flag counts:     "
+                    f"{stats.get('flag_counts', [])}"
+                )
 
             if reference_shape is None:
                 reference_shape = data.shape
@@ -285,25 +237,25 @@ def main():
             same_lat = lats.shape == reference_lat_shape
             same_lon = lons.shape == reference_lon_shape
 
-            status = (
+            item["grid_status"] = (
                 "OK"
                 if same_shape and same_lat and same_lon
                 else "MISMATCH"
             )
 
-            field_report["grid_status"] = status
-
-            print(f"Grid status:     {status}")
+            print(f"Grid status:     {item['grid_status']}")
 
         except Exception as exc:
             print(f"ERROR: {exc}")
-            field_report["error"] = str(exc)
+            item["error"] = str(exc)
 
-        report["fields"][name] = field_report
+        report["fields"][name] = item
 
-    # --------------------------------------------------------
-    # Grid summary
-    # --------------------------------------------------------
+    successful = [
+        item
+        for item in report["fields"].values()
+        if "error" not in item
+    ]
 
     report["grid"] = {
         "reference_shape": list(reference_shape)
@@ -312,10 +264,10 @@ def main():
         if reference_lat_shape else None,
         "reference_longitude_shape": list(reference_lon_shape)
         if reference_lon_shape else None,
-        "all_fields_match": all(
+        "all_successful_fields_match": bool(successful)
+        and all(
             item.get("grid_status") == "OK"
-            for item in report["fields"].values()
-            if "error" not in item
+            for item in successful
         ),
     }
 
@@ -331,7 +283,6 @@ def main():
     print("DIAGNOSTIC COMPLETE")
     print("=" * 72)
     print(f"Wrote: {output}")
-    print("")
 
 
 if __name__ == "__main__":
