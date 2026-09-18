@@ -1,63 +1,441 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MRMS Winter Radar</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <style>
-    html, body, #map { height: 100%; margin: 0; }
-    body { font-family: Arial, sans-serif; background: #111; }
-    #map { background: #d9e1e8; }
-    .panel {
-      position: absolute; z-index: 1000; top: 12px; left: 12px;
-      background: rgba(20,24,28,.92); color: #fff; padding: 12px 14px;
-      border-radius: 8px; min-width: 220px; box-shadow: 0 3px 12px rgba(0,0,0,.35);
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>WinterRadar MRMS Diagnostics</title>
+
+<style>
+    * {
+        box-sizing: border-box;
     }
-    .panel h1 { margin: 0 0 8px; font-size: 18px; }
-    .panel .status { font-size: 12px; opacity: .8; margin-bottom: 10px; }
-    .buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-    button { border: 0; border-radius: 5px; padding: 7px 9px; cursor: pointer; }
-    .legend { margin-top: 10px; font-size: 12px; }
-    .row { display:flex; align-items:center; gap:6px; margin:3px 0; }
-    .swatch { width:18px; height:10px; display:inline-block; border-radius:2px; }
-  </style>
+
+    body {
+        margin: 0;
+        background: #101418;
+        color: #e8edf2;
+        font-family: Arial, Helvetica, sans-serif;
+    }
+
+    header {
+        padding: 18px 24px;
+        background: #181e24;
+        border-bottom: 1px solid #303841;
+    }
+
+    header h1 {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 700;
+    }
+
+    header p {
+        margin: 5px 0 0;
+        color: #9ca8b3;
+        font-size: 14px;
+    }
+
+    .container {
+        width: 96%;
+        max-width: 1800px;
+        margin: 20px auto 40px;
+    }
+
+    .status-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 18px;
+        padding: 12px 16px;
+        background: #181e24;
+        border: 1px solid #303841;
+        border-radius: 8px;
+    }
+
+    .status {
+        color: #9ca8b3;
+        font-size: 14px;
+    }
+
+    .refresh-button {
+        border: 1px solid #4b5864;
+        background: #222a31;
+        color: #e8edf2;
+        padding: 8px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .refresh-button:hover {
+        background: #2d3740;
+    }
+
+    .section-title {
+        margin: 28px 0 12px;
+        font-size: 21px;
+        font-weight: 700;
+    }
+
+    .card {
+        background: #181e24;
+        border: 1px solid #303841;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 20px;
+    }
+
+    .card-title {
+        font-size: 17px;
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+
+    .card-description {
+        color: #9ca8b3;
+        font-size: 13px;
+        margin-bottom: 12px;
+    }
+
+    .main-image {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 5px;
+        background: #0b0f12;
+    }
+
+    .diagnostic-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+    }
+
+    .diagnostic-card {
+        background: #181e24;
+        border: 1px solid #303841;
+        border-radius: 8px;
+        padding: 14px;
+        min-width: 0;
+    }
+
+    .diagnostic-card img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 5px;
+        background: #0b0f12;
+    }
+
+    .image-error {
+        min-height: 120px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #11161b;
+        border-radius: 5px;
+        color: #8d99a4;
+        text-align: center;
+        padding: 20px;
+    }
+
+    .json-section {
+        margin-top: 20px;
+    }
+
+    .json-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .json-link {
+        display: inline-block;
+        padding: 9px 13px;
+        background: #222a31;
+        border: 1px solid #3a444e;
+        border-radius: 6px;
+        color: #dce5ec;
+        text-decoration: none;
+        font-size: 13px;
+    }
+
+    .json-link:hover {
+        background: #2c363f;
+    }
+
+    .footer {
+        margin-top: 30px;
+        padding-top: 15px;
+        border-top: 1px solid #303841;
+        color: #77838e;
+        font-size: 12px;
+        text-align: center;
+    }
+
+    @media (max-width: 900px) {
+        .diagnostic-grid {
+            grid-template-columns: 1fr;
+        }
+
+        header h1 {
+            font-size: 22px;
+        }
+
+        .container {
+            width: 94%;
+        }
+    }
+
+    @media (max-width: 600px) {
+        .status-bar {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .refresh-button {
+            width: 100%;
+        }
+
+        .container {
+            width: 92%;
+        }
+    }
+</style>
 </head>
+
 <body>
-<div id="map"></div>
-<div class="panel">
-  <h1>MRMS Winter Radar</h1>
-  <div class="status" id="status">Loading…</div>
-  <div class="buttons">
-    <button onclick="map.setView([44.5,-72.7],7)">BTV</button>
-    <button onclick="map.setView([42.5,-75],6)">ALB</button>
-    <button onclick="map.setView([43,-77],6)">BUF</button>
-    <button onclick="map.setView([39.8,-98.5],4)">CONUS</button>
-  </div>
-  <div class="legend">
-    <b>Rain</b>
-    <div class="row"><span class="swatch" style="background:#46c85a"></span>Light</div>
-    <div class="row"><span class="swatch" style="background:#1eaa46"></span>Moderate</div>
-    <div class="row"><span class="swatch" style="background:#f5dc32"></span>Heavy</div>
-    <div class="row"><span class="swatch" style="background:#f58723"></span>Very Heavy</div>
-    <div class="row"><span class="swatch" style="background:#dc2828"></span>Extreme</div>
-    <b>Winter</b>
-    <div class="row"><span class="swatch" style="background:#3791ff"></span>Snow</div>
-    <div class="row"><span class="swatch" style="background:#ed69d2"></span>Mixed / Sleet</div>
-    <div class="row"><span class="swatch" style="background:#d72d37"></span>Freezing Rain</div>
-  </div>
+
+<header>
+    <h1>WinterRadar MRMS Diagnostics</h1>
+    <p>MRMS precipitation and dual-polarization diagnostics</p>
+</header>
+
+<div class="container">
+
+    <div class="status-bar">
+        <div class="status">
+            Last page refresh: <span id="lastRefresh">--</span>
+        </div>
+
+        <button class="refresh-button" onclick="refreshPage()">
+            Refresh Diagnostics
+        </button>
+    </div>
+
+
+    <!-- ===================================================== -->
+    <!-- CURRENT MRMS -->
+    <!-- ===================================================== -->
+
+    <div class="section-title">
+        Current MRMS
+    </div>
+
+    <div class="card">
+
+        <div class="card-title">
+            Current MRMS Radar
+        </div>
+
+        <div class="card-description">
+            Latest MRMS radar product processed by WinterRadar.
+        </div>
+
+        <img
+            class="main-image"
+            src="outputs/mrms_current.png"
+            alt="Current MRMS radar"
+            onerror="imageError(this)"
+        >
+
+    </div>
+
+
+    <!-- ===================================================== -->
+    <!-- DIAGNOSTICS -->
+    <!-- ===================================================== -->
+
+    <div class="section-title">
+        Winter Precipitation Diagnostics
+    </div>
+
+    <div class="diagnostic-grid">
+
+        <div class="diagnostic-card">
+
+            <div class="card-title">
+                MRMS Diagnostics
+            </div>
+
+            <div class="card-description">
+                Core MRMS fields and precipitation diagnostics.
+            </div>
+
+            <img
+                src="outputs/mrms_diagnostics.png"
+                alt="MRMS diagnostic image"
+                onerror="imageError(this)"
+            >
+
+        </div>
+
+
+        <div class="diagnostic-card">
+
+            <div class="card-title">
+                Vertical Dual-Pol
+            </div>
+
+            <div class="card-description">
+                Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.
+            </div>
+
+            <img
+                src="outputs/mrms_vertical_dualpol.png"
+                alt="Vertical dual-pol diagnostic"
+                onerror="imageError(this)"
+            >
+
+        </div>
+
+
+        <div class="diagnostic-card">
+
+            <div class="card-title">
+                Winter Precipitation Diagnostic
+            </div>
+
+            <div class="card-description">
+                Temperature, precipitation, reflectivity, and dual-pol inputs
+                used to develop the winter precipitation phase mask.
+            </div>
+
+            <img
+                src="outputs/winter_mask_diagnostics.png"
+                alt="Winter precipitation diagnostic"
+                onerror="imageError(this)"
+            >
+
+        </div>
+
+    </div>
+
+
+    <!-- ===================================================== -->
+    <!-- JSON OUTPUTS -->
+    <!-- ===================================================== -->
+
+    <div class="section-title">
+        Diagnostic Data
+    </div>
+
+    <div class="card json-section">
+
+        <div class="card-title">
+            Machine-Readable Outputs
+        </div>
+
+        <div class="card-description">
+            Raw JSON diagnostic summaries produced by the workflow.
+        </div>
+
+        <div class="json-links">
+
+            <a
+                class="json-link"
+                href="outputs/mrms_current.json"
+                target="_blank"
+            >
+                Current MRMS JSON
+            </a>
+
+            <a
+                class="json-link"
+                href="outputs/mrms_diagnostics.json"
+                target="_blank"
+            >
+                MRMS Diagnostics JSON
+            </a>
+
+            <a
+                class="json-link"
+                href="outputs/winter_mask_diagnostics.json"
+                target="_blank"
+            >
+                Winter Mask JSON
+            </a>
+
+        </div>
+
+    </div>
+
+
+    <div class="footer">
+        WinterRadar • MRMS Winter Precipitation Research & Diagnostics
+    </div>
+
 </div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+
 <script>
-const map = L.map('map', { zoomControl: true }).setView([39.8, -98.5], 4);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
 
-const imageBounds = [[20, -130], [55, -60]];
-L.imageOverlay('../outputs/mrms_current.png', imageBounds, {opacity: 0.72}).addTo(map);
+function refreshPage() {
+    window.location.reload();
+}
 
-document.getElementById('status').textContent = 'Prototype layer loaded';
+
+function imageError(img) {
+
+    const container = document.createElement("div");
+
+    container.className = "image-error";
+
+    container.innerHTML =
+        "Diagnostic image is not currently available.";
+
+    img.replaceWith(container);
+}
+
+
+function updateRefreshTime() {
+
+    const now = new Date();
+
+    document.getElementById("lastRefresh").textContent =
+        now.toLocaleString();
+
+}
+
+
+/*
+ * Add a cache-busting query string to images.
+ *
+ * GitHub Pages/CDNs can otherwise occasionally continue
+ * displaying the previous five-minute image.
+ */
+
+document.querySelectorAll("img").forEach(function(img) {
+
+    const original = img.getAttribute("src");
+
+    if (original) {
+
+        img.setAttribute(
+            "src",
+            original + "?t=" + Date.now()
+        );
+
+    }
+
+});
+
+
+updateRefreshTime();
+
 </script>
+
 </body>
 </html>
