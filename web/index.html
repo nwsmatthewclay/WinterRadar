@@ -7,9 +7,7 @@
 <title>WinterRadar MRMS Diagnostics</title>
 
 <style>
-    * {
-        box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
         margin: 0;
@@ -79,7 +77,8 @@
         font-weight: 700;
     }
 
-    .card {
+    .card,
+    .diagnostic-card {
         background: #181e24;
         border: 1px solid #303841;
         border-radius: 8px;
@@ -99,7 +98,8 @@
         margin-bottom: 12px;
     }
 
-    .main-image {
+    .main-image,
+    .diagnostic-card img {
         width: 100%;
         height: auto;
         display: block;
@@ -114,19 +114,7 @@
     }
 
     .diagnostic-card {
-        background: #181e24;
-        border: 1px solid #303841;
-        border-radius: 8px;
-        padding: 14px;
         min-width: 0;
-    }
-
-    .diagnostic-card img {
-        width: 100%;
-        height: auto;
-        display: block;
-        border-radius: 5px;
-        background: #0b0f12;
     }
 
     .image-error {
@@ -225,20 +213,10 @@
         </button>
     </div>
 
-
-    <!-- ===================================================== -->
-    <!-- CURRENT MRMS -->
-    <!-- ===================================================== -->
-
-    <div class="section-title">
-        Current MRMS
-    </div>
+    <div class="section-title">Current MRMS</div>
 
     <div class="card">
-
-        <div class="card-title">
-            Current MRMS Radar
-        </div>
+        <div class="card-title">Current MRMS Radar</div>
 
         <div class="card-description">
             Latest MRMS radar product processed by WinterRadar.
@@ -246,17 +224,11 @@
 
         <img
             class="main-image"
-            src="outputs/mrms_current.png"
+            src="./outputs/mrms_current.png"
             alt="Current MRMS radar"
             onerror="imageError(this)"
         >
-
     </div>
-
-
-    <!-- ===================================================== -->
-    <!-- DIAGNOSTICS -->
-    <!-- ===================================================== -->
 
     <div class="section-title">
         Winter Precipitation Diagnostics
@@ -265,45 +237,34 @@
     <div class="diagnostic-grid">
 
         <div class="diagnostic-card">
-
-            <div class="card-title">
-                MRMS Diagnostics
-            </div>
+            <div class="card-title">MRMS Diagnostics</div>
 
             <div class="card-description">
                 Core MRMS fields and precipitation diagnostics.
             </div>
 
             <img
-                src="outputs/mrms_diagnostics.png"
+                src="./outputs/mrms_diagnostics.png"
                 alt="MRMS diagnostic image"
                 onerror="imageError(this)"
             >
-
         </div>
 
-
         <div class="diagnostic-card">
-
-            <div class="card-title">
-                Vertical Dual-Pol
-            </div>
+            <div class="card-title">Vertical Dual-Pol</div>
 
             <div class="card-description">
                 Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.
             </div>
 
             <img
-                src="outputs/mrms_vertical_dualpol.png"
+                src="./outputs/mrms_vertical_dualpol.png"
                 alt="Vertical dual-pol diagnostic"
                 onerror="imageError(this)"
             >
-
         </div>
 
-
         <div class="diagnostic-card">
-
             <div class="card-title">
                 Winter Precipitation Diagnostic
             </div>
@@ -314,23 +275,15 @@
             </div>
 
             <img
-                src="outputs/winter_mask_diagnostics.png"
+                src="./outputs/winter_mask_diagnostics.png"
                 alt="Winter precipitation diagnostic"
                 onerror="imageError(this)"
             >
-
         </div>
 
     </div>
 
-
-    <!-- ===================================================== -->
-    <!-- JSON OUTPUTS -->
-    <!-- ===================================================== -->
-
-    <div class="section-title">
-        Diagnostic Data
-    </div>
+    <div class="section-title">Diagnostic Data</div>
 
     <div class="card json-section">
 
@@ -346,24 +299,27 @@
 
             <a
                 class="json-link"
-                href="outputs/mrms_current.json"
+                href="./outputs/mrms_current.json"
                 target="_blank"
+                rel="noopener"
             >
                 Current MRMS JSON
             </a>
 
             <a
                 class="json-link"
-                href="outputs/mrms_diagnostics.json"
+                href="./outputs/mrms_diagnostics.json"
                 target="_blank"
+                rel="noopener"
             >
                 MRMS Diagnostics JSON
             </a>
 
             <a
                 class="json-link"
-                href="outputs/winter_mask_diagnostics.json"
+                href="./outputs/winter_mask_diagnostics.json"
                 target="_blank"
+                rel="noopener"
             >
                 Winter Mask JSON
             </a>
@@ -372,69 +328,55 @@
 
     </div>
 
-
     <div class="footer">
         WinterRadar • MRMS Winter Precipitation Research & Diagnostics
     </div>
 
 </div>
 
-
 <script>
-
 function refreshPage() {
     window.location.reload();
 }
 
-
 function imageError(img) {
-
     const container = document.createElement("div");
-
     container.className = "image-error";
 
+    const original = img.getAttribute("src");
+
     container.innerHTML =
-        "Diagnostic image is not currently available.";
+        "Diagnostic image is not currently available.<br>" +
+        "<small>" + original + "</small>";
 
     img.replaceWith(container);
 }
 
-
 function updateRefreshTime() {
-
     const now = new Date();
 
     document.getElementById("lastRefresh").textContent =
         now.toLocaleString();
-
 }
 
-
 /*
- * Add a cache-busting query string to images.
- *
- * GitHub Pages/CDNs can otherwise occasionally continue
- * displaying the previous five-minute image.
+ * Cache-bust images so GitHub Pages does not keep showing
+ * an older five-minute version.
  */
+const cacheBust = Date.now();
 
 document.querySelectorAll("img").forEach(function(img) {
-
     const original = img.getAttribute("src");
 
     if (original) {
-
         img.setAttribute(
             "src",
-            original + "?t=" + Date.now()
+            original + "?v=" + cacheBust
         );
-
     }
-
 });
 
-
 updateRefreshTime();
-
 </script>
 
 </body>
