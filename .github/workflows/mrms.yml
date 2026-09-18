@@ -66,11 +66,13 @@ jobs:
           mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/main.log
 
+
       - name: Show main log
         if: always()
         run: |
           echo "===== MAIN.PY LOG ====="
           cat outputs/main.log || true
+
 
       # ------------------------------------------------------
       # Vertical dual-pol processing
@@ -84,6 +86,23 @@ jobs:
       - name: Build vertical dual-pol diagnostic
         working-directory: src
         run: python build_vertical_dualpol_diagnostic.py
+
+
+      # ------------------------------------------------------
+      # Normalize vertical dual-pol output filename
+      # ------------------------------------------------------
+
+      - name: Prepare vertical dual-pol output
+        run: |
+          if [ -f outputs/vertical_dualpol_diagnostic.png ]; then
+            cp outputs/vertical_dualpol_diagnostic.png \
+               outputs/mrms_vertical_dualpol.png
+          else
+            echo "ERROR: Vertical dual-pol diagnostic image was not created."
+            echo "Contents of outputs:"
+            ls -lah outputs
+            exit 1
+          fi
 
 
       # ------------------------------------------------------
@@ -127,6 +146,10 @@ jobs:
           cp outputs/mrms_vertical_dualpol.png \
              site/outputs/mrms_vertical_dualpol.png
 
+
+      # ------------------------------------------------------
+      # Upload GitHub Pages artifact
+      # ------------------------------------------------------
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
