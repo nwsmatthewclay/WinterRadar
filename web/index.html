@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MRMS Winter Radar</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    body { font-family: Arial, sans-serif; background: #111; }
+    #map { background: #d9e1e8; }
+    .panel {
+      position: absolute; z-index: 1000; top: 12px; left: 12px;
+      background: rgba(20,24,28,.92); color: #fff; padding: 12px 14px;
+      border-radius: 8px; min-width: 220px; box-shadow: 0 3px 12px rgba(0,0,0,.35);
+    }
+    .panel h1 { margin: 0 0 8px; font-size: 18px; }
+    .panel .status { font-size: 12px; opacity: .8; margin-bottom: 10px; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+    button { border: 0; border-radius: 5px; padding: 7px 9px; cursor: pointer; }
+    .legend { margin-top: 10px; font-size: 12px; }
+    .row { display:flex; align-items:center; gap:6px; margin:3px 0; }
+    .swatch { width:18px; height:10px; display:inline-block; border-radius:2px; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>MRMS Winter Radar</h1>
+  <div class="status" id="status">Loading…</div>
+  <div class="buttons">
+    <button onclick="map.setView([44.5,-72.7],7)">BTV</button>
+    <button onclick="map.setView([42.5,-75],6)">ALB</button>
+    <button onclick="map.setView([43,-77],6)">BUF</button>
+    <button onclick="map.setView([39.8,-98.5],4)">CONUS</button>
+  </div>
+  <div class="legend">
+    <b>Rain</b>
+    <div class="row"><span class="swatch" style="background:#46c85a"></span>Light</div>
+    <div class="row"><span class="swatch" style="background:#1eaa46"></span>Moderate</div>
+    <div class="row"><span class="swatch" style="background:#f5dc32"></span>Heavy</div>
+    <div class="row"><span class="swatch" style="background:#f58723"></span>Very Heavy</div>
+    <div class="row"><span class="swatch" style="background:#dc2828"></span>Extreme</div>
+    <b>Winter</b>
+    <div class="row"><span class="swatch" style="background:#3791ff"></span>Snow</div>
+    <div class="row"><span class="swatch" style="background:#ed69d2"></span>Mixed / Sleet</div>
+    <div class="row"><span class="swatch" style="background:#d72d37"></span>Freezing Rain</div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map', { zoomControl: true }).setView([39.8, -98.5], 4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const imageBounds = [[20, -130], [55, -60]];
+L.imageOverlay('../outputs/mrms_current.png', imageBounds, {opacity: 0.72}).addTo(map);
+
+document.getElementById('status').textContent = 'Prototype layer loaded';
+</script>
+</body>
+</html>
