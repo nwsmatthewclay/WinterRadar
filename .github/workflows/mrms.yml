@@ -46,6 +46,10 @@ jobs:
         working-directory: src
         run: python download_vertical_dualpol.py
 
+      - name: Build vertical dual-pol diagnostic
+        working-directory: src
+        run: python build_vertical_dualpol_diagnostic.py
+
       - name: Inspect MRMS fields
         working-directory: src
         run: python inspect_mrms.py
@@ -75,6 +79,9 @@ jobs:
 
           cp outputs/mrms_diagnostics.json \
              site/outputs/mrms_diagnostics.json
+
+          cp outputs/mrms_vertical_dualpol.png \
+             site/outputs/mrms_vertical_dualpol.png
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
