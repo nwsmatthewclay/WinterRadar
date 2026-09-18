@@ -3,8 +3,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import requests
-
 from config import (
     DATA_DIR,
     MRMS_3D_RHOHV_BASE,
@@ -24,53 +22,66 @@ MAX_ATTEMPTS = 5
 
 
 # ------------------------------------------------------------
-# Product base URLs
+# MRMS 3-D product locations
 # ------------------------------------------------------------
 
 BASE_URLS = {
-
-    "MergedRhoHV":
-        MRMS_3D_RHOHV_BASE,
-
-    "MergedZdr":
-        MRMS_3D_ZDR_BASE,
-
+    "MergedRhoHV": MRMS_3D_RHOHV_BASE,
+    "MergedZdr": MRMS_3D_ZDR_BASE,
 }
 
 
 # ------------------------------------------------------------
-# Filename formatting
+# Helpers
 # ------------------------------------------------------------
 
-def level_string(level_km: float) -> str:
+def normalize_level(level) -> float:
     """
-    Convert:
+    Force configuration values such as:
+
+        0.50
+        "0.50"
+        "00.50"
+
+    into a proper float.
+    """
+
+    try:
+        return float(level)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid MRMS vertical level: {level!r}"
+        ) from exc
+
+
+def level_string(level) -> str:
+    """
+    Format an MRMS CAPPI level.
+
+    Examples:
 
         0.50 -> 00.50
         1.00 -> 01.00
         4.00 -> 04.00
     """
 
-    return f"{level_km:05.2f}"
+    level = normalize_level(level)
 
+    return f"{level:05.2f}"
 
-# ------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------
 
 def local_path(
     product: str,
-    level_km: float,
+    level,
 ) -> Path:
 
-    level = level_string(
-        level_km
-    )
+    level = normalize_level(level)
+    level_text = level_string(level)
 
     directory = (
         DATA_DIR
         / "dualpol"
-        / f"{level}km"
+        / f"{level_text}km"
     )
 
     directory.mkdir(
@@ -82,42 +93,46 @@ def local_path(
         directory
         / (
             f"MRMS_{product}_"
-            f"{level}.latest.grib2"
+            f"{level_text}.latest.grib2"
         )
     )
 
 
 # ------------------------------------------------------------
-# Download
+# Download one CAPPI
 # ------------------------------------------------------------
 
 def download_level(
     product: str,
-    level_km: float,
+    level,
 ) -> Path:
 
-    level = level_string(
-        level_km
+    level = normalize_level(level)
+    level_text = level_string(level)
+
+    print("")
+    print("=" * 72)
+    print(
+        f"{product} @ {level_text} km"
     )
+    print("=" * 72)
 
-    base_url = BASE_URLS[
-        product
-    ]
+    if product not in BASE_URLS:
+        raise ValueError(
+            f"No 3-D MRMS base URL configured "
+            f"for {product}"
+        )
 
-    # Example:
-    #
-    # https://mrms.ncep.noaa.gov/3DRhoHV/
-    # MergedRhoHV_00.50/
-    # MRMS_MergedRhoHV_00.50.latest.grib2.gz
+    base_url = BASE_URLS[product]
 
     directory_url = (
         f"{base_url}/"
-        f"{product}_{level}"
+        f"{product}_{level_text}"
     )
 
     filename = (
         f"MRMS_{product}_"
-        f"{level}.latest.grib2.gz"
+        f"{level_text}.latest.grib2.gz"
     )
 
     url = (
@@ -127,30 +142,15 @@ def download_level(
 
     destination = local_path(
         product,
-        level_km,
+        level,
     )
+
+    print(f"URL:")
+    print(f"  {url}")
 
     print("")
-    print(
-        f"{product} @ {level:.2f} km"
-    )
-    print("-" * 72)
-
-    print(
-        f"URL:"
-    )
-
-    print(
-        f"  {url}"
-    )
-
-    print(
-        f"Destination:"
-    )
-
-    print(
-        f"  {destination}"
-    )
+    print(f"Destination:")
+    print(f"  {destination}")
 
     last_error = None
 
@@ -159,6 +159,7 @@ def download_level(
         MAX_ATTEMPTS + 1,
     ):
 
+        print("")
         print(
             f"Attempt "
             f"{attempt}/{MAX_ATTEMPTS}"
@@ -171,10 +172,11 @@ def download_level(
                 destination,
             )
 
+            print("")
             print(
                 f"SUCCESS: "
-                f"{product} "
-                f"{level:.2f} km"
+                f"{product} @ "
+                f"{level_text} km"
             )
 
             return destination
@@ -183,12 +185,14 @@ def download_level(
 
             last_error = exc
 
+            print("")
             print(
                 f"FAILED: "
                 f"{type(exc).__name__}: "
                 f"{exc}"
             )
 
+            # Remove failed partial files.
             destination.with_suffix(
                 destination.suffix + ".download"
             ).unlink(
@@ -207,21 +211,23 @@ def download_level(
 
             if attempt < MAX_ATTEMPTS:
 
-                wait = 5 * attempt
+                wait_seconds = (
+                    5 * attempt
+                )
 
                 print(
                     f"Retrying in "
-                    f"{wait} seconds..."
+                    f"{wait_seconds} seconds..."
                 )
 
                 time.sleep(
-                    wait
+                    wait_seconds
                 )
 
     raise RuntimeError(
         f"Unable to download "
-        f"{product} at "
-        f"{level:.2f} km after "
+        f"{product} @ "
+        f"{level_text} km after "
         f"{MAX_ATTEMPTS} attempts. "
         f"Last error: {last_error}"
     )
@@ -231,7 +237,7 @@ def download_level(
 # Main
 # ------------------------------------------------------------
 
-def main() -> None:
+def main():
 
     print("")
     print("=" * 72)
@@ -240,19 +246,32 @@ def main() -> None:
     )
     print("=" * 72)
 
+    # Normalize levels once at startup.
+    levels = [
+        normalize_level(level)
+        for level in VERTICAL_DUALPOL_LEVELS_KM
+    ]
+
+    print("")
+    print(
+        "Levels:",
+        ", ".join(
+            f"{level:.2f} km"
+            for level in levels
+        ),
+    )
+
     total = 0
 
     for _, product in (
         VERTICAL_DUALPOL_PRODUCTS.items()
     ):
 
-        for level_km in (
-            VERTICAL_DUALPOL_LEVELS_KM
-        ):
+        for level in levels:
 
             download_level(
                 product,
-                level_km,
+                level,
             )
 
             total += 1
