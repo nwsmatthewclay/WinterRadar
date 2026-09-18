@@ -154,6 +154,14 @@ def load_grib(path):
     return data, units, attrs
 
 
+def clean_mrms(data, invalid_values=(-999, -99, -3)):
+    """Convert known MRMS fill/missing values to NaN."""
+    data = np.asarray(data, dtype=float).copy()
+    for value in invalid_values:
+        data[np.isclose(data, value)] = np.nan
+    return data
+
+
 def finite_values(data):
     """Return only finite values."""
 
@@ -204,7 +212,9 @@ def print_stats(name, data, units=""):
         print("  NO FINITE DATA")
         return
 
-    print(f"  Count : {stats['count']:,}")
+    total = np.asarray(data).size
+    valid_pct = 100.0 * stats["count"] / total if total else 0.0
+    print(f"  Count : {stats['count']:,} ({valid_pct:.1f}% valid)")
     print(f"  Min   : {stats['min']:.3f}")
     print(f"  P05   : {stats['p05']:.3f}")
     print(f"  P25   : {stats['p25']:.3f}")
@@ -248,6 +258,13 @@ def load_main_fields():
         try:
             data, units, attrs = load_grib(path)
 
+            if name in ("Reflectivity", "Reflectivity_0C"):
+                data = clean_mrms(data, (-999, -99))
+            elif name in ("SurfaceTemp", "WetBulbTemp"):
+                data = clean_mrms(data, (-999,))
+            else:
+                data = clean_mrms(data, (-3,))
+
             fields[name] = data
             metadata[name] = {
                 "units": units,
@@ -289,7 +306,7 @@ def load_vertical_dualpol():
         zdr_path = (
             DUALPOL_DIR
             / f"{text}km"
-            / f"MRMS_MergedZDR_{text}.latest.grib2"
+            / f"MRMS_MergedZdr_{text}.latest.grib2"
         )
 
         # -----------------------------
@@ -300,7 +317,7 @@ def load_vertical_dualpol():
 
             rho_data, rho_units, _ = load_grib(rho_path)
 
-            rhohv[level] = rho_data
+            rho_data = clean_mrms(rho_data, (-999, -99))\n            rhohv[level] = rho_data
 
             print_stats(
                 f"RHOHV {level:.2f} km",
@@ -322,7 +339,7 @@ def load_vertical_dualpol():
 
             zdr_data, zdr_units, _ = load_grib(zdr_path)
 
-            zdr[level] = zdr_data
+            zdr_data = clean_mrms(zdr_data, (-999, -99))\n            zdr[level] = zdr_data
 
             print_stats(
                 f"ZDR {level:.2f} km",
@@ -543,9 +560,8 @@ def metadata_units(fields, name):
     unavailable.
     """
 
-    # MRMS model temperatures are expected to be Kelvin.
     if name in ("SurfaceTemp", "WetBulbTemp"):
-        return "K"
+        return "degC"
 
     return ""
 
