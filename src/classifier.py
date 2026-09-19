@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 
 
-# ---------------------------------------------------------------------
-# Phase codes
-# ---------------------------------------------------------------------
+@dataclass
+class ClassificationResult:
+    phase: np.ndarray
+    confidence: np.ndarray
+    intensity: np.ndarray
+
 
 CLEAR = 0
 RAIN = 1
@@ -16,11 +20,9 @@ FZRA = 4
 MIXED = 5
 UNKNOWN = 9
 
-
-# ---------------------------------------------------------------------
-# MRMS PrecipFlag values
-# ---------------------------------------------------------------------
-
+# MRMS PrecipFlag is a broad surface-precipitation context field.  The NOAA
+# operational table describes it as convective/stratiform/tropical/hail/snow
+# context rather than a complete precipitation-type diagnosis.
 PRECIPFLAG_NO_PRECIP = 0
 PRECIPFLAG_WARM_STRATIFORM = 1
 PRECIPFLAG_SNOW = 3
@@ -31,358 +33,128 @@ PRECIPFLAG_TROPICAL_STRATIFORM = 91
 PRECIPFLAG_TROPICAL_CONVECTION = 96
 
 
-@dataclass
-class ClassificationResult:
-    phase: np.ndarray
-    confidence: np.ndarray
-    intensity: np.ndarray
-
-
-# ---------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------
-
-def _finite(a: np.ndarray) -> np.ndarray:
-    return np.isfinite(a)
-
-
-def _valid_bright_band(
-    bb_top_m: np.ndarray,
-    bb_bottom_m: np.ndarray,
-) -> np.ndarray:
-    """
-    Identify valid MRMS bright-band top/bottom values.
-
-    Invalid / missing MRMS values are rejected.
-    """
-    return (
-        np.isfinite(bb_top_m)
-        & np.isfinite(bb_bottom_m)
-        & (bb_top_m >= 0)
-        & (bb_bottom_m >= 0)
-        & (bb_top_m >= bb_bottom_m)
-    )
-
-
 def rain_intensity_dbz(dbz: np.ndarray) -> np.ndarray:
-    """
-    Convert reflectivity into a simple 0-5 intensity category.
-
-    This is used only for the underlying rain classification.
-    """
     out = np.zeros(dbz.shape, dtype=np.uint8)
-
     valid = np.isfinite(dbz)
-
     out[valid & (dbz >= 15) & (dbz < 25)] = 1
     out[valid & (dbz >= 25) & (dbz < 35)] = 2
     out[valid & (dbz >= 35) & (dbz < 45)] = 3
     out[valid & (dbz >= 45) & (dbz < 55)] = 4
     out[valid & (dbz >= 55)] = 5
-
     return out
 
 
-def _precipitation_gate(
-    reflectivity: np.ndarray,
-    precip_flag: np.ndarray,
+def _same_shape_or_default(
+    arr: np.ndarray | None,
+    shape: tuple[int, int],
+    default: float,
 ) -> np.ndarray:
-    """
-    Determine whether MRMS indicates precipitation.
+    if arr is None:
+        return np.full(shape, default, dtype=np.float32)
+    arr = np.asarray(arr, dtype=np.float32)
+    if arr.shape != shape:
+        raise ValueError(f"Grid-shape mismatch: expected {shape}, got {arr.shape}")
+    return arr
 
-    PrecipFlag is the primary discriminator.
-
-    Reflectivity is retained as a fallback for cases where the flag
-    is missing or invalid.
-    """
-
-    valid_flag = np.isfinite(precip_flag)
-
-    # Any known non-zero MRMS precipitation flag means precipitation.
-    flagged_precip = valid_flag & (precip_flag != PRECIPFLAG_NO_PRECIP)
-
-    # If PrecipFlag is unavailable, use a conservative reflectivity
-    # fallback.
-    fallback = (~valid_flag) & np.isfinite(reflectivity) & (reflectivity >= 10.0)
-
-    return flagged_precip | fallback
-
-
-# ---------------------------------------------------------------------
-# Main classifier
-# ---------------------------------------------------------------------
 
 def classify_initial(
     reflectivity: np.ndarray,
-    precip_flag: np.ndarray,
-    bb_top_m: np.ndarray,
-    bb_bottom_m: np.ndarray,
-    wetbulb_c: np.ndarray,
-    freezing_level_m: np.ndarray,
-    rqi: np.ndarray,
+    precip_flag: np.ndarray | None = None,
+    bb_top_m: np.ndarray | None = None,
+    bb_bottom_m: np.ndarray | None = None,
+    wetbulb_c: np.ndarray | None = None,
+    freezing_level_m: np.ndarray | None = None,
+    rqi: np.ndarray | None = None,
 ) -> ClassificationResult:
+    """
+    Conservative first-pass winter precipitation classifier.
 
-    phase = np.full(
-        reflectivity.shape,
-        CLEAR,
-        dtype=np.uint8,
-    )
+    The live product is designed to remain useful even when optional
+    phase-support fields are temporarily unavailable. Missing optional fields
+    result in lower-confidence/unknown phase rather than aborting the radar
+    pipeline.
+    """
+    del freezing_level_m  # Reserved for the later vertical-profile engine.
 
-    confidence = np.zeros(
-        reflectivity.shape,
-        dtype=np.float32,
-    )
+    reflectivity = np.asarray(reflectivity, dtype=np.float32)
+    shape = reflectivity.shape
+    if reflectivity.ndim != 2:
+        raise ValueError(f"Reflectivity must be 2-D, got {shape}")
 
-    # ---------------------------------------------------------------
-    # 1. Determine precipitation
-    # ---------------------------------------------------------------
+    precip_flag = _same_shape_or_default(precip_flag, shape, np.nan)
+    bb_top_m = _same_shape_or_default(bb_top_m, shape, np.nan)
+    bb_bottom_m = _same_shape_or_default(bb_bottom_m, shape, np.nan)
+    wetbulb_c = _same_shape_or_default(wetbulb_c, shape, np.nan)
+    rqi = _same_shape_or_default(rqi, shape, 1.0)
 
-    precip = _precipitation_gate(
-        reflectivity,
-        precip_flag,
-    )
+    phase = np.full(shape, CLEAR, dtype=np.uint8)
+    confidence = np.zeros(shape, dtype=np.float32)
 
-    # ---------------------------------------------------------------
-    # 2. Environmental fields
-    # ---------------------------------------------------------------
+    precip = np.isfinite(reflectivity) & (reflectivity >= 10.0)
+    phase[precip] = RAIN
 
-    valid_wb = np.isfinite(wetbulb_c)
-
-    cold_surface = (
-        valid_wb
-        & (wetbulb_c <= 0.0)
-    )
-
-    very_cold_surface = (
-        valid_wb
-        & (wetbulb_c <= -1.0)
-    )
-
-    warm_surface = (
-        valid_wb
-        & (wetbulb_c > 0.5)
-    )
-
-    near_freezing_surface = (
-        valid_wb
-        & (wetbulb_c > -1.0)
-        & (wetbulb_c <= 0.5)
-    )
-
-    # ---------------------------------------------------------------
-    # 3. Bright-band information
-    # ---------------------------------------------------------------
-
-    has_bb = _valid_bright_band(
-        bb_top_m,
-        bb_bottom_m,
-    )
-
-    # A valid freezing-level field is useful as supporting evidence,
-    # but a single freezing-level height is NOT sufficient to
-    # confidently separate sleet from freezing rain.
-    valid_freezing_level = np.isfinite(freezing_level_m)
-
-    low_freezing_level = (
-        valid_freezing_level
-        & (freezing_level_m <= 1000.0)
-    )
-
-    # ---------------------------------------------------------------
-    # 4. PrecipFlag information
-    # ---------------------------------------------------------------
+    valid_wb = np.isfinite(wetbulb_c) & (wetbulb_c > -90.0) & (wetbulb_c < 90.0)
+    cold_surface = valid_wb & (wetbulb_c <= 0.0)
+    warm_surface = valid_wb & (wetbulb_c > 0.5)
+    near_freezing = valid_wb & (wetbulb_c > 0.0) & (wetbulb_c <= 0.5)
 
     valid_flag = np.isfinite(precip_flag)
+    flag_int = np.zeros(shape, dtype=np.int16)
+    flag_int[valid_flag] = precip_flag[valid_flag].astype(np.int16)
+    snow_flag = valid_flag & (flag_int == PRECIPFLAG_SNOW)
 
-    flag = np.where(
-        valid_flag,
-        precip_flag,
-        -999,
-    ).astype(np.int16)
-
-    snow_flag = (
-        valid_flag
-        & (flag == PRECIPFLAG_SNOW)
+    has_bb = (
+        np.isfinite(bb_top_m)
+        & np.isfinite(bb_bottom_m)
+        & (bb_top_m >= 0.0)
+        & (bb_bottom_m >= 0.0)
+        & (bb_top_m >= bb_bottom_m)
     )
 
-    warm_rain_flag = (
-        valid_flag
-        & (flag == PRECIPFLAG_WARM_STRATIFORM)
-    )
-
-    cool_stratiform_flag = (
-        valid_flag
-        & (flag == PRECIPFLAG_COOL_STRATIFORM)
-    )
-
-    winter_candidate_flag = (
-        snow_flag
-        | cool_stratiform_flag
-    )
-
-    # ---------------------------------------------------------------
-    # 5. Rain
-    #
-    # Rain is deliberately transparent in render.py.
-    # ---------------------------------------------------------------
-
-    rain = precip & (
-        warm_surface
-        | warm_rain_flag
-    )
-
-    phase[rain] = RAIN
-
-    confidence[rain] = 0.80
-
-    # ---------------------------------------------------------------
-    # 6. Strong snow signal
-    #
-    # Explicit MRMS snow flag + cold surface is our strongest
-    # first-pass winter classification.
-    # ---------------------------------------------------------------
-
-    snow = (
-        precip
-        & cold_surface
-        & snow_flag
-    )
-
+    # Clear snow signal first.
+    snow = precip & cold_surface & (snow_flag | ~has_bb)
     phase[snow] = SNOW
-    confidence[snow] = 0.82
+    confidence[snow] = np.where(snow_flag[snow], 0.76, 0.64)
 
-    # ---------------------------------------------------------------
-    # 7. Very cold precipitation
-    #
-    # Very cold surface conditions strongly support snow when MRMS
-    # has not explicitly identified rain.
-    # ---------------------------------------------------------------
+    # Cold surface + evidence of a melt layer remains mixed until a proper
+    # vertical thermal-profile algorithm is applied.
+    mixed = precip & cold_surface & has_bb
+    phase[mixed] = MIXED
+    confidence[mixed] = 0.55
 
-    very_cold_snow = (
-        precip
-        & very_cold_surface
-        & ~rain
-        & ~snow_flag
-        & ~has_bb
-    )
+    # Warm surface remains rain.
+    rain = precip & warm_surface
+    phase[rain] = RAIN
+    confidence[rain] = 0.70
 
-    phase[very_cold_snow] = SNOW
-    confidence[very_cold_snow] = 0.72
+    # 0.0 to +0.5 C is intentionally treated as uncertain/mixed rather than
+    # forcing a surface phase answer.
+    near_surface = precip & near_freezing
+    phase[near_surface] = MIXED
+    confidence[near_surface] = 0.45
 
-    # ---------------------------------------------------------------
-    # 8. Cold precipitation with bright band
-    #
-    # This is deliberately classified as MIXED rather than trying
-    # to force a sleet/FZRA decision.
-    # ---------------------------------------------------------------
+    # If the wet-bulb field is unavailable, preserve a snow flag when present;
+    # otherwise mark precipitation as uncertain rather than falsely declaring
+    # rain or snow.
+    missing_thermal = precip & ~valid_wb
+    snow_without_thermal = missing_thermal & snow_flag
+    phase[snow_without_thermal] = SNOW
+    confidence[snow_without_thermal] = 0.50
 
-    cold_mixed = (
-        precip
-        & cold_surface
-        & has_bb
-        & ~rain
-    )
+    uncertain = missing_thermal & ~snow_flag
+    phase[uncertain] = UNKNOWN
+    confidence[uncertain] = 0.20
 
-    phase[cold_mixed] = MIXED
-    confidence[cold_mixed] = 0.58
+    good_rqi = np.clip(np.nan_to_num(rqi, nan=1.0), 0.0, 1.0)
+    confidence *= 0.5 + 0.5 * good_rqi
 
-    # ---------------------------------------------------------------
-    # 9. Cool stratiform precipitation
-    #
-    # MRMS cool-stratiform precipitation near/below freezing is
-    # treated as winter precipitation, but conservatively left as
-    # MIXED unless the snow signal is stronger.
-    # ---------------------------------------------------------------
-
-    cool_winter = (
-        precip
-        & near_freezing_surface
-        & cool_stratiform_flag
-        & ~rain
-        & ~snow
-    )
-
-    phase[cool_winter] = MIXED
-    confidence[cool_winter] = 0.55
-
-    # ---------------------------------------------------------------
-    # 10. Near-freezing precipitation without a clean phase signal
-    #
-    # Do NOT make these transparent. They are exactly the cases
-    # where the eventual vertical thermal/dual-pol logic needs to
-    # operate.
-    # ---------------------------------------------------------------
-
-    uncertain_winter = (
-        precip
-        & near_freezing_surface
-        & ~rain
-        & ~snow
-        & ~cold_mixed
-        & ~cool_winter
-    )
-
-    phase[uncertain_winter] = UNKNOWN
-    confidence[uncertain_winter] = 0.35
-
-    # ---------------------------------------------------------------
-    # 11. Missing thermodynamic information
-    #
-    # If precipitation exists but wet-bulb temperature is unavailable,
-    # don't silently call it rain.
-    #
-    # Keep it as UNKNOWN so winter precipitation isn't accidentally
-    # made transparent.
-    # ---------------------------------------------------------------
-
-    missing_environment = (
-        precip
-        & ~valid_wb
-        & ~rain
-        & ~snow
-    )
-
-    phase[missing_environment] = UNKNOWN
-    confidence[missing_environment] = 0.25
-
-    # ---------------------------------------------------------------
-    # 12. RQI adjustment
-    # ---------------------------------------------------------------
-
-    good_rqi = np.clip(
-        np.nan_to_num(
-            rqi,
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        ),
-        0.0,
-        1.0,
-    )
-
-    # RQI affects confidence, not phase.
-    confidence *= 0.50 + 0.50 * good_rqi
-
-    # ---------------------------------------------------------------
-    # 13. Rain intensity
-    # ---------------------------------------------------------------
-
-    intensity = rain_intensity_dbz(
-        reflectivity
-    )
-
-    # Only actual rain gets rain intensity.
+    intensity = rain_intensity_dbz(reflectivity)
     intensity[phase != RAIN] = 0
 
-    # ---------------------------------------------------------------
-    # 14. Explicit clear pixels
-    # ---------------------------------------------------------------
-
-    no_precip = ~precip
-
-    phase[no_precip] = CLEAR
-    confidence[no_precip] = 0.0
-    intensity[no_precip] = 0
+    bad = ~precip
+    phase[bad] = CLEAR
+    confidence[bad] = 0.0
+    intensity[bad] = 0
 
     return ClassificationResult(
         phase=phase,
