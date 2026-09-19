@@ -10,13 +10,16 @@ permissions:
   pages: write
   id-token: write
 
+# Do NOT cancel a running map build when the next 5-minute trigger fires.
+# GitHub will keep one run active and retain the newest pending run.
 concurrency:
-  group: mrms-radar
-  cancel-in-progress: true
+  group: mrms-map
+  cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -35,11 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libeccodes-dev \
-            libeccodes-tools \
-            libgeos-dev \
-            libproj-dev \
-            proj-data \
-            proj-bin
+            libeccodes-tools
 
       - name: Install Python dependencies
         run: |
@@ -49,19 +48,13 @@ jobs:
             requests \
             Pillow \
             xarray \
-            cfgrib \
-            matplotlib \
-            gspread \
-            google-auth \
-            google-api-python-client \
-            pygrib \
-            cartopy \
-            metpy
+            cfgrib
 
       # ----------------------------------------------------------
-      # Main MRMS processing
+      # THIS IS THE ONLY REQUIRED PROCESS FOR THE LIVE MAP.
+      # Diagnostics are intentionally not allowed to block Pages.
       # ----------------------------------------------------------
-      - name: Run main MRMS processing
+      - name: Run main MRMS map processing
         working-directory: src
         env:
           MPLBACKEND: Agg
@@ -71,125 +64,36 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: |
           set -e
+
           mkdir -p ../outputs
 
           echo "=============================================="
-          echo "RUNNING MAIN MRMS PROCESSING"
+          echo "RUNNING LIVE MRMS MAP"
           echo "=============================================="
 
           python -u main.py 2>&1 | tee ../outputs/main.log
 
           echo
-          echo "MAIN OUTPUT CHECK"
+          echo "=============================================="
+          echo "LIVE MRMS OUTPUT CHECK"
+          echo "=============================================="
+
           test -s ../outputs/mrms_current.png
           test -s ../outputs/mrms_current.json
           test -s ../outputs/winter_phase_mask.png
 
+          file ../outputs/mrms_current.png
+          file ../outputs/winter_phase_mask.png
           ls -lh \
             ../outputs/mrms_current.png \
             ../outputs/mrms_current.json \
             ../outputs/winter_phase_mask.png
 
-      # ----------------------------------------------------------
-      # MRMS diagnostics
-      # ----------------------------------------------------------
-      - name: Build MRMS diagnostics
-        working-directory: src
-        env:
-          MPLBACKEND: Agg
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -e
-          python -u build_mrms_diagnostics.py
+          echo "LIVE MRMS MAP OUTPUTS READY"
 
       # ----------------------------------------------------------
-      # Vertical dual-pol
-      # ----------------------------------------------------------
-      - name: Download vertical dual-pol data
-        working-directory: src
-        env:
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -e
-          python -u download_vertical_dualpol.py
-
-      - name: Build vertical dual-pol diagnostic
-        working-directory: src
-        env:
-          MPLBACKEND: Agg
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -e
-          python -u build_vertical_dualpol_diagnostic.py
-
-      - name: Normalize vertical diagnostic filename
-        run: |
-          set -e
-          if [ -f outputs/vertical_dualpol_diagnostic.png ]; then
-            cp outputs/vertical_dualpol_diagnostic.png outputs/mrms_vertical_dualpol.png
-          elif [ ! -f outputs/mrms_vertical_dualpol.png ]; then
-            echo "ERROR: vertical dual-pol diagnostic was not created."
-            exit 1
-          fi
-
-      # ----------------------------------------------------------
-      # Winter diagnostic
-      # ----------------------------------------------------------
-      - name: Build winter precipitation diagnostic
-        working-directory: src
-        env:
-          MPLBACKEND: Agg
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -e
-          python -u build_winter_mask.py
-
-      # ----------------------------------------------------------
-      # Verify generated outputs
-      # ----------------------------------------------------------
-      - name: Verify generated outputs
-        run: |
-          set -e
-
-          echo "=============================="
-          echo "GENERATED OUTPUT CHECK"
-          echo "=============================="
-
-          files=(
-            "outputs/mrms_current.png"
-            "outputs/mrms_current.json"
-            "outputs/winter_phase_mask.png"
-            "outputs/mrms_diagnostics.png"
-            "outputs/mrms_diagnostics.json"
-            "outputs/mrms_vertical_dualpol.png"
-            "outputs/winter_mask_diagnostics.png"
-            "outputs/winter_mask_diagnostics.json"
-          )
-
-          for file in "${files[@]}"; do
-            if [ -s "$file" ]; then
-              echo "OK: $file"
-              ls -lh "$file"
-            else
-              echo "ERROR: MISSING OR EMPTY $file"
-              exit 1
-            fi
-          done
-
-      # ----------------------------------------------------------
-      # Build GitHub Pages artifact
+      # Build and deploy Pages immediately after main.py succeeds.
+      # Nothing else can block the live radar map.
       # ----------------------------------------------------------
       - name: Assemble Pages site
         run: |
@@ -202,43 +106,22 @@ jobs:
           cp outputs/mrms_current.png site/outputs/mrms_current.png
           cp outputs/mrms_current.json site/outputs/mrms_current.json
           cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
-          cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
-          cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
-          cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
-          cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
-          cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
 
-          echo "PAGES ARTIFACT CONTENT"
+          echo "=============================================="
+          echo "PAGES CONTENT"
+          echo "=============================================="
           find site -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
 
           test -s site/index.html
           test -s site/outputs/mrms_current.png
           test -s site/outputs/mrms_current.json
           test -s site/outputs/winter_phase_mask.png
-          test -s site/outputs/mrms_diagnostics.png
-          test -s site/outputs/mrms_diagnostics.json
-          test -s site/outputs/mrms_vertical_dualpol.png
-          test -s site/outputs/winter_mask_diagnostics.png
-          test -s site/outputs/winter_mask_diagnostics.json
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: ./site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    permissions:
-      pages: write
-      id-token: write
-
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
