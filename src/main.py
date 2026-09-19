@@ -143,6 +143,23 @@ def normalize_orientation(
     )
 
 
+def normalize_longitudes(
+    lons: np.ndarray,
+) -> np.ndarray:
+    """
+    Convert longitude coordinates to the -180..180 convention used by
+    the Leaflet map and the BTV crop bounds.
+
+    MRMS latitude/longitude coordinates are commonly encoded as
+    degrees east (e.g. 230..300 across CONUS), so a direct comparison
+    with negative longitudes such as -76..-69 would otherwise produce
+    a false "no overlap" result.
+    """
+    arr = np.asarray(lons, dtype=np.float64).copy()
+    arr = np.where(arr > 180.0, arr - 360.0, arr)
+    return arr
+
+
 def crop_to_btv_region(
     arrays: list[np.ndarray],
     lats: np.ndarray,
@@ -150,7 +167,7 @@ def crop_to_btv_region(
 ) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
 
     lats_arr = np.asarray(lats)
-    lons_arr = np.asarray(lons)
+    lons_arr = normalize_longitudes(lons)
 
     if (
         lats_arr.ndim == 1 and
@@ -373,6 +390,24 @@ def main():
     classification.phase = normalized[1]
     classification.confidence = normalized[2]
     classification.intensity = normalized[3]
+
+    print(
+        "MRMS geographic grid after longitude normalization:"
+    )
+    print(
+        f"  Latitude: {float(np.nanmin(lats)):.3f} to "
+        f"{float(np.nanmax(lats)):.3f}"
+    )
+    normalized_lons = normalize_longitudes(lons)
+    print(
+        f"  Longitude: {float(np.nanmin(normalized_lons)):.3f} to "
+        f"{float(np.nanmax(normalized_lons)):.3f}"
+    )
+    print(
+        "BTV crop extent:"
+        f" {MAP_SOUTH} to {MAP_NORTH} N, "
+        f"{MAP_WEST} to {MAP_EAST} W"
+    )
 
     print(
         "Cropping products to the BTV regional map area..."
