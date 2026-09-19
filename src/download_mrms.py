@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import gzip
 import os
-import shutil
 import time
 from pathlib import Path
 
@@ -27,6 +26,8 @@ from config import (
 
 USER_AGENT = "WinterRadar/1.0 (NWS MRMS operational visualization)"
 RETRYABLE_STATUS = (408, 429, 500, 502, 503, 504)
+CHUNK_SIZE = 1024 * 1024
+
 
 def _session() -> requests.Session:
     session = requests.Session()
@@ -55,6 +56,37 @@ def _validate_grib(path: Path) -> None:
         )
 
 
+def _validate_gzip_grib(path: Path) -> int:
+    """Fully consume the gzip stream so truncated downloads are detected now.
+
+    Returns the number of decompressed bytes consumed. Reading only the first
+    four bytes is NOT sufficient: gzip can report a valid header even when the
+    transfer was truncated before the CRC/end-of-stream marker.
+    """
+    if not path.exists() or path.stat().st_size < 16:
+        raise RuntimeError(f"Downloaded gzip payload is missing or too small: {path}")
+
+    total = 0
+    try:
+        with gzip.open(path, "rb") as fh:
+            magic = fh.read(4)
+            if magic != b"GRIB":
+                raise RuntimeError(
+                    f"Compressed response does not contain a GRIB payload: {path}"
+                )
+            while True:
+                chunk = fh.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+    except (EOFError, OSError, gzip.BadGzipFile) as exc:
+        raise RuntimeError(f"Incomplete/corrupt gzip stream: {path}: {exc}") from exc
+
+    if total < 16:
+        raise RuntimeError(f"Decompressed GRIB payload is unexpectedly small: {total} bytes")
+    return total
+
+
 def _download_to_gz(
     session: requests.Session,
     url: str,
@@ -64,6 +96,12 @@ def _download_to_gz(
     connect_timeout: int,
     read_timeout: int,
 ) -> None:
+    """Download and fully validate a gzip-wrapped GRIB before accepting it.
+
+    A truncated HTTP transfer is treated as a failed attempt and retried.
+    The live .gz file is replaced only after the complete stream passes gzip
+    CRC/end-of-stream validation and contains a GRIB payload.
+    """
     part = gz_path.with_name(gz_path.name + ".part")
     if part.exists():
         part.unlink()
@@ -77,6 +115,7 @@ def _download_to_gz(
                 url,
                 timeout=(connect_timeout, read_timeout),
                 stream=True,
+                allow_redirects=True,
             ) as response:
                 if response.status_code in RETRYABLE_STATUS:
                     raise requests.HTTPError(
@@ -85,21 +124,32 @@ def _download_to_gz(
                     )
                 response.raise_for_status()
 
+                expected_bytes = response.headers.get("Content-Length")
+                expected_bytes_int = int(expected_bytes) if expected_bytes and expected_bytes.isdigit() else None
+                received_bytes = 0
+
                 with part.open("wb") as fh:
-                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                         if chunk:
                             fh.write(chunk)
+                            received_bytes += len(chunk)
 
-            if part.stat().st_size < 32:
-                raise RuntimeError(f"Downloaded payload is unexpectedly small: {part}")
-
-            # Validate the compressed stream before making it the live file.
-            with gzip.open(part, "rb") as fh:
-                magic = fh.read(4)
-            if magic != b"GRIB":
+            if received_bytes < 16:
                 raise RuntimeError(
-                    f"Compressed response does not contain a GRIB payload: {url}"
+                    f"Downloaded payload is unexpectedly small: {received_bytes} bytes"
                 )
+
+            if expected_bytes_int is not None and received_bytes != expected_bytes_int:
+                raise RuntimeError(
+                    f"Incomplete HTTP body: received {received_bytes:,} of "
+                    f"{expected_bytes_int:,} bytes"
+                )
+
+            decompressed_bytes = _validate_gzip_grib(part)
+            print(
+                f"  Validated complete gzip/GRIB stream "
+                f"({received_bytes:,} compressed; {decompressed_bytes:,} decompressed bytes)"
+            )
 
             os.replace(part, gz_path)
             return
@@ -119,13 +169,18 @@ def _download_to_gz(
 
 
 def _decompress_atomic(gz_path: Path, grib_path: Path) -> None:
+    """Decompress an already-validated gzip stream into an atomic GRIB file."""
     part = grib_path.with_name(grib_path.name + ".part")
     if part.exists():
         part.unlink()
 
     try:
         with gzip.open(gz_path, "rb") as src, part.open("wb") as dst:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
+            while True:
+                chunk = src.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                dst.write(chunk)
         _validate_grib(part)
         os.replace(part, grib_path)
     finally:
@@ -141,6 +196,12 @@ def download_product(product: str, *, required: bool) -> Path | None:
     grib_path = DATA_DIR / f"MRMS_{product}.latest.grib2"
 
     print(f"Downloading {product} ({'required' if required else 'optional'})")
+
+    # Never let an older cycle's file masquerade as a successful current
+    # download when an optional transfer fails.
+    for stale in (gz_path, grib_path):
+        if stale.exists():
+            stale.unlink()
 
     try:
         with _session() as session:
@@ -163,7 +224,6 @@ def download_product(product: str, *, required: bool) -> Path | None:
 
 
 def download_required_live_products() -> dict[str, Path | None]:
-    """Download only the hard-required live radar product."""
     return {
         "reflectivity": download_product(
             REQUIRED_LIVE_PRODUCTS["reflectivity"],
@@ -173,7 +233,6 @@ def download_required_live_products() -> dict[str, Path | None]:
 
 
 def download_optional_live_products() -> dict[str, Path | None]:
-    """Best-effort phase-support fields for the live map."""
     results: dict[str, Path | None] = {}
     for name, product in LIVE_PRODUCTS.items():
         if name in REQUIRED_LIVE_PRODUCTS:
@@ -183,13 +242,12 @@ def download_optional_live_products() -> dict[str, Path | None]:
 
 
 def download_live_products() -> dict[str, Path | None]:
-    """Backward-compatible wrapper: required first, then optional."""
     results = download_required_live_products()
     results.update(download_optional_live_products())
     return results
 
+
 def download_diagnostic_products() -> dict[str, Path | None]:
-    """Best-effort download of non-critical 2-D diagnostic fields."""
     results: dict[str, Path | None] = {}
     for name, product in OPTIONAL_DIAGNOSTIC_PRODUCTS.items():
         results[name] = download_product(product, required=False)
@@ -210,7 +268,8 @@ def main(include_diagnostics: bool = False) -> None:
         download_diagnostic_products()
 
     missing = [
-        name for name, path in live.items() if path is None and name not in REQUIRED_LIVE_PRODUCTS
+        name for name, path in live.items()
+        if path is None and name not in REQUIRED_LIVE_PRODUCTS
     ]
     if missing:
         print("Live phase-support fields unavailable: " + ", ".join(missing))
@@ -220,10 +279,6 @@ def main(include_diagnostics: bool = False) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--diagnostics",
-        action="store_true",
-        help="Also download best-effort non-critical diagnostic 2-D products.",
-    )
+    parser.add_argument("--diagnostics", action="store_true")
     args = parser.parse_args()
     main(include_diagnostics=args.diagnostics)
