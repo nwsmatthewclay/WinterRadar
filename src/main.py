@@ -20,10 +20,10 @@ from download_mrms import (
     download_optional_live_products,
     download_required_live_products,
 )  # noqa: E402
-from read_mrms import get_values, get_valid_time_utc  # noqa: E402
+from read_mrms import get_values_with_time  # noqa: E402
 from render import reflectivity_to_rgba, result_to_phase_rgba, save_rgba_png, write_metadata  # noqa: E402
 
-MAIN_VERSION = "8.0-stable-live-core"
+MAIN_VERSION = "8.1-stable-live-core"
 
 
 def _path_for(name: str) -> Path:
@@ -31,7 +31,17 @@ def _path_for(name: str) -> Path:
 
 
 def load(name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # Optional fields only need values/coordinates. The reflectivity path uses
+    # load_reflectivity() below so the GRIB is opened only once for the live core.
+    from read_mrms import get_values
     return get_values(_path_for(name), product=PRODUCTS[name])
+
+
+def load_reflectivity() -> tuple[np.ndarray, np.ndarray, np.ndarray, str | None]:
+    return get_values_with_time(
+        _path_for("reflectivity"),
+        product=PRODUCTS["reflectivity"],
+    )
 
 
 def try_load_optional(
@@ -131,7 +141,7 @@ def main() -> None:
     if required_status.get("reflectivity") is None:
         raise RuntimeError("Required MRMS reflectivity download failed.")
 
-    ref, lats, lons = load("reflectivity")
+    ref, lats, lons, mrms_time_utc = load_reflectivity()
     validate_core_inputs(ref, lats, lons)
 
     print(f"Reflectivity shape: {ref.shape}")
@@ -197,14 +207,6 @@ def main() -> None:
     metadata_path = OUTPUT_DIR / "mrms_current.json"
     write_metadata(result, metadata_path)
 
-    # Read the timestamp through cfgrib/ecCodes instead of pygrib. This is
-    # intentionally best-effort: timestamp extraction can never invalidate a
-    # radar image that has already been successfully written.
-    try:
-        mrms_time_utc = get_valid_time_utc(_path_for("reflectivity"))
-    except Exception as exc:
-        print(f"  Warning: could not read MRMS valid time: {exc}")
-        mrms_time_utc = None
     if mrms_time_utc:
         print(f"MRMS valid time: {mrms_time_utc}")
 
@@ -243,10 +245,7 @@ def main() -> None:
         print(f"  {path} ({path.stat().st_size:,} bytes)")
     print("=" * 72)
 
-    # Do not force garbage collection here.  The live core uses native GRIB
-    # libraries underneath cfgrib; explicit shutdown/GC at this point is not
-    # necessary and can trigger third-party native finalizers after all output
-    # files are already valid.  Let normal process teardown reclaim memory.
+    print("Live MRMS core completed without forced native-library cleanup.")
 
 
 if __name__ == "__main__":
