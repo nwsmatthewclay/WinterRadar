@@ -187,6 +187,34 @@ html, body {
     box-shadow: 0 2px 7px rgba(0,0,0,.10);
 }
 
+
+.radar-time {
+    position: absolute;
+    top: 9px;
+    left: 58px;
+    z-index: 1210;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 9px;
+    border: 1px solid #aeb8c0;
+    border-radius: 6px;
+    background: rgba(255,255,255,.96);
+    color: #2d3d48;
+    font-size: 10px;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(25,35,45,.14);
+    pointer-events: none;
+}
+
+.radar-time-label {
+    color: #166b9f;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
 .layer-box {
     position: absolute;
     top: 9px;
@@ -501,7 +529,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
     <div class="heading">
         <h1>Current MRMS</h1>
-        <span>Interactive BTV regional radar / winter phase viewer</span>
+        <span>Interactive BTV regional radar / winter phase viewer • Web Mercator</span>
     </div>
 
     <section class="map-card">
@@ -523,6 +551,11 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
             <div id="loading" class="loading">
                 Loading MRMS…
+            </div>
+
+            <div id="radarTimeBadge" class="radar-time" title="Valid time of the MRMS reflectivity image">
+                <span class="radar-time-label">MRMS</span>
+                <span id="radarTime">Loading…</span>
             </div>
 
             <div class="layer-box">
@@ -638,7 +671,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
     <div class="info-strip">
 
         <div class="info-card">
-            <div class="info-label">MRMS cycle</div>
+            <div class="info-label">MRMS image time</div>
             <div class="info-value" id="lastUpdate">Loading…</div>
         </div>
 
@@ -1479,13 +1512,22 @@ async function refreshData() {
         const metadata =
             await response.json();
 
-        const now =
-            metadata.generated_at_utc
-                ? new Date(metadata.generated_at_utc)
-                : new Date();
+        const mrmsTime =
+            metadata.mrms_time_utc
+                ? new Date(metadata.mrms_time_utc)
+                : (metadata.generated_at_utc
+                    ? new Date(metadata.generated_at_utc)
+                    : new Date());
 
         const display =
-            now.toLocaleString();
+            new Intl.DateTimeFormat(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                timeZoneName: "short"
+            }).format(mrmsTime);
 
         document.getElementById(
             "lastUpdate"
@@ -1493,6 +1535,10 @@ async function refreshData() {
 
         document.getElementById(
             "dataTime"
+        ).textContent = display;
+
+        document.getElementById(
+            "radarTime"
         ).textContent = display;
 
         loadRadarLayers(metadata);
