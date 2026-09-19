@@ -652,47 +652,39 @@
                 </button>
 
                 <div id="layerPanel" class="layer-panel">
-                    <div class="layer-section-title">Radar & Winter</div>
+                    <div class="layer-section-title">Map Layers</div>
 
                     <label class="layer-row">
                         <input
                             id="radarToggle"
                             type="checkbox"
-                            checked
-                            onchange="setLayerVisible(radarOverlay, this.checked)"
+                            onchange="toggleRadar(this.checked)"
                         >
-                        <span>MRMS Reflectivity</span>
+                        <span>MRMS Radar Data</span>
                     </label>
 
                     <label class="layer-row">
                         <input
                             id="phaseToggle"
                             type="checkbox"
-                            checked
-                            onchange="setLayerVisible(phaseOverlay, this.checked)"
+                            onchange="togglePhase(this.checked)"
                         >
-                        <span>Winter Phase Mask</span>
+                        <span>Winter Mask</span>
                     </label>
-
-                    <div class="layer-divider"></div>
-
-                    <div class="layer-section-title">NWS Reference Layers</div>
 
                     <label class="layer-row">
                         <input
-                            id="zonesToggle"
+                            id="cwaToggle"
                             type="checkbox"
-                            checked
-                            onchange="setLayerVisible(zoneLayer, this.checked)"
+                            onchange="setLayerVisible(cwaLayer, this.checked)"
                         >
-                        <span>NWS Public Forecast Zones</span>
+                        <span>NWS CWA Borders</span>
                     </label>
 
                     <label class="layer-row">
                         <input
                             id="countiesToggle"
                             type="checkbox"
-                            checked
                             onchange="setLayerVisible(countyLayer, this.checked)"
                         >
                         <span>County Boundaries</span>
@@ -700,132 +692,22 @@
 
                     <label class="layer-row">
                         <input
+                            id="zonesToggle"
+                            type="checkbox"
+                            onchange="setLayerVisible(zoneLayer, this.checked)"
+                        >
+                        <span>NWS Forecast Zones</span>
+                    </label>
+
+                    <label class="layer-row">
+                        <input
                             id="statesToggle"
                             type="checkbox"
-                            checked
                             onchange="setLayerVisible(stateLayer, this.checked)"
                         >
                         <span>State Borders</span>
                     </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="cwaToggle"
-                            type="checkbox"
-                            checked
-                            onchange="setLayerVisible(cwaLayer, this.checked)"
-                        >
-                        <span>BTV County Warning Area</span>
-                    </label>
-
-                    <div class="layer-divider"></div>
-
-                    <div class="layer-section-title">Base Map</div>
-
-                    <label class="layer-row">
-                        <input
-                            name="basemap"
-                            type="radio"
-                            checked
-                            onchange="switchBaseMap('street')"
-                        >
-                        <span>Street Map</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            name="basemap"
-                            type="radio"
-                            onchange="switchBaseMap('topo')"
-                        >
-                        <span>Topographic Map</span>
-                    </label>
-
-                    <div class="layer-divider"></div>
-
-                    <label class="layer-row">
-                        <input
-                            id="labelsToggle"
-                            type="checkbox"
-                            checked
-                            onchange="toggleZoneLabels(this.checked)"
-                        >
-                        <span>Zone Labels</span>
-                    </label>
                 </div>
-            </div>
-
-            <div id="searchResults" class="search-results"></div>
-        </div>
-
-        <div class="map-toolbar">
-
-            <div class="toolbar-group">
-                <span class="toolbar-label">Find a town or city</span>
-
-                <form class="map-search" onsubmit="searchPlace(event)">
-                    <input
-                        id="placeSearch"
-                        type="text"
-                        autocomplete="off"
-                        placeholder="Burlington, VT • Plattsburgh, NY • Montpelier, VT"
-                    >
-                    <button class="tool-button" type="submit">Search</button>
-                </form>
-            </div>
-
-            <div class="toolbar-group">
-                <button class="tool-button" type="button" onclick="zoomToBTV()">
-                    BTV CWA
-                </button>
-
-                <button class="tool-button" type="button" onclick="zoomToVermont()">
-                    Vermont
-                </button>
-
-                <button class="tool-button" type="button" onclick="map.setZoom(9)">
-                    Regional
-                </button>
-            </div>
-
-        </div>
-
-    </section>
-
-    <div class="info-strip">
-
-        <div class="info-card">
-            <div class="info-label">Last MRMS Update</div>
-            <div class="info-value" id="lastUpdate">Loading…</div>
-        </div>
-
-        <div class="info-card">
-            <div class="info-label">Winter Mask</div>
-            <div class="info-value">
-                Snow / sleet / freezing rain / mixed / uncertain
-            </div>
-        </div>
-
-        <div class="info-card">
-            <div class="info-label">Map Layers</div>
-            <div class="info-value">
-                NWS zones • counties • states • BTV CWA
-            </div>
-        </div>
-
-    </div>
-
-    <details class="diagnostics">
-        <summary>Diagnostics</summary>
-
-        <div class="diagnostic-grid">
-
-            <section class="diagnostic-card">
-                <div class="diagnostic-head">
-                    <div class="diagnostic-title">MRMS Diagnostics</div>
-                    <div class="diagnostic-text">
-                        Core MRMS fields and precipitation diagnostics.
-                    </div>
                 </div>
 
                 <img
@@ -999,7 +881,7 @@ function initializeMap() {
 
 function setLayerVisible(layer, visible) {
 
-    if (!layer || !map) {
+    if (!map || !layer) {
         return;
     }
 
@@ -1014,28 +896,30 @@ function setLayerVisible(layer, visible) {
     }
 }
 
-function switchBaseMap(name) {
 
-    if (name === "topo") {
+function toggleRadar(visible) {
 
-        if (map.hasLayer(baseStreet)) {
-            map.removeLayer(baseStreet);
+    if (!visible) {
+        if (radarOverlay && map.hasLayer(radarOverlay)) {
+            map.removeLayer(radarOverlay);
         }
-
-        if (!map.hasLayer(baseTopo)) {
-            baseTopo.addTo(map);
-        }
-
-    } else {
-
-        if (map.hasLayer(baseTopo)) {
-            map.removeLayer(baseTopo);
-        }
-
-        if (!map.hasLayer(baseStreet)) {
-            baseStreet.addTo(map);
-        }
+        return;
     }
+
+    ensureRadarOverlay();
+}
+
+
+function togglePhase(visible) {
+
+    if (!visible) {
+        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
+            map.removeLayer(phaseOverlay);
+        }
+        return;
+    }
+
+    ensurePhaseOverlay();
 }
 
 function toggleLayerPanel() {
@@ -1049,28 +933,6 @@ function toggleLayerPanel() {
     panel.classList.toggle("open");
 }
 
-function toggleZoneLabels(enabled) {
-    zoneLayer.setParams({
-        format: "image/png",
-        transparent: true
-    });
-
-    /*
-     * The official NWS WMS layer includes its own labels at
-     * appropriate scales. This checkbox controls the visibility
-     * of the official zone layer itself so the boundary + labels
-     * remain synchronized.
-     */
-    if (!enabled) {
-        if (map.hasLayer(zoneLayer)) {
-            map.removeLayer(zoneLayer);
-        }
-    } else {
-        if (document.getElementById("zonesToggle").checked) {
-            zoneLayer.addTo(map);
-        }
-    }
-}
 
 function addQuickPlaces() {
 
@@ -1240,6 +1102,63 @@ function createImageOverlay(url, bounds, existing, opacity) {
     );
 }
 
+function ensureRadarOverlay() {
+
+    if (!currentBounds) {
+        return;
+    }
+
+    const radarUrl =
+        "./outputs/mrms_current.png?v=" +
+        Date.now();
+
+    radarOverlay = createImageOverlay(
+        radarUrl,
+        currentBounds,
+        radarOverlay,
+        0.94
+    );
+
+    radarOverlay.addTo(map);
+}
+
+
+function ensurePhaseOverlay() {
+
+    if (!currentBounds) {
+        return;
+    }
+
+    const phaseUrl =
+        "./outputs/winter_phase_mask.png?v=" +
+        Date.now();
+
+    phaseOverlay = createImageOverlay(
+        phaseUrl,
+        currentBounds,
+        phaseOverlay,
+        1.0
+    );
+
+    phaseOverlay.addTo(map);
+
+    /*
+     * If the workflow has not yet published winter_phase_mask.png,
+     * Leaflet will raise the normal image error. The layer stays
+     * optional and does not prevent the rest of the viewer working.
+     */
+    phaseOverlay.on("error", function() {
+        const checkbox = document.getElementById("phaseToggle");
+        if (checkbox) {
+            checkbox.checked = false;
+        }
+        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
+            map.removeLayer(phaseOverlay);
+        }
+    });
+}
+
+
 function buildRadarLayers(metadata) {
 
     if (
@@ -1271,44 +1190,19 @@ function buildRadarLayers(metadata) {
         }
     }
 
-    const radarUrl =
-        "./outputs/mrms_current.png?v=" +
-        Date.now();
-
-    const phaseUrl =
-        "./outputs/winter_phase_mask.png?v=" +
-        Date.now();
-
-    radarOverlay = createImageOverlay(
-        radarUrl,
-        currentBounds,
-        radarOverlay,
-        0.94
-    );
-
-    radarOverlay.addTo(map);
-
-    phaseOverlay = createImageOverlay(
-        phaseUrl,
-        currentBounds,
-        phaseOverlay,
-        1.0
-    );
-
-    phaseOverlay.addTo(map);
-
     /*
-     * Keep radar and phase synchronized with the layer checkboxes.
+     * IMPORTANT:
+     * All overlay layers are OFF on first load.
+     * Only create/load an MRMS image after the user checks it.
      */
-    if (!document.getElementById("radarToggle").checked) {
-        map.removeLayer(radarOverlay);
+    if (document.getElementById("radarToggle").checked) {
+        ensureRadarOverlay();
     }
 
-    if (!document.getElementById("phaseToggle").checked) {
-        map.removeLayer(phaseOverlay);
+    if (document.getElementById("phaseToggle").checked) {
+        ensurePhaseOverlay();
     }
 }
-
 function zoomToBTV() {
 
     /*
@@ -1459,15 +1353,16 @@ function initialLoad() {
             console.error(error);
 
             /*
-             * Preserve a useful viewer even if the JSON is
-             * temporarily unavailable.
+             * Preserve a useful geographic viewer even if the
+             * MRMS metadata is temporarily unavailable.
+             * Radar and phase layers remain off until selected.
              */
-            buildRadarLayers({});
+            currentBounds = FALLBACK_BTV_BOUNDS;
             zoomToBTV();
 
             if (loading) {
                 loading.textContent =
-                    "MRMS metadata unavailable — showing map";
+                    "MRMS metadata unavailable — showing base map";
             }
         });
 
