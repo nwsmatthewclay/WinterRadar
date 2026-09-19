@@ -2,215 +2,135 @@ name: MRMS Winter Radar
 
 on:
   workflow_dispatch:
-
   schedule:
-    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
-
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
-
 concurrency:
   group: mrms-radar
   cancel-in-progress: true
 
-
 jobs:
 
-  # ========================================================
-  # BUILD
-  # ========================================================
-
   build:
-
     runs-on: ubuntu-latest
 
     steps:
 
-      # ------------------------------------------------------
-      # Checkout
-      # ------------------------------------------------------
-
       - name: Checkout
         uses: actions/checkout@v6
-
-
-      # ------------------------------------------------------
-      # GitHub Pages
-      # ------------------------------------------------------
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-
-      # ------------------------------------------------------
-      # System dependencies
-      # ------------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libeccodes-dev \
-            libeccodes-tools
+            libeccodes-tools \
+            libgeos-dev \
+            libproj-dev \
+            proj-data \
+            proj-bin
 
-
-      # ------------------------------------------------------
-      # Python
-      # ------------------------------------------------------
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-
-      # ------------------------------------------------------
-      # Python packages
-      # ------------------------------------------------------
-
-      - name: Install Python packages
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install \
+            numpy \
+            requests \
+            Pillow \
+            xarray \
+            cfgrib \
+            matplotlib \
+            gspread \
+            google-auth \
+            google-api-python-client \
+            pygrib \
+            cartopy \
+            metpy
 
-
-      # ======================================================
-      # STANDARD MRMS PROCESSING
-      # ======================================================
-
-      - name: Process latest MRMS data
+      # ----------------------------------------------------------
+      # Main MRMS processing
+      # ----------------------------------------------------------
+      - name: Run main MRMS processing
         working-directory: src
         run: |
+          set -e
           mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/main.log
 
-
-      - name: Show main log
-        if: always()
-        run: |
-          echo "===== MAIN.PY LOG ====="
-          cat outputs/main.log || true
-
-
-      # ======================================================
-      # VERTICAL DUAL-POL
-      # ======================================================
-
-      - name: Download vertical dual-pol MRMS
+      # ----------------------------------------------------------
+      # MRMS diagnostics
+      # ----------------------------------------------------------
+      - name: Build MRMS diagnostics
         working-directory: src
         run: |
-          python download_vertical_dualpol.py
+          set -e
+          python -u build_mrms_diagnostics.py
 
+      # ----------------------------------------------------------
+      # Vertical dual-pol
+      # ----------------------------------------------------------
+      - name: Download vertical dual-pol data
+        working-directory: src
+        run: |
+          set -e
+          python -u download_vertical_dualpol.py
 
       - name: Build vertical dual-pol diagnostic
         working-directory: src
         run: |
-          python build_vertical_dualpol_diagnostic.py
+          set -e
+          python -u build_vertical_dualpol_diagnostic.py
 
-
-      # ------------------------------------------------------
-      # Normalize vertical dual-pol filename
-      # ------------------------------------------------------
-
-      - name: Prepare vertical dual-pol output
+      - name: Normalize vertical diagnostic filename
         run: |
-          echo "===== OUTPUTS BEFORE VERTICAL NORMALIZATION ====="
-          ls -lah outputs
+          set -e
 
           if [ -f outputs/vertical_dualpol_diagnostic.png ]; then
-
-            cp outputs/vertical_dualpol_diagnostic.png \
-               outputs/mrms_vertical_dualpol.png
-
-            echo "Vertical dual-pol image prepared successfully."
-
-          elif [ -f outputs/mrms_vertical_dualpol.png ]; then
-
-            echo "Vertical dual-pol image already has normalized name."
-
-          else
-
-            echo "ERROR: Vertical dual-pol diagnostic image was not created."
-            echo "Contents of outputs:"
-            ls -lah outputs
-            exit 1
-
-          fi
-
-
-      # ======================================================
-      # MRMS FIELD INSPECTION
-      # ======================================================
-
-      - name: Inspect MRMS fields
-        working-directory: src
-        run: |
-          python inspect_mrms.py
-
-
-      # ======================================================
-      # WINTER PRECIPITATION INPUT DIAGNOSTIC
-      # ======================================================
-
-      - name: Inspect winter precipitation inputs
-        working-directory: src
-        run: |
-          python build_winter_mask.py
-
-
-      # ------------------------------------------------------
-      # Verify winter diagnostic outputs
-      # ------------------------------------------------------
-
-      - name: Verify winter diagnostic outputs
-        run: |
-
-          echo "===== WINTER DIAGNOSTIC OUTPUTS ====="
-
-          if [ ! -f outputs/winter_mask_diagnostics.png ]; then
-            echo "ERROR: winter_mask_diagnostics.png was not created."
+            cp \
+              outputs/vertical_dualpol_diagnostic.png \
+              outputs/mrms_vertical_dualpol.png
+          elif [ ! -f outputs/mrms_vertical_dualpol.png ]; then
+            echo "ERROR: vertical dual-pol diagnostic was not created."
             exit 1
           fi
 
-          if [ ! -f outputs/winter_mask_diagnostics.json ]; then
-            echo "ERROR: winter_mask_diagnostics.json was not created."
-            exit 1
-          fi
-
-          ls -lh \
-            outputs/winter_mask_diagnostics.png \
-            outputs/winter_mask_diagnostics.json
-
-
-      # ======================================================
-      # MRMS DIAGNOSTIC IMAGE
-      # ======================================================
-
-      - name: Build MRMS diagnostic image
+      # ----------------------------------------------------------
+      # Winter diagnostic
+      # ----------------------------------------------------------
+      - name: Build winter precipitation diagnostic
         working-directory: src
         run: |
-          python build_mrms_diagnostics.py
+          set -e
+          python -u build_winter_mask.py
 
-
-      # ======================================================
-      # VERIFY REQUIRED OUTPUTS
-      # ======================================================
-
-      - name: Verify required outputs
+      # ----------------------------------------------------------
+      # Verify generated outputs
+      # ----------------------------------------------------------
+      - name: Verify generated outputs
         run: |
+          set -e
 
-          echo "=========================================="
-          echo "FINAL OUTPUT CHECK"
-          echo "=========================================="
+          echo "=============================="
+          echo "GENERATED OUTPUT CHECK"
+          echo "=============================="
 
-          required_files=(
+          files=(
             "outputs/mrms_current.png"
             "outputs/mrms_current.json"
+            "outputs/winter_phase_mask.png"
             "outputs/mrms_diagnostics.png"
             "outputs/mrms_diagnostics.json"
             "outputs/mrms_vertical_dualpol.png"
@@ -218,153 +138,93 @@ jobs:
             "outputs/winter_mask_diagnostics.json"
           )
 
-          for file in "${required_files[@]}"; do
-
-            if [ ! -f "$file" ]; then
-              echo "MISSING: $file"
+          for file in "${files[@]}"; do
+            if [ -f "$file" ]; then
+              echo "OK: $file"
+              ls -lh "$file"
+            else
+              echo "ERROR: MISSING $file"
               exit 1
             fi
-
-            echo "OK: $file"
-
           done
 
-          echo ""
-          echo "All required outputs exist."
-
-
-      # ======================================================
-      # BUILD GITHUB PAGES SITE
-      # ======================================================
-
+      # ----------------------------------------------------------
+      # Build GitHub Pages artifact
+      # ----------------------------------------------------------
       - name: Assemble Pages site
         run: |
+          set -e
 
-          echo "=========================================="
-          echo "BUILDING GITHUB PAGES SITE"
-          echo "=========================================="
-
-          # Start completely fresh.
           rm -rf site
-
           mkdir -p site/outputs
-
-          # --------------------------------------------------
-          # Main HTML
-          # --------------------------------------------------
-
-          echo "Copying index.html..."
 
           cp index.html site/index.html
 
-
-          # --------------------------------------------------
-          # Images
-          # --------------------------------------------------
-
-          echo "Copying images..."
-
           cp outputs/mrms_current.png \
-             site/outputs/mrms_current.png
-
-          cp outputs/mrms_diagnostics.png \
-             site/outputs/mrms_diagnostics.png
-
-          cp outputs/mrms_vertical_dualpol.png \
-             site/outputs/mrms_vertical_dualpol.png
-
-          cp outputs/winter_mask_diagnostics.png \
-             site/outputs/winter_mask_diagnostics.png
-
-
-          # --------------------------------------------------
-          # JSON
-          # --------------------------------------------------
-
-          echo "Copying JSON..."
+            site/outputs/mrms_current.png
 
           cp outputs/mrms_current.json \
-             site/outputs/mrms_current.json
+            site/outputs/mrms_current.json
+
+          cp outputs/winter_phase_mask.png \
+            site/outputs/winter_phase_mask.png
+
+          cp outputs/mrms_diagnostics.png \
+            site/outputs/mrms_diagnostics.png
 
           cp outputs/mrms_diagnostics.json \
-             site/outputs/mrms_diagnostics.json
+            site/outputs/mrms_diagnostics.json
+
+          cp outputs/mrms_vertical_dualpol.png \
+            site/outputs/mrms_vertical_dualpol.png
+
+          cp outputs/winter_mask_diagnostics.png \
+            site/outputs/winter_mask_diagnostics.png
 
           cp outputs/winter_mask_diagnostics.json \
-             site/outputs/winter_mask_diagnostics.json
+            site/outputs/winter_mask_diagnostics.json
 
+          echo
+          echo "=============================="
+          echo "PAGES ARTIFACT CONTENT"
+          echo "=============================="
 
-          # ==================================================
-          # VERIFY ACTUAL PAGES DIRECTORY
-          # ==================================================
+          find site -maxdepth 2 -type f \
+            -printf "%p (%s bytes)\n" | sort
 
-          echo ""
-          echo "=========================================="
-          echo "FINAL PAGES DIRECTORY"
-          echo "=========================================="
+          echo
+          echo "=============================="
+          echo "PAGES ARTIFACT CHECK"
+          echo "=============================="
 
-          find site -type f -printf '%p (%s bytes)\n' | sort
+          test -f site/index.html
+          test -f site/outputs/mrms_current.png
+          test -f site/outputs/mrms_current.json
+          test -f site/outputs/winter_phase_mask.png
+          test -f site/outputs/mrms_diagnostics.png
+          test -f site/outputs/mrms_diagnostics.json
+          test -f site/outputs/mrms_vertical_dualpol.png
+          test -f site/outputs/winter_mask_diagnostics.png
+          test -f site/outputs/winter_mask_diagnostics.json
 
+          echo "All Pages files verified."
 
-          echo ""
-          echo "=========================================="
-          echo "VERIFYING PAGES IMAGES"
-          echo "=========================================="
-
-          pages_files=(
-            "site/index.html"
-            "site/outputs/mrms_current.png"
-            "site/outputs/mrms_diagnostics.png"
-            "site/outputs/mrms_vertical_dualpol.png"
-            "site/outputs/winter_mask_diagnostics.png"
-            "site/outputs/mrms_current.json"
-            "site/outputs/mrms_diagnostics.json"
-            "site/outputs/winter_mask_diagnostics.json"
-          )
-
-          for file in "${pages_files[@]}"; do
-
-            if [ ! -f "$file" ]; then
-              echo "ERROR: Pages artifact is missing:"
-              echo "       $file"
-              exit 1
-            fi
-
-            echo "OK: $file"
-
-          done
-
-
-          echo ""
-          echo "=========================================="
-          echo "PAGES SITE READY"
-          echo "=========================================="
-
-
-      # ======================================================
-      # UPLOAD GITHUB PAGES ARTIFACT
-      # ======================================================
-
-      - name: Upload GitHub Pages artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: 'site'
-
-
-  # ========================================================
-  # DEPLOY
-  # ========================================================
+          path: ./site
 
   deploy:
-
     needs: build
-
     runs-on: ubuntu-latest
 
     environment:
-
       name: github-pages
-
       url: ${{ steps.deployment.outputs.page_url }}
+
+    permissions:
+      pages: write
+      id-token: write
 
     steps:
 
