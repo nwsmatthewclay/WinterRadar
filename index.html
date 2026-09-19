@@ -933,7 +933,7 @@ function loadRadarLayers(metadata) {
         }
 
         radarOverlay = createImageOverlay(
-            "./outputs/mrms_current.png?v=" + Date.now(),
+            "./outputs/mrms_current_web.png?v=" + Date.now(),
             currentBounds,
             0.92,
             500
@@ -951,7 +951,7 @@ function loadRadarLayers(metadata) {
         }
 
         phaseOverlay = createImageOverlay(
-            "./outputs/winter_phase_mask.png?v=" + Date.now(),
+            "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
             currentBounds,
             1.0,
             550
@@ -984,7 +984,7 @@ function toggleRadar(enabled) {
         }
 
         radarOverlay = createImageOverlay(
-            "./outputs/mrms_current.png?v=" + Date.now(),
+            "./outputs/mrms_current_web.png?v=" + Date.now(),
             currentBounds,
             0.92,
             500
@@ -1014,7 +1014,7 @@ function togglePhase(enabled) {
         }
 
         phaseOverlay = createImageOverlay(
-            "./outputs/winter_phase_mask.png?v=" + Date.now(),
+            "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
             currentBounds,
             1.0,
             550
