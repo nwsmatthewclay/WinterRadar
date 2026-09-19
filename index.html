@@ -6,590 +6,477 @@
 <title>WinterRadar • MRMS Winter Precipitation</title>
 <link rel="icon" href="data:,">
 
-<!-- Leaflet -->
-<link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
 <style>
-    :root {
-        --bg: #eef1f4;
-        --panel: #ffffff;
-        --panel-soft: #f7f8fa;
-        --line: #c8ced5;
-        --line-soft: #dfe3e8;
-        --text: #1c232b;
-        --text-soft: #4a5661;
-        --muted: #68747f;
-        --accent: #1268a3;
-        --accent-soft: #e8f2f9;
-        --shadow: 0 5px 18px rgba(25, 35, 45, .12);
-    }
+:root {
+    --bg: #eef2f5;
+    --panel: #ffffff;
+    --panel-soft: #f7f9fa;
+    --line: #c8d0d7;
+    --text: #17212a;
+    --muted: #697781;
+    --accent: #166b9f;
+}
 
-    * { box-sizing: border-box; }
+* { box-sizing: border-box; }
 
-    html, body {
-        margin: 0;
-        padding: 0;
-        min-height: 100%;
-        background: var(--bg);
-        color: var(--text);
-        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
-                     Roboto, Helvetica, Arial, sans-serif;
-    }
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 Roboto, Helvetica, Arial, sans-serif;
+}
 
-    body {
-        min-height: 100vh;
-    }
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 56px;
+    padding: 8px 14px;
+    background: rgba(255,255,255,.97);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 2px 8px rgba(20,35,45,.08);
+}
 
-    .topbar {
-        position: sticky;
-        top: 0;
-        z-index: 2000;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        min-height: 58px;
-        padding: 9px 16px;
-        background: rgba(255,255,255,.96);
-        border-bottom: 1px solid var(--line);
-        box-shadow: 0 2px 8px rgba(25,35,45,.08);
-        backdrop-filter: blur(8px);
-    }
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
 
-    .brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-width: 0;
-    }
+.brand-mark {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #2d84bd;
+    box-shadow: 0 0 0 4px rgba(45,132,189,.12);
+}
 
-    .brand-mark {
-        width: 11px;
-        height: 11px;
-        border-radius: 50%;
-        background: #2278b7;
-        box-shadow: 0 0 0 4px rgba(34,120,183,.12);
-        flex: 0 0 auto;
-    }
+.brand-title {
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1.05;
+}
 
-    .brand-title {
-        font-size: 16px;
-        font-weight: 750;
-        letter-spacing: .01em;
-        line-height: 1.1;
-    }
+.brand-subtitle {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 10px;
+}
 
-    .brand-subtitle {
-        margin-top: 3px;
-        color: var(--muted);
-        font-size: 11px;
-        white-space: nowrap;
-    }
+.top-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
 
-    .top-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex: 0 0 auto;
-    }
+.status {
+    padding: 6px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel-soft);
+    color: var(--muted);
+    font-size: 10px;
+}
 
-    .status {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 9px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        color: var(--text-soft);
-        background: var(--panel-soft);
-        font-size: 11px;
-    }
+.button {
+    border: 1px solid #b8c2ca;
+    border-radius: 6px;
+    background: #fff;
+    color: #30404c;
+    padding: 7px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+}
 
-    .status-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: #28a56a;
-    }
+.button:hover {
+    background: #f4f7f9;
+}
 
-    button {
-        font: inherit;
-    }
+.container {
+    width: min(1600px, calc(100% - 14px));
+    margin: 9px auto 22px;
+}
 
-    .tool-button {
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: var(--panel);
-        color: var(--text-soft);
-        cursor: pointer;
-        padding: 7px 10px;
-        font-size: 11px;
-        font-weight: 650;
-    }
+.heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 2px 7px;
+}
 
-    .tool-button:hover {
-        background: var(--panel-soft);
-        color: var(--text);
-        border-color: #aeb6be;
-    }
+.heading h1 {
+    margin: 0;
+    font-size: 14px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
 
-    .container {
-        width: min(1600px, calc(100% - 18px));
-        margin: 10px auto 24px;
-    }
+.heading span {
+    color: var(--muted);
+    font-size: 10px;
+}
 
-    .section-head {
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 12px;
-        margin: 0 2px 8px;
-    }
+.map-card {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 6px 18px rgba(25,35,45,.10);
+}
 
-    .section-head h1,
-    .section-head h2 {
-        margin: 0;
-        font-size: 14px;
-        letter-spacing: .055em;
-        text-transform: uppercase;
-        font-weight: 800;
-    }
+.map-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 11px;
+    background: #fbfcfd;
+    border-bottom: 1px solid var(--line);
+}
 
-    .section-head span {
-        color: var(--muted);
-        font-size: 11px;
-        white-space: nowrap;
-    }
+.map-title {
+    font-size: 14px;
+    font-weight: 800;
+}
 
-    .map-card {
-        overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: #fff;
-        box-shadow: var(--shadow);
-    }
+.map-subtitle {
+    margin-left: 7px;
+    color: var(--muted);
+    font-size: 10px;
+}
 
-    .map-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 9px 12px;
-        border-bottom: 1px solid var(--line);
-        background: #fbfcfd;
-    }
+.map-meta {
+    color: var(--muted);
+    font-size: 10px;
+    white-space: nowrap;
+}
 
-    .map-title {
-        font-size: 14px;
-        font-weight: 750;
-    }
+.map-wrap {
+    position: relative;
+}
 
-    .map-subtitle {
-        margin-left: 8px;
-        color: var(--muted);
-        font-size: 11px;
-    }
+#map {
+    width: 100%;
+    height: min(76vh, 800px);
+    min-height: 500px;
+    background: #dce6eb;
+}
 
-    .map-meta {
-        color: var(--muted);
-        font-size: 11px;
-        white-space: nowrap;
-    }
+.loading {
+    position: absolute;
+    top: 9px;
+    left: 9px;
+    z-index: 1200;
+    padding: 6px 8px;
+    border: 1px solid #b5c0c8;
+    border-radius: 6px;
+    background: rgba(255,255,255,.94);
+    color: #586771;
+    font-size: 10px;
+    box-shadow: 0 2px 7px rgba(0,0,0,.10);
+}
 
+.layer-box {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    z-index: 1300;
+    width: 245px;
+}
+
+.layer-toggle {
+    float: right;
+    border: 1px solid #aeb8c0;
+    border-radius: 7px;
+    background: rgba(255,255,255,.97);
+    color: #26353f;
+    padding: 8px 11px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 800;
+    box-shadow: 0 2px 8px rgba(25,35,45,.15);
+}
+
+.layer-panel {
+    display: none;
+    clear: both;
+    margin-top: 7px;
+    padding: 10px;
+    border: 1px solid #aeb8c0;
+    border-radius: 8px;
+    background: rgba(255,255,255,.97);
+    box-shadow: 0 4px 14px rgba(25,35,45,.18);
+}
+
+.layer-panel.open { display: block; }
+
+.layer-title {
+    margin-bottom: 6px;
+    color: #6b7781;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.layer-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 29px;
+    color: #26353f;
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.layer-row input {
+    margin: 0;
+}
+
+.search-results {
+    position: absolute;
+    left: 9px;
+    bottom: 9px;
+    z-index: 1250;
+    width: min(430px, calc(100% - 18px));
+    max-height: 240px;
+    overflow-y: auto;
+    display: none;
+    border: 1px solid #b4bec6;
+    border-radius: 7px;
+    background: rgba(255,255,255,.97);
+    box-shadow: 0 3px 12px rgba(25,35,45,.17);
+}
+
+.search-results.open { display: block; }
+
+.result-row {
+    padding: 8px 10px;
+    border-bottom: 1px solid #e4e8eb;
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 1.3;
+}
+
+.result-row:last-child { border-bottom: 0; }
+
+.result-row:hover {
+    background: #f2f6f8;
+}
+
+.result-row strong {
+    display: block;
+    font-size: 11px;
+}
+
+.result-row span {
+    color: var(--muted);
+}
+
+.map-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 9px;
+    background: #fbfcfd;
+    border-top: 1px solid var(--line);
+}
+
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.search-form {
+    display: flex;
+    gap: 6px;
+}
+
+.search-form input {
+    width: min(340px, 52vw);
+    height: 31px;
+    border: 1px solid #bfc7ce;
+    border-radius: 6px;
+    padding: 0 9px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text);
+    background: #fff;
+}
+
+.info-strip {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr 1fr;
+    gap: 7px;
+    margin-top: 7px;
+}
+
+.info-card {
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #fff;
+}
+
+.info-label {
+    color: var(--muted);
+    font-size: 8px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    font-weight: 800;
+}
+
+.info-value {
+    margin-top: 3px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    align-items: center;
+}
+
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    border: 1px solid #d3d9de;
+    border-radius: 5px;
+    background: #fff;
+    color: #52606a;
+    font-size: 9px;
+}
+
+.swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+}
+
+.snow { background: rgb(55,145,255); }
+.sleet { background: rgb(185,80,220); }
+.fzra { background: rgb(225,55,70); }
+.mixed { background: rgb(220,95,195); }
+.unknown { background: rgb(145,150,155); }
+
+details.diagnostics {
+    margin-top: 12px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #fff;
+}
+
+details.diagnostics summary {
+    padding: 10px 11px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+    list-style: none;
+}
+
+details.diagnostics summary::-webkit-details-marker { display: none; }
+
+.diagnostic-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0 9px 9px;
+}
+
+.diag-card {
+    overflow: hidden;
+    border: 1px solid #dde3e7;
+    border-radius: 6px;
+    background: #f7f9fa;
+}
+
+.diag-head {
+    padding: 7px 8px;
+    background: #fff;
+    border-bottom: 1px solid #dde3e7;
+}
+
+.diag-title {
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.diag-desc {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.diag-card img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.footer {
+    margin-top: 12px;
+    color: #7a868e;
+    font-size: 9px;
+    text-align: center;
+}
+
+@media (max-width: 900px) {
     #map {
-        width: 100%;
-        height: min(72vh, 760px);
-        min-height: 500px;
-        background: #d9e4eb;
-    }
-
-    .map-toolbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        flex-wrap: wrap;
-        padding: 8px 10px;
-        border-top: 1px solid var(--line);
-        background: #fbfcfd;
-    }
-
-    .toolbar-group {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        flex-wrap: wrap;
-    }
-
-    .toolbar-label {
-        color: var(--muted);
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: .07em;
-        font-weight: 750;
-    }
-
-    .map-search {
-        width: min(370px, 100%);
-        display: flex;
-        gap: 6px;
-    }
-
-    .map-search input {
-        flex: 1 1 auto;
-        min-width: 0;
-        height: 32px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 0 10px;
-        color: var(--text);
-        background: #fff;
-        outline: none;
-        font-size: 12px;
-    }
-
-    .map-search input:focus {
-        border-color: #7daac7;
-        box-shadow: 0 0 0 3px rgba(32,115,165,.11);
-    }
-
-    .map-search button {
-        height: 32px;
-        padding: 0 11px;
-    }
-
-    .leaflet-container {
-        font-family: inherit;
-    }
-
-    .leaflet-control-zoom {
-        border: 1px solid #aeb6be !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,.12);
-    }
-
-    .leaflet-control-zoom a {
-        color: #3c4b56 !important;
-        background: rgba(255,255,255,.94) !important;
-    }
-
-    .leaflet-control-attribution {
-        font-size: 9px !important;
-        background: rgba(255,255,255,.82) !important;
-    }
-
-    /* Custom open/close layers box */
-    .layer-control {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        z-index: 1200;
-        width: 250px;
-        pointer-events: none;
-    }
-
-    .layer-toggle {
-        pointer-events: auto;
-        float: right;
-        border: 1px solid #adb6bf;
-        border-radius: 7px;
-        background: rgba(255,255,255,.96);
-        color: #26333c;
-        padding: 8px 11px;
-        box-shadow: 0 2px 9px rgba(25,35,45,.16);
-        cursor: pointer;
-        font-size: 11px;
-        font-weight: 750;
-    }
-
-    .layer-toggle:hover {
-        background: #fff;
-    }
-
-    .layer-panel {
-        display: none;
-        clear: both;
-        margin-top: 7px;
-        pointer-events: auto;
-        padding: 10px;
-        border: 1px solid #adb6bf;
-        border-radius: 8px;
-        background: rgba(255,255,255,.97);
-        box-shadow: 0 4px 14px rgba(25,35,45,.18);
-    }
-
-    .layer-panel.open {
-        display: block;
-    }
-
-    .layer-section-title {
-        margin: 0 0 6px;
-        color: #5b6873;
-        font-size: 9px;
-        font-weight: 800;
-        letter-spacing: .08em;
-        text-transform: uppercase;
-    }
-
-    .layer-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 28px;
-        font-size: 11px;
-        color: #25313a;
-        cursor: pointer;
-    }
-
-    .layer-row input {
-        margin: 0;
-    }
-
-    .layer-divider {
-        height: 1px;
-        margin: 7px 0;
-        background: #e1e5e9;
-    }
-
-    .search-results {
-        position: absolute;
-        left: 10px;
-        bottom: 10px;
-        z-index: 1300;
-        width: min(430px, calc(100% - 20px));
-        max-height: 240px;
-        overflow: auto;
-        display: none;
-        border: 1px solid #adb6bf;
-        border-radius: 7px;
-        background: rgba(255,255,255,.97);
-        box-shadow: 0 4px 14px rgba(25,35,45,.18);
-    }
-
-    .search-results.open {
-        display: block;
-    }
-
-    .search-result {
-        padding: 9px 10px;
-        border-bottom: 1px solid #e7eaed;
-        cursor: pointer;
-        font-size: 11px;
-        line-height: 1.3;
-    }
-
-    .search-result:last-child {
-        border-bottom: 0;
-    }
-
-    .search-result:hover {
-        background: #f2f6f9;
-    }
-
-    .search-result strong {
-        display: block;
-        color: #1f2b33;
-    }
-
-    .search-result span {
-        color: #707c85;
-    }
-
-    .quick-places {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 5px;
-    }
-
-    .quick-place {
-        border: 1px solid #cbd2d8;
-        border-radius: 999px;
-        background: #fff;
-        color: #40515d;
-        padding: 5px 8px;
-        cursor: pointer;
-        font-size: 10px;
-    }
-
-    .quick-place:hover {
-        background: #f3f7fa;
-        border-color: #aeb9c2;
+        height: 68vh;
+        min-height: 440px;
     }
 
     .info-strip {
-        display: grid;
-        grid-template-columns: 1.1fr 1fr 1fr;
-        gap: 8px;
-        margin-top: 8px;
-    }
-
-    .info-card {
-        padding: 9px 11px;
-        border: 1px solid var(--line);
-        border-radius: 7px;
-        background: #fff;
-    }
-
-    .info-label {
-        color: var(--muted);
-        font-size: 9px;
-        letter-spacing: .07em;
-        text-transform: uppercase;
-        font-weight: 800;
-    }
-
-    .info-value {
-        margin-top: 3px;
-        color: var(--text);
-        font-size: 11px;
-        font-weight: 650;
-    }
-
-    details.diagnostics {
-        margin-top: 14px;
-        border: 1px solid var(--line);
-        border-radius: 7px;
-        background: #fff;
-        box-shadow: 0 2px 10px rgba(25,35,45,.06);
-    }
-
-    details.diagnostics summary {
-        padding: 10px 12px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 750;
-        list-style: none;
-    }
-
-    details.diagnostics summary::-webkit-details-marker {
-        display: none;
-    }
-
-    details.diagnostics summary::after {
-        content: "＋";
-        float: right;
-        color: var(--muted);
-    }
-
-    details.diagnostics[open] summary::after {
-        content: "−";
+        grid-template-columns: 1fr;
     }
 
     .diagnostic-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        padding: 0 10px 10px;
+        grid-template-columns: 1fr;
     }
 
-    .diagnostic-card {
-        overflow: hidden;
-        border: 1px solid var(--line-soft);
-        border-radius: 7px;
-        background: #f8f9fb;
+    .brand-subtitle,
+    .status {
+        display: none;
+    }
+}
+
+@media (max-width: 600px) {
+    .container { width: calc(100% - 8px); }
+
+    #map {
+        height: 62vh;
+        min-height: 390px;
     }
 
-    .diagnostic-head {
-        padding: 8px 9px;
-        border-bottom: 1px solid var(--line-soft);
-        background: #fff;
-    }
+    .layer-box { width: 225px; }
 
-    .diagnostic-title {
-        font-size: 11px;
-        font-weight: 750;
-    }
-
-    .diagnostic-text {
-        margin-top: 2px;
-        color: var(--muted);
-        font-size: 9px;
-        line-height: 1.35;
-    }
-
-    .diagnostic-card img {
-        display: block;
+    .search-form {
         width: 100%;
-        height: auto;
-        background: #e9edf1;
     }
 
-    .footer {
-        margin-top: 14px;
-        padding: 10px 0 2px;
-        text-align: center;
-        color: #76828b;
-        font-size: 9px;
+    .search-form input {
+        width: 100%;
     }
-
-    .loading-note {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        z-index: 1100;
-        padding: 6px 8px;
-        border: 1px solid #b7c0c8;
-        border-radius: 6px;
-        background: rgba(255,255,255,.94);
-        color: #50606b;
-        font-size: 10px;
-        box-shadow: 0 2px 7px rgba(0,0,0,.09);
-    }
-
-    @media (max-width: 900px) {
-        .brand-subtitle {
-            display: none;
-        }
-
-        #map {
-            height: 66vh;
-            min-height: 430px;
-        }
-
-        .info-strip {
-            grid-template-columns: 1fr;
-        }
-
-        .diagnostic-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    @media (max-width: 600px) {
-        .container {
-            width: calc(100% - 10px);
-            margin-top: 6px;
-        }
-
-        .topbar {
-            padding: 8px 10px;
-        }
-
-        .status {
-            display: none;
-        }
-
-        .map-header {
-            align-items: flex-start;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        #map {
-            height: 61vh;
-            min-height: 390px;
-        }
-
-        .layer-control {
-            width: 225px;
-        }
-
-        .map-search {
-            width: 100%;
-        }
-    }
+}
 </style>
 </head>
 
@@ -605,43 +492,41 @@
     </div>
 
     <div class="top-actions">
-        <div class="status">
-            <span class="status-dot"></span>
-            Auto-refresh every 5 min
-        </div>
-        <button class="tool-button" type="button" onclick="refreshRadar()">
-            Refresh
-        </button>
+        <div class="status">Auto-refresh every 5 min</div>
+        <button class="button" type="button" onclick="refreshData()">Refresh</button>
     </div>
 </header>
 
 <main class="container">
 
-    <div class="section-head">
+    <div class="heading">
         <h1>Current MRMS</h1>
-        <span>Interactive regional radar / phase viewer</span>
+        <span>Interactive BTV regional radar / winter phase viewer</span>
     </div>
 
     <section class="map-card">
 
         <div class="map-header">
             <div>
-                <span class="map-title">MRMS Reflectivity + Winter Phase</span>
-                <span class="map-subtitle">Zoom, pan, search towns, and control layers</span>
+                <span class="map-title">MRMS Reflectivity + Winter Mask</span>
+                <span class="map-subtitle">Interactive map</span>
             </div>
+
             <div class="map-meta">
-                Data loaded: <span id="dataTime">--</span>
+                Data: <span id="dataTime">Loading…</span>
             </div>
         </div>
 
-        <div style="position:relative;">
+        <div class="map-wrap">
+
             <div id="map"></div>
 
-            <div id="loadingNote" class="loading-note">
-                Loading map layers…
+            <div id="loading" class="loading">
+                Loading MRMS…
             </div>
 
-            <div class="layer-control">
+            <div class="layer-box">
+
                 <button
                     id="layerToggle"
                     class="layer-toggle"
@@ -652,12 +537,14 @@
                 </button>
 
                 <div id="layerPanel" class="layer-panel">
-                    <div class="layer-section-title">Map Layers</div>
+
+                    <div class="layer-title">Map layers</div>
 
                     <label class="layer-row">
                         <input
                             id="radarToggle"
                             type="checkbox"
+                            checked
                             onchange="toggleRadar(this.checked)"
                         >
                         <span>MRMS Radar Data</span>
@@ -667,6 +554,7 @@
                         <input
                             id="phaseToggle"
                             type="checkbox"
+                            checked
                             onchange="togglePhase(this.checked)"
                         >
                         <span>Winter Mask</span>
@@ -676,74 +564,123 @@
                         <input
                             id="cwaToggle"
                             type="checkbox"
-                            onchange="setLayerVisible(cwaLayer, this.checked)"
+                            onchange="toggleReferenceLayer('cwa', this.checked)"
                         >
-                        <span>NWS CWA Borders</span>
+                        <span>CWA Borders</span>
                     </label>
 
                     <label class="layer-row">
                         <input
-                            id="countiesToggle"
+                            id="countyToggle"
                             type="checkbox"
-                            onchange="setLayerVisible(countyLayer, this.checked)"
+                            onchange="toggleReferenceLayer('county', this.checked)"
                         >
                         <span>County Boundaries</span>
                     </label>
 
                     <label class="layer-row">
                         <input
-                            id="zonesToggle"
+                            id="zoneToggle"
                             type="checkbox"
-                            onchange="setLayerVisible(zoneLayer, this.checked)"
+                            onchange="toggleReferenceLayer('zone', this.checked)"
                         >
                         <span>NWS Forecast Zones</span>
                     </label>
 
                     <label class="layer-row">
                         <input
-                            id="statesToggle"
+                            id="stateToggle"
                             type="checkbox"
-                            onchange="setLayerVisible(stateLayer, this.checked)"
+                            onchange="toggleReferenceLayer('state', this.checked)"
                         >
                         <span>State Borders</span>
                     </label>
-                </div>
-                </div>
 
-                <img
-                    src="./outputs/mrms_diagnostics.png"
-                    alt="MRMS diagnostic image"
-                    id="mrmsDiagnostics"
-                >
+                </div>
+            </div>
+
+            <div id="searchResults" class="search-results"></div>
+        </div>
+
+        <div class="map-toolbar">
+
+            <div class="toolbar-group">
+                <form class="search-form" onsubmit="searchPlace(event)">
+                    <input
+                        id="placeSearch"
+                        autocomplete="off"
+                        placeholder="Search a city or town…"
+                    >
+                    <button class="button" type="submit">Search</button>
+                </form>
+            </div>
+
+            <div class="toolbar-group">
+                <button class="button" type="button" onclick="zoomToBTV()">BTV CWA</button>
+                <button class="button" type="button" onclick="zoomToVermont()">Vermont</button>
+                <button class="button" type="button" onclick="zoomRegional()">Regional</button>
+            </div>
+
+            <div class="toolbar-group">
+                <div class="legend">
+                    <span class="legend-item"><span class="swatch snow"></span>Snow</span>
+                    <span class="legend-item"><span class="swatch sleet"></span>Sleet</span>
+                    <span class="legend-item"><span class="swatch fzra"></span>FZRA</span>
+                    <span class="legend-item"><span class="swatch mixed"></span>Mixed</span>
+                    <span class="legend-item"><span class="swatch unknown"></span>Uncertain</span>
+                </div>
+            </div>
+
+        </div>
+
+    </section>
+
+    <div class="info-strip">
+
+        <div class="info-card">
+            <div class="info-label">MRMS cycle</div>
+            <div class="info-value" id="lastUpdate">Loading…</div>
+        </div>
+
+        <div class="info-card">
+            <div class="info-label">Overlays at startup</div>
+            <div class="info-value">MRMS radar + winter mask</div>
+        </div>
+
+        <div class="info-card">
+            <div class="info-label">Reference boundaries</div>
+            <div class="info-value">Off until selected in Layers</div>
+        </div>
+
+    </div>
+
+    <details class="diagnostics">
+        <summary>Diagnostics</summary>
+
+        <div class="diagnostic-grid">
+
+            <section class="diag-card">
+                <div class="diag-head">
+                    <div class="diag-title">MRMS Diagnostics</div>
+                    <div class="diag-desc">Core MRMS fields and precipitation diagnostics.</div>
+                </div>
+                <img src="./outputs/mrms_diagnostics.png" alt="MRMS diagnostics">
             </section>
 
-            <section class="diagnostic-card">
-                <div class="diagnostic-head">
-                    <div class="diagnostic-title">Vertical Dual-Pol</div>
-                    <div class="diagnostic-text">
-                        Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.
-                    </div>
+            <section class="diag-card">
+                <div class="diag-head">
+                    <div class="diag-title">Vertical Dual-Pol</div>
+                    <div class="diag-desc">Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.</div>
                 </div>
-
-                <img
-                    src="./outputs/mrms_vertical_dualpol.png"
-                    alt="Vertical dual-pol diagnostic"
-                >
+                <img src="./outputs/mrms_vertical_dualpol.png" alt="Vertical dual-pol diagnostic">
             </section>
 
-            <section class="diagnostic-card">
-                <div class="diagnostic-head">
-                    <div class="diagnostic-title">Winter Precipitation Diagnostic</div>
-                    <div class="diagnostic-text">
-                        Temperature, precipitation, reflectivity and dual-pol
-                        information used to develop the winter phase mask.
-                    </div>
+            <section class="diag-card">
+                <div class="diag-head">
+                    <div class="diag-title">Winter Precipitation Diagnostic</div>
+                    <div class="diag-desc">Fields used to develop the winter phase mask.</div>
                 </div>
-
-                <img
-                    src="./outputs/winter_mask_diagnostics.png"
-                    alt="Winter precipitation diagnostic"
-                >
+                <img src="./outputs/winter_mask_diagnostics.png" alt="Winter precipitation diagnostic">
             </section>
 
         </div>
@@ -755,28 +692,113 @@
 
 </main>
 
-<script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 
-const NWS_WMS =
-    "https://mapservices.weather.noaa.gov/static/services/" +
-    "nws_reference_maps/nws_reference_map/MapServer/WMSServer";
-
-const FALLBACK_BTV_BOUNDS = [
+const BTV_BOUNDS = [
     [42.55, -75.30],
-    [45.20, -70.85]
+    [45.20, -70.75]
 ];
 
-const FALLBACK_VT_BOUNDS = [
+const VERMONT_BOUNDS = [
     [42.70, -73.45],
-    [45.10, -71.40]
+    [45.10, -71.35]
 ];
 
-const QUICK_PLACES = [
+const REGIONAL_BOUNDS = [
+    [40.95, -77.50],
+    [46.15, -68.40]
+];
+
+const NWS_FEATURE_BASE =
+    "https://mapservices.weather.noaa.gov/static/rest/services/" +
+    "nws_reference_maps/nws_reference_map/FeatureServer";
+
+const NWS_LAYER_URLS = {
+    cwa:
+        NWS_FEATURE_BASE +
+        "/1/query?where=" +
+        encodeURIComponent("cwa='BTV'") +
+        "&outFields=cwa,wfo,city,state&returnGeometry=true" +
+        "&outSR=4326&f=geojson",
+
+    county:
+        NWS_FEATURE_BASE +
+        "/2/query?where=" +
+        encodeURIComponent("cwa LIKE '%BTV%'") +
+        "&outFields=state,cwa,countyname,fips&returnGeometry=true" +
+        "&outSR=4326&f=geojson",
+
+    zone:
+        NWS_FEATURE_BASE +
+        "/8/query?where=" +
+        encodeURIComponent("cwa='BTV'") +
+        "&outFields=state,zone,cwa,name,state_zone" +
+        "&returnGeometry=true&outSR=4326&f=geojson",
+
+    state:
+        NWS_FEATURE_BASE +
+        "/3/query?where=1%3D1" +
+        "&outFields=state,name,fips&returnGeometry=true" +
+        "&outSR=4326&f=geojson"
+};
+
+const NWS_STYLES = {
+    cwa: {
+        color: "#0e5d8b",
+        weight: 3.0,
+        opacity: 0.95,
+        fill: false
+    },
+
+    county: {
+        color: "#66737d",
+        weight: 1.0,
+        opacity: 0.75,
+        dashArray: "4 4",
+        fill: false
+    },
+
+    zone: {
+        color: "#7a5d2a",
+        weight: 1.0,
+        opacity: 0.85,
+        dashArray: "2 3",
+        fill: false
+    },
+
+    state: {
+        color: "#303b43",
+        weight: 2.2,
+        opacity: 0.90,
+        fill: false
+    }
+};
+
+let map = null;
+
+let radarOverlay = null;
+let phaseOverlay = null;
+
+const referenceLayers = {
+    cwa: null,
+    county: null,
+    zone: null,
+    state: null
+};
+
+const referenceLoaded = {
+    cwa: false,
+    county: false,
+    zone: false,
+    state: false
+};
+
+let currentBounds = BTV_BOUNDS.slice();
+
+const quickPlaces = [
     ["Burlington, VT", 44.4759, -73.2121],
     ["Plattsburgh, NY", 44.6995, -73.4529],
     ["Montpelier, VT", 44.2601, -72.5754],
@@ -785,188 +807,387 @@ const QUICK_PLACES = [
     ["Saranac Lake, NY", 44.3295, -74.1313],
     ["Massena, NY", 44.9281, -74.8919],
     ["Middlebury, VT", 43.9770, -73.1680],
-    ["Newport, VT", 44.9364, -72.2050]
+    ["Newport, VT", 44.9364, -72.2051]
 ];
 
-let map;
-let radarOverlay = null;
-let phaseOverlay = null;
-let stateLayer = null;
-let countyLayer = null;
-let zoneLayer = null;
-let cwaLayer = null;
-let baseStreet = null;
-let baseTopo = null;
-let currentBounds = null;
-
-const zoneLabels = [];
 
 function initializeMap() {
 
     map = L.map("map", {
         zoomControl: true,
-        preferCanvas: true,
-        attributionControl: true
+        preferCanvas: true
     });
 
-    baseStreet = L.tileLayer(
+    L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/" +
         "World_Street_Map/MapServer/tile/{z}/{y}/{x}",
         {
             maxZoom: 19,
             attribution:
-                "Tiles &copy; Esri " +
-                "&mdash; Esri, DeLorme, NAVTEQ, TomTom"
+                "Tiles © Esri — Esri, DeLorme, NAVTEQ, TomTom"
         }
-    );
+    ).addTo(map);
 
-    baseTopo = L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/" +
-        "World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+    map.fitBounds(BTV_BOUNDS, {
+        padding: [10, 10]
+    });
+
+    map.on("zoomend", updateLayerScaleHints);
+}
+
+
+function createImageOverlay(url, bounds, opacity, zIndex) {
+
+    return L.imageOverlay(
+        url,
+        bounds,
         {
-            maxZoom: 18,
-            attribution:
-                "Tiles &copy; Esri " +
-                "&mdash; Esri, DeLorme, NAVTEQ, USGS"
+            opacity: opacity,
+            interactive: false,
+            zIndex: zIndex,
+            crossOrigin: true
         }
     );
-
-    baseStreet.addTo(map);
-
-    stateLayer = L.tileLayer.wms(NWS_WMS, {
-        layers: "3",
-        format: "image/png",
-        transparent: true,
-        opacity: 0.90,
-        version: "1.3.0",
-        attribution: "NOAA/NWS"
-    });
-
-    countyLayer = L.tileLayer.wms(NWS_WMS, {
-        layers: "2",
-        format: "image/png",
-        transparent: true,
-        opacity: 0.72,
-        version: "1.3.0",
-        attribution: "NOAA/NWS"
-    });
-
-    zoneLayer = L.tileLayer.wms(NWS_WMS, {
-        layers: "8",
-        format: "image/png",
-        transparent: true,
-        opacity: 0.88,
-        version: "1.3.0",
-        attribution: "NOAA/NWS"
-    });
-
-    cwaLayer = L.tileLayer.wms(NWS_WMS, {
-        layers: "1",
-        format: "image/png",
-        transparent: true,
-        opacity: 1.0,
-        version: "1.3.0",
-        attribution: "NOAA/NWS"
-    });
-
-    stateLayer.addTo(map);
-    countyLayer.addTo(map);
-    zoneLayer.addTo(map);
-    cwaLayer.addTo(map);
-
-    map.setView([44.15, -72.85], 7);
-
-    return map;
-}
-
-function setLayerVisible(layer, visible) {
-
-    if (!map || !layer) {
-        return;
-    }
-
-    if (visible) {
-        if (!map.hasLayer(layer)) {
-            layer.addTo(map);
-        }
-    } else {
-        if (map.hasLayer(layer)) {
-            map.removeLayer(layer);
-        }
-    }
 }
 
 
-function toggleRadar(visible) {
+function loadRadarLayers(metadata) {
 
-    if (!visible) {
+    if (
+        metadata &&
+        Array.isArray(metadata.bounds) &&
+        metadata.bounds.length === 4
+    ) {
+
+        const south = Number(metadata.bounds[0]);
+        const west = Number(metadata.bounds[1]);
+        const north = Number(metadata.bounds[2]);
+        const east = Number(metadata.bounds[3]);
+
+        if (
+            Number.isFinite(south) &&
+            Number.isFinite(west) &&
+            Number.isFinite(north) &&
+            Number.isFinite(east) &&
+            south < north &&
+            west < east
+        ) {
+            currentBounds = [
+                [south, west],
+                [north, east]
+            ];
+        }
+    }
+
+    if (
+        document.getElementById("radarToggle").checked &&
+        currentBounds
+    ) {
         if (radarOverlay && map.hasLayer(radarOverlay)) {
             map.removeLayer(radarOverlay);
         }
-        return;
+
+        radarOverlay = createImageOverlay(
+            "./outputs/mrms_current.png?v=" + Date.now(),
+            currentBounds,
+            0.92,
+            500
+        );
+
+        radarOverlay.addTo(map);
     }
 
-    ensureRadarOverlay();
-}
-
-
-function togglePhase(visible) {
-
-    if (!visible) {
+    if (
+        document.getElementById("phaseToggle").checked &&
+        currentBounds
+    ) {
         if (phaseOverlay && map.hasLayer(phaseOverlay)) {
             map.removeLayer(phaseOverlay);
         }
+
+        phaseOverlay = createImageOverlay(
+            "./outputs/winter_phase_mask.png?v=" + Date.now(),
+            currentBounds,
+            1.0,
+            550
+        );
+
+        phaseOverlay.addTo(map);
+
+        phaseOverlay.on("error", function() {
+            console.warn("Winter phase mask is not available yet.");
+            document.getElementById("phaseToggle").checked = false;
+
+            if (phaseOverlay && map.hasLayer(phaseOverlay)) {
+                map.removeLayer(phaseOverlay);
+            }
+        });
+    }
+}
+
+
+function toggleRadar(enabled) {
+
+    if (enabled) {
+
+        if (!currentBounds) {
+            return;
+        }
+
+        if (radarOverlay && map.hasLayer(radarOverlay)) {
+            map.removeLayer(radarOverlay);
+        }
+
+        radarOverlay = createImageOverlay(
+            "./outputs/mrms_current.png?v=" + Date.now(),
+            currentBounds,
+            0.92,
+            500
+        );
+
+        radarOverlay.addTo(map);
+
+    } else {
+
+        if (radarOverlay && map.hasLayer(radarOverlay)) {
+            map.removeLayer(radarOverlay);
+        }
+    }
+}
+
+
+function togglePhase(enabled) {
+
+    if (enabled) {
+
+        if (!currentBounds) {
+            return;
+        }
+
+        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
+            map.removeLayer(phaseOverlay);
+        }
+
+        phaseOverlay = createImageOverlay(
+            "./outputs/winter_phase_mask.png?v=" + Date.now(),
+            currentBounds,
+            1.0,
+            550
+        );
+
+        phaseOverlay.addTo(map);
+
+        phaseOverlay.on("error", function() {
+            console.warn("Winter phase mask is not available.");
+            document.getElementById("phaseToggle").checked = false;
+
+            if (phaseOverlay && map.hasLayer(phaseOverlay)) {
+                map.removeLayer(phaseOverlay);
+            }
+        });
+
+    } else {
+
+        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
+            map.removeLayer(phaseOverlay);
+        }
+    }
+}
+
+
+async function toggleReferenceLayer(name, enabled) {
+
+    if (!enabled) {
+
+        if (
+            referenceLayers[name] &&
+            map.hasLayer(referenceLayers[name])
+        ) {
+            map.removeLayer(referenceLayers[name]);
+        }
+
         return;
     }
 
-    ensurePhaseOverlay();
+    if (!referenceLoaded[name]) {
+        await loadReferenceLayer(name);
+    }
+
+    const layer = referenceLayers[name];
+
+    if (layer && !map.hasLayer(layer)) {
+        layer.addTo(map);
+    }
 }
+
+
+async function loadReferenceLayer(name) {
+
+    if (referenceLoaded[name]) {
+        return;
+    }
+
+    try {
+
+        const response = await fetch(
+            NWS_LAYER_URLS[name],
+            {
+                cache: "no-store"
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                "NWS layer request failed: " +
+                response.status
+            );
+        }
+
+        const geojson = await response.json();
+
+        referenceLayers[name] = L.geoJSON(
+            geojson,
+            {
+                style: NWS_STYLES[name],
+
+                interactive: false,
+
+                /*
+                 * Deliberately no permanent labels.
+                 * Forecast-zone numbers and county names are not
+                 * rendered anywhere on the map.
+                 */
+            }
+        );
+
+        referenceLoaded[name] = true;
+
+    } catch (error) {
+
+        console.error(
+            "Unable to load NWS " +
+            name +
+            " layer:",
+            error
+        );
+
+        const checkbox = document.getElementById(
+            name === "county"
+                ? "countyToggle"
+                : name === "zone"
+                    ? "zoneToggle"
+                    : name === "state"
+                        ? "stateToggle"
+                        : "cwaToggle"
+        );
+
+        if (checkbox) {
+            checkbox.checked = false;
+        }
+    }
+}
+
+
+function updateLayerScaleHints() {
+
+    /*
+     * All reference layers are boundary-only.
+     * No NWS server-side labels are used, so zone numbers cannot
+     * unexpectedly appear at any zoom level.
+     *
+     * The visibility stays entirely under the user's control.
+     */
+}
+
 
 function toggleLayerPanel() {
 
     const panel = document.getElementById("layerPanel");
 
-    if (!panel) {
-        return;
-    }
-
     panel.classList.toggle("open");
 }
 
 
-function addQuickPlaces() {
+function zoomToBTV() {
 
-    const container = document.getElementById("searchResults");
+    map.fitBounds(
+        BTV_BOUNDS,
+        {
+            padding: [12, 12]
+        }
+    );
+}
 
-    if (!container) {
-        return;
-    }
+
+function zoomToVermont() {
+
+    map.fitBounds(
+        VERMONT_BOUNDS,
+        {
+            padding: [12, 12]
+        }
+    );
+}
+
+
+function zoomRegional() {
+
+    map.fitBounds(
+        REGIONAL_BOUNDS,
+        {
+            padding: [12, 12]
+        }
+    );
+}
+
+
+function addQuickResults() {
+
+    const container =
+        document.getElementById("searchResults");
 
     container.innerHTML = "";
 
-    const title = document.createElement("div");
-    title.className = "search-result";
-    title.innerHTML = "<strong>Quick locations</strong><span>Click a location to zoom</span>";
-    container.appendChild(title);
+    const heading =
+        document.createElement("div");
 
-    QUICK_PLACES.forEach(function(place) {
+    heading.className = "result-row";
 
-        const row = document.createElement("div");
-        row.className = "search-result";
+    heading.innerHTML =
+        "<strong>Quick locations</strong>" +
+        "<span>Click to zoom</span>";
 
-        const safeName = document.createElement("strong");
-        safeName.textContent = place[0];
+    container.appendChild(heading);
 
-        const detail = document.createElement("span");
-        detail.textContent = "Regional quick zoom";
+    quickPlaces.forEach(function(place) {
 
-        row.appendChild(safeName);
-        row.appendChild(detail);
+        const row =
+            document.createElement("div");
 
-        row.addEventListener("click", function() {
-            map.setView([place[1], place[2]], 10);
+        row.className = "result-row";
+
+        const strong =
+            document.createElement("strong");
+
+        strong.textContent = place[0];
+
+        const span =
+            document.createElement("span");
+
+        span.textContent = "Regional quick zoom";
+
+        row.appendChild(strong);
+        row.appendChild(span);
+
+        row.onclick = function() {
+
+            map.setView(
+                [place[1], place[2]],
+                11
+            );
+
             closeSearchResults();
-        });
+        };
 
         container.appendChild(row);
     });
@@ -974,105 +1195,136 @@ function addQuickPlaces() {
     container.classList.add("open");
 }
 
+
 function closeSearchResults() {
-    const container = document.getElementById("searchResults");
-    if (container) {
-        container.classList.remove("open");
-    }
+
+    const container =
+        document.getElementById("searchResults");
+
+    container.classList.remove("open");
 }
 
-function searchPlace(event) {
+
+async function searchPlace(event) {
 
     event.preventDefault();
 
-    const input = document.getElementById("placeSearch");
-    const query = (input.value || "").trim();
+    const input =
+        document.getElementById("placeSearch");
+
+    const query =
+        (input.value || "").trim();
 
     if (!query) {
-        addQuickPlaces();
+        addQuickResults();
         return;
     }
 
-    const container = document.getElementById("searchResults");
+    const container =
+        document.getElementById("searchResults");
 
     container.innerHTML =
-        '<div class="search-result">' +
-        '<strong>Searching…</strong>' +
-        '<span>Looking for "' +
+        "<div class='result-row'>" +
+        "<strong>Searching…</strong>" +
+        "<span>" +
         escapeHtml(query) +
-        '"</span>' +
-        '</div>';
+        "</span></div>";
 
     container.classList.add("open");
 
-    const url =
-        "https://nominatim.openstreetmap.org/search" +
-        "?format=jsonv2" +
-        "&limit=5" +
-        "&addressdetails=1" +
-        "&countrycodes=us,ca" +
-        "&q=" + encodeURIComponent(query);
+    try {
 
-    fetch(url)
-        .then(function(response) {
+        const url =
+            "https://nominatim.openstreetmap.org/search" +
+            "?format=jsonv2" +
+            "&limit=6" +
+            "&addressdetails=1" +
+            "&countrycodes=us,ca" +
+            "&q=" +
+            encodeURIComponent(query);
 
-            if (!response.ok) {
-                throw new Error("Geocoding request failed");
-            }
+        const response =
+            await fetch(url);
 
-            return response.json();
-        })
-        .then(function(results) {
+        if (!response.ok) {
+            throw new Error("Geocoder failed");
+        }
 
-            container.innerHTML = "";
+        const results =
+            await response.json();
 
-            if (!results.length) {
-                container.innerHTML =
-                    '<div class="search-result">' +
-                    '<strong>No results</strong>' +
-                    '<span>Try a town, city, or county name.</span>' +
-                    '</div>';
+        container.innerHTML = "";
 
-                return;
-            }
-
-            results.forEach(function(result) {
-
-                const row = document.createElement("div");
-                row.className = "search-result";
-
-                const title = document.createElement("strong");
-                title.textContent = result.display_name.split(",")[0];
-
-                const detail = document.createElement("span");
-                detail.textContent = result.display_name;
-
-                row.appendChild(title);
-                row.appendChild(detail);
-
-                row.addEventListener("click", function() {
-
-                    const lat = Number(result.lat);
-                    const lon = Number(result.lon);
-
-                    if (Number.isFinite(lat) && Number.isFinite(lon)) {
-                        map.setView([lat, lon], 11);
-                        closeSearchResults();
-                    }
-                });
-
-                container.appendChild(row);
-            });
-        })
-        .catch(function() {
+        if (!results.length) {
 
             container.innerHTML =
-                '<div class="search-result">' +
-                '<strong>Search unavailable</strong>' +
-                '<span>Use a quick location or zoom the map manually.</span>' +
-                '</div>';
+                "<div class='result-row'>" +
+                "<strong>No results</strong>" +
+                "<span>Try a town or city name.</span>" +
+                "</div>";
+
+            return;
+        }
+
+        results.forEach(function(result) {
+
+            const row =
+                document.createElement("div");
+
+            row.className = "result-row";
+
+            const title =
+                document.createElement("strong");
+
+            title.textContent =
+                result.display_name.split(",")[0];
+
+            const detail =
+                document.createElement("span");
+
+            detail.textContent =
+                result.display_name;
+
+            row.appendChild(title);
+            row.appendChild(detail);
+
+            row.onclick = function() {
+
+                const lat =
+                    Number(result.lat);
+
+                const lon =
+                    Number(result.lon);
+
+                if (
+                    Number.isFinite(lat) &&
+                    Number.isFinite(lon)
+                ) {
+
+                    map.setView(
+                        [lat, lon],
+                        11
+                    );
+
+                    closeSearchResults();
+                }
+            };
+
+            container.appendChild(row);
         });
+
+    } catch (error) {
+
+        console.error(error);
+
+        container.innerHTML =
+            "<div class='result-row'>" +
+            "<strong>Search unavailable</strong>" +
+            "<span>Use the quick locations or zoom manually.</span>" +
+            "</div>";
+    }
 }
+
 
 function escapeHtml(value) {
 
@@ -1084,316 +1336,135 @@ function escapeHtml(value) {
         .replaceAll("'", "&#039;");
 }
 
-function createImageOverlay(url, bounds, existing, opacity) {
 
-    if (existing) {
-        map.removeLayer(existing);
-    }
+async function refreshData() {
 
-    return L.imageOverlay(
-        url,
-        bounds,
-        {
-            opacity: opacity,
-            interactive: false,
-            crossOrigin: true,
-            zIndex: 500
-        }
-    );
-}
+    try {
 
-function ensureRadarOverlay() {
+        const response =
+            await fetch(
+                "./outputs/mrms_current.json?v=" +
+                Date.now(),
+                {
+                    cache: "no-store"
+                }
+            );
 
-    if (!currentBounds) {
-        return;
-    }
-
-    const radarUrl =
-        "./outputs/mrms_current.png?v=" +
-        Date.now();
-
-    radarOverlay = createImageOverlay(
-        radarUrl,
-        currentBounds,
-        radarOverlay,
-        0.94
-    );
-
-    radarOverlay.addTo(map);
-}
-
-
-function ensurePhaseOverlay() {
-
-    if (!currentBounds) {
-        return;
-    }
-
-    const phaseUrl =
-        "./outputs/winter_phase_mask.png?v=" +
-        Date.now();
-
-    phaseOverlay = createImageOverlay(
-        phaseUrl,
-        currentBounds,
-        phaseOverlay,
-        1.0
-    );
-
-    phaseOverlay.addTo(map);
-
-    /*
-     * If the workflow has not yet published winter_phase_mask.png,
-     * Leaflet will raise the normal image error. The layer stays
-     * optional and does not prevent the rest of the viewer working.
-     */
-    phaseOverlay.on("error", function() {
-        const checkbox = document.getElementById("phaseToggle");
-        if (checkbox) {
-            checkbox.checked = false;
-        }
-        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
-            map.removeLayer(phaseOverlay);
-        }
-    });
-}
-
-
-function buildRadarLayers(metadata) {
-
-    if (
-        !metadata ||
-        !metadata.bounds ||
-        metadata.bounds.length !== 4
-    ) {
-        currentBounds = FALLBACK_BTV_BOUNDS;
-
-    } else {
-
-        const south = Number(metadata.bounds[0]);
-        const west = Number(metadata.bounds[1]);
-        const north = Number(metadata.bounds[2]);
-        const east = Number(metadata.bounds[3]);
-
-        if (
-            Number.isFinite(south) &&
-            Number.isFinite(west) &&
-            Number.isFinite(north) &&
-            Number.isFinite(east)
-        ) {
-            currentBounds = [
-                [south, west],
-                [north, east]
-            ];
-        } else {
-            currentBounds = FALLBACK_BTV_BOUNDS;
-        }
-    }
-
-    /*
-     * IMPORTANT:
-     * All overlay layers are OFF on first load.
-     * Only create/load an MRMS image after the user checks it.
-     */
-    if (document.getElementById("radarToggle").checked) {
-        ensureRadarOverlay();
-    }
-
-    if (document.getElementById("phaseToggle").checked) {
-        ensurePhaseOverlay();
-    }
-}
-function zoomToBTV() {
-
-    /*
-     * A regional BTV CWA view. The official CWA outline is
-     * displayed by the WMS overlay itself.
-     */
-    map.fitBounds(FALLBACK_BTV_BOUNDS, {
-        padding: [18, 18]
-    });
-}
-
-function zoomToVermont() {
-
-    map.fitBounds(FALLBACK_VT_BOUNDS, {
-        padding: [18, 18]
-    });
-}
-
-function updateDataInfo(metadata) {
-
-    const now = new Date();
-
-    let displayTime = now.toLocaleString();
-
-    if (metadata && metadata.generated_at_utc) {
-
-        const parsed = new Date(metadata.generated_at_utc);
-
-        if (!Number.isNaN(parsed.getTime())) {
-            displayTime = parsed.toLocaleString();
-        }
-    }
-
-    const lastUpdate = document.getElementById("lastUpdate");
-    const dataTime = document.getElementById("dataTime");
-
-    if (lastUpdate) {
-        lastUpdate.textContent = displayTime;
-    }
-
-    if (dataTime) {
-        dataTime.textContent = displayTime;
-    }
-}
-
-function refreshDiagnostics() {
-
-    const stamp = Date.now();
-
-    document.querySelectorAll(".diagnostic-card img").forEach(
-        function(img) {
-
-            const original = img.getAttribute("src");
-
-            if (!original || original.includes("data:")) {
-                return;
-            }
-
-            img.setAttribute(
-                "src",
-                original.split("?")[0] + "?v=" + stamp
+        if (!response.ok) {
+            throw new Error(
+                "MRMS metadata unavailable: " +
+                response.status
             );
         }
-    );
+
+        const metadata =
+            await response.json();
+
+        const now =
+            metadata.generated_at_utc
+                ? new Date(metadata.generated_at_utc)
+                : new Date();
+
+        const display =
+            now.toLocaleString();
+
+        document.getElementById(
+            "lastUpdate"
+        ).textContent = display;
+
+        document.getElementById(
+            "dataTime"
+        ).textContent = display;
+
+        loadRadarLayers(metadata);
+
+        refreshDiagnosticImages();
+
+        document.getElementById(
+            "loading"
+        ).style.display = "none";
+
+    } catch (error) {
+
+        console.error(
+            "MRMS update failed:",
+            error
+        );
+
+        /*
+         * Keep the map usable even when a single cycle is missing.
+         * Do not remove a previously displayed radar image.
+         */
+        document.getElementById(
+            "loading"
+        ).textContent =
+            "MRMS update unavailable — showing last map";
+
+    }
 }
 
-function refreshRadar() {
 
-    fetch(
-        "./outputs/mrms_current.json?v=" + Date.now(),
-        {
-            cache: "no-store"
+function refreshDiagnosticImages() {
+
+    const stamp =
+        Date.now();
+
+    document.querySelectorAll(
+        ".diag-card img"
+    ).forEach(function(img) {
+
+        const original =
+            img.getAttribute("src");
+
+        if (!original) {
+            return;
         }
-    )
-        .then(function(response) {
 
-            if (!response.ok) {
-                throw new Error("MRMS metadata unavailable");
-            }
-
-            return response.json();
-        })
-        .then(function(metadata) {
-
-            buildRadarLayers(metadata);
-            updateDataInfo(metadata);
-            refreshDiagnostics();
-
-            if (currentBounds) {
-                /*
-                 * Preserve the current user zoom when data update
-                 * occurs. Only fit to the BTV view on first load.
-                 */
-            }
-        })
-        .catch(function(error) {
-
-            console.error(error);
-
-            updateDataInfo({
-                generated_at_utc: null
-            });
-
-            /*
-             * Keep currently displayed radar if metadata retrieval
-             * fails on a refresh.
-             */
-        });
+        img.setAttribute(
+            "src",
+            original.split("?")[0] +
+            "?v=" +
+            stamp
+        );
+    });
 }
 
-function initialLoad() {
 
-    const loading = document.getElementById("loadingNote");
+function closeLayerPanelWhenClickingOutside(event) {
 
-    fetch(
-        "./outputs/mrms_current.json?v=" + Date.now(),
-        {
-            cache: "no-store"
-        }
-    )
-        .then(function(response) {
+    const panel =
+        document.getElementById("layerPanel");
 
-            if (!response.ok) {
-                throw new Error("MRMS metadata unavailable");
-            }
+    const toggle =
+        document.getElementById("layerToggle");
 
-            return response.json();
-        })
-        .then(function(metadata) {
-
-            buildRadarLayers(metadata);
-            updateDataInfo(metadata);
-
-            /*
-             * Start centered on the BTV CWA regional area.
-             * This deliberately does not use the radar image's
-             * exact bounding box so the initial view remains
-             * operationally useful.
-             */
-            zoomToBTV();
-
-            if (loading) {
-                loading.style.display = "none";
-            }
-        })
-        .catch(function(error) {
-
-            console.error(error);
-
-            /*
-             * Preserve a useful geographic viewer even if the
-             * MRMS metadata is temporarily unavailable.
-             * Radar and phase layers remain off until selected.
-             */
-            currentBounds = FALLBACK_BTV_BOUNDS;
-            zoomToBTV();
-
-            if (loading) {
-                loading.textContent =
-                    "MRMS metadata unavailable — showing base map";
-            }
-        });
-
-    addQuickPlaces();
-}
-
-initializeMap();
-initialLoad();
-
-window.setInterval(
-    refreshRadar,
-    AUTO_REFRESH_MS
-);
-
-document.addEventListener("click", function(event) {
-
-    const panel = document.getElementById("layerPanel");
-    const toggle = document.getElementById("layerToggle");
-
-    if (!panel || !toggle) {
+    if (
+        !panel.classList.contains("open")
+    ) {
         return;
     }
 
     if (
-        panel.classList.contains("open") &&
         !panel.contains(event.target) &&
         !toggle.contains(event.target)
     ) {
         panel.classList.remove("open");
     }
-});
+}
+
+
+initializeMap();
+refreshData();
+
+window.setInterval(
+    refreshData,
+    AUTO_REFRESH_MS
+);
+
+document.addEventListener(
+    "click",
+    closeLayerPanelWhenClickingOutside
+);
 </script>
 
 </body>
