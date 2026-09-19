@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-import gc
 import json
 import sys
 
@@ -21,7 +20,7 @@ from download_mrms import (
     download_optional_live_products,
     download_required_live_products,
 )  # noqa: E402
-from read_mrms import get_values  # noqa: E402
+from read_mrms import get_values, get_valid_time_utc  # noqa: E402
 from render import reflectivity_to_rgba, result_to_phase_rgba, save_rgba_png, write_metadata  # noqa: E402
 
 MAIN_VERSION = "8.0-stable-live-core"
@@ -70,29 +69,6 @@ def grid_bounds(lats: np.ndarray, lons: np.ndarray) -> list[float]:
         float(np.nanmax(lats)),
         float(np.nanmax(lons_norm)),
     ]
-
-
-def get_mrms_valid_time(path: Path) -> str | None:
-    """Read the valid time without making it a hard dependency of the radar."""
-    try:
-        import pygrib
-
-        grbs = pygrib.open(str(path))
-        try:
-            msg = grbs.message(1)
-            dt = getattr(msg, "validDate", None)
-            if dt is None:
-                return None
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            else:
-                dt = dt.astimezone(timezone.utc)
-            return dt.isoformat()
-        finally:
-            grbs.close()
-    except Exception as exc:
-        print(f"  Warning: could not read MRMS valid time: {exc}")
-        return None
 
 
 def update_metadata(
@@ -221,7 +197,14 @@ def main() -> None:
     metadata_path = OUTPUT_DIR / "mrms_current.json"
     write_metadata(result, metadata_path)
 
-    mrms_time_utc = get_mrms_valid_time(_path_for("reflectivity"))
+    # Read the timestamp through cfgrib/ecCodes instead of pygrib. This is
+    # intentionally best-effort: timestamp extraction can never invalidate a
+    # radar image that has already been successfully written.
+    try:
+        mrms_time_utc = get_valid_time_utc(_path_for("reflectivity"))
+    except Exception as exc:
+        print(f"  Warning: could not read MRMS valid time: {exc}")
+        mrms_time_utc = None
     if mrms_time_utc:
         print(f"MRMS valid time: {mrms_time_utc}")
 
@@ -260,8 +243,10 @@ def main() -> None:
         print(f"  {path} ({path.stat().st_size:,} bytes)")
     print("=" * 72)
 
-    del ref, precip_flag, bb_top, bb_bottom, rqi, wetbulb, result
-    gc.collect()
+    # Do not force garbage collection here.  The live core uses native GRIB
+    # libraries underneath cfgrib; explicit shutdown/GC at this point is not
+    # necessary and can trigger third-party native finalizers after all output
+    # files are already valid.  Let normal process teardown reclaim memory.
 
 
 if __name__ == "__main__":
