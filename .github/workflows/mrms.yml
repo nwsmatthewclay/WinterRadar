@@ -79,7 +79,7 @@ jobs:
           echo "=============================================="
           echo "LIVE MRMS OUTPUT CHECK"
           echo "=============================================="
-          bash ./src/verify_core_outputs.sh outputs
+          bash ./src/verify_core_outputs.sh
 
       # Diagnostics are deliberately OUTSIDE the critical live-radar path.
       # They can fail without taking the current MRMS radar offline.
@@ -208,7 +208,7 @@ jobs:
           cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
           cp outputs/main.log site/outputs/main.log
 
-          ./src/verify_core_outputs.sh site/outputs
+          bash ./src/verify_core_outputs.sh
 
           echo "=============================================="
           echo "PAGES CONTENT"
