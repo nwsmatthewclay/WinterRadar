@@ -16,87 +16,133 @@ from classifier import (
     UNKNOWN,
     ClassificationResult,
 )
-from config import OUTPUT_DIR
 
 
 # ----------------------------------------------------------------------
 # Winter phase colors
 #
-# These are overlays only. Rain and clear remain transparent.
+# The winter mask is intentionally translucent so the radar beneath
+# remains visible on the interactive map.
 # ----------------------------------------------------------------------
 
 PHASE_COLORS = {
-    SNOW:   (55, 145, 255, 105),
-    SLEET:  (185, 80, 220, 115),
-    FZRA:   (225, 55, 70, 115),
-    MIXED:  (220, 95, 195, 110),
+    SNOW:    (55, 145, 255, 105),
+    SLEET:   (185, 80, 220, 115),
+    FZRA:    (225, 55, 70, 115),
+    MIXED:   (220, 95, 195, 110),
     UNKNOWN: (145, 150, 155, 85),
 }
 
 
 # ----------------------------------------------------------------------
-# MRMS reflectivity color table
-#
-# This provides the underlying radar image.
+# MRMS reflectivity rendering
 # ----------------------------------------------------------------------
 
 def reflectivity_to_rgba(dbz: np.ndarray) -> np.ndarray:
     """
-    Convert MRMS reflectivity into a radar-style RGBA image.
+    Convert MRMS reflectivity to a transparent radar-style RGBA PNG.
 
-    Missing / very weak returns remain transparent.
+    Weak/no echo is transparent so the geographic basemap remains
+    visible underneath the radar.
     """
 
-    h, w = dbz.shape
-    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba = np.zeros(
+        (*dbz.shape, 4),
+        dtype=np.uint8,
+    )
 
     valid = np.isfinite(dbz)
 
-    # Very weak / no echo
     m = valid & (dbz < 5)
     rgba[m] = (0, 0, 0, 0)
 
-    # 5–15 dBZ
     m = valid & (dbz >= 5) & (dbz < 15)
-    rgba[m] = (80, 110, 125, 80)
+    rgba[m] = (90, 125, 140, 90)
 
-    # 15–20 dBZ
     m = valid & (dbz >= 15) & (dbz < 20)
     rgba[m] = (80, 180, 110, 115)
 
-    # 20–25 dBZ
     m = valid & (dbz >= 20) & (dbz < 25)
-    rgba[m] = (100, 205, 100, 130)
+    rgba[m] = (105, 205, 105, 130)
 
-    # 25–30 dBZ
     m = valid & (dbz >= 25) & (dbz < 30)
-    rgba[m] = (175, 220, 70, 145)
+    rgba[m] = (180, 225, 70, 145)
 
-    # 30–35 dBZ
     m = valid & (dbz >= 30) & (dbz < 35)
-    rgba[m] = (240, 220, 60, 160)
+    rgba[m] = (242, 220, 60, 160)
 
-    # 35–40 dBZ
     m = valid & (dbz >= 35) & (dbz < 40)
-    rgba[m] = (245, 165, 45, 175)
+    rgba[m] = (246, 170, 45, 175)
 
-    # 40–45 dBZ
     m = valid & (dbz >= 40) & (dbz < 45)
-    rgba[m] = (240, 95, 45, 190)
+    rgba[m] = (242, 100, 42, 190)
 
-    # 45–50 dBZ
     m = valid & (dbz >= 45) & (dbz < 50)
-    rgba[m] = (225, 45, 45, 205)
+    rgba[m] = (228, 48, 45, 205)
 
-    # 50–55 dBZ
     m = valid & (dbz >= 50) & (dbz < 55)
-    rgba[m] = (210, 40, 100, 215)
+    rgba[m] = (210, 40, 105, 215)
 
-    # 55+ dBZ
     m = valid & (dbz >= 55)
-    rgba[m] = (180, 40, 180, 225)
+    rgba[m] = (180, 45, 180, 225)
 
     return rgba
+
+
+# ----------------------------------------------------------------------
+# Winter phase mask rendering
+# ----------------------------------------------------------------------
+
+def result_to_phase_rgba(
+    result: ClassificationResult,
+) -> np.ndarray:
+    """
+    Create a standalone winter phase RGBA overlay.
+
+    Rain and clear pixels are explicitly transparent.
+    """
+
+    rgba = np.zeros(
+        (*result.phase.shape, 4),
+        dtype=np.uint8,
+    )
+
+    for phase, color in PHASE_COLORS.items():
+        mask = result.phase == phase
+        rgba[mask] = color
+
+    rgba[result.phase == RAIN] = (0, 0, 0, 0)
+    rgba[result.phase == CLEAR] = (0, 0, 0, 0)
+
+    return rgba
+
+
+# ----------------------------------------------------------------------
+# Optional combined product
+# ----------------------------------------------------------------------
+
+def result_to_rgba(
+    result: ClassificationResult,
+    reflectivity: np.ndarray | None = None,
+) -> np.ndarray:
+    """
+    Return either the pure phase mask or radar + phase overlay.
+
+    The interactive viewer uses the two layers separately, but this
+    combined function is retained for research/export products.
+    """
+
+    phase_rgba = result_to_phase_rgba(result)
+
+    if reflectivity is None:
+        return phase_rgba
+
+    radar = reflectivity_to_rgba(reflectivity)
+
+    return alpha_composite(
+        radar,
+        phase_rgba,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -107,11 +153,6 @@ def alpha_composite(
     base: np.ndarray,
     overlay: np.ndarray,
 ) -> np.ndarray:
-    """
-    Alpha composite overlay over base.
-
-    Both arrays are RGBA uint8.
-    """
 
     base_f = base.astype(np.float32) / 255.0
     over_f = overlay.astype(np.float32) / 255.0
@@ -121,75 +162,34 @@ def alpha_composite(
 
     out_a = oa + ba * (1.0 - oa)
 
-    out_rgb = np.zeros_like(base_f[..., :3])
+    out_rgb = np.zeros_like(
+        base_f[..., :3]
+    )
 
     valid = out_a[..., 0] > 0
 
-    out_rgb[valid] = (
-        over_f[..., :3][valid] * oa[valid]
-        + base_f[..., :3][valid] * ba[valid] * (1.0 - oa[valid])
-    ) / out_a[valid]
+    if np.any(valid):
+        out_rgb[valid] = (
+            over_f[..., :3][valid] * oa[valid]
+            + base_f[..., :3][valid]
+            * ba[valid]
+            * (1.0 - oa[valid])
+        ) / out_a[valid]
 
     out = np.zeros_like(base_f)
+
     out[..., :3] = out_rgb
     out[..., 3:4] = out_a
 
-    return np.clip(out * 255.0, 0, 255).astype(np.uint8)
+    return np.clip(
+        out * 255.0,
+        0,
+        255,
+    ).astype(np.uint8)
 
 
 # ----------------------------------------------------------------------
-# Winter phase mask
-# ----------------------------------------------------------------------
-
-def result_to_phase_rgba(
-    result: ClassificationResult,
-) -> np.ndarray:
-
-    h, w = result.phase.shape
-
-    rgba = np.zeros((h, w, 4), dtype=np.uint8)
-
-    for phase, color in PHASE_COLORS.items():
-        mask = result.phase == phase
-        rgba[mask] = color
-
-    # Explicitly keep rain and clear transparent.
-    rgba[result.phase == RAIN] = (0, 0, 0, 0)
-    rgba[result.phase == CLEAR] = (0, 0, 0, 0)
-
-    return rgba
-
-
-# ----------------------------------------------------------------------
-# Main radar + winter mask product
-# ----------------------------------------------------------------------
-
-def result_to_rgba(
-    result: ClassificationResult,
-    reflectivity: np.ndarray | None = None,
-) -> np.ndarray:
-    """
-    Create the final displayed product.
-
-    If reflectivity is supplied:
-        MRMS reflectivity is rendered underneath
-        and winter precipitation is overlaid.
-
-    If reflectivity is not supplied:
-        returns the winter phase mask only.
-    """
-
-    if reflectivity is None:
-        return result_to_phase_rgba(result)
-
-    radar = reflectivity_to_rgba(reflectivity)
-    phase = result_to_phase_rgba(result)
-
-    return alpha_composite(radar, phase)
-
-
-# ----------------------------------------------------------------------
-# Save PNG
+# PNG writer
 # ----------------------------------------------------------------------
 
 def save_rgba_png(
@@ -197,7 +197,10 @@ def save_rgba_png(
     path: Path,
 ) -> None:
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     Image.fromarray(
         rgba,
@@ -238,7 +241,10 @@ def write_metadata(
     }
 
     named_counts = {
-        phase_names.get(int(k), str(int(k))): int(v)
+        phase_names.get(
+            int(k),
+            str(int(k)),
+        ): int(v)
         for k, v in zip(unique, counts)
     }
 
@@ -246,17 +252,27 @@ def write_metadata(
         np.count_nonzero(
             np.isin(
                 result.phase,
-                [SNOW, SLEET, FZRA, MIXED, UNKNOWN],
+                [
+                    SNOW,
+                    SLEET,
+                    FZRA,
+                    MIXED,
+                    UNKNOWN,
+                ],
             )
         )
     )
 
     rain_pixels = int(
-        np.count_nonzero(result.phase == RAIN)
+        np.count_nonzero(
+            result.phase == RAIN
+        )
     )
 
     clear_pixels = int(
-        np.count_nonzero(result.phase == CLEAR)
+        np.count_nonzero(
+            result.phase == CLEAR
+        )
     )
 
     metadata = {
@@ -268,9 +284,15 @@ def write_metadata(
         "clear_pixels": clear_pixels,
     }
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     path.write_text(
-        json.dumps(metadata, indent=2),
+        json.dumps(
+            metadata,
+            indent=2,
+        ),
         encoding="utf-8",
     )
