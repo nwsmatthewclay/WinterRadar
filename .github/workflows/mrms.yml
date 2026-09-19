@@ -58,7 +58,8 @@ jobs:
             src/read_mrms.py \
             src/classifier.py \
             src/render.py \
-            src/main.py
+            src/main.py \
+            src/project_mrms_webmercator.py
 
       - name: Run core MRMS processing
         working-directory: src
@@ -80,6 +81,11 @@ jobs:
           echo "LIVE MRMS OUTPUT CHECK"
           echo "=============================================="
           bash ./src/verify_core_outputs.sh
+
+      - name: Project browser MRMS rasters to Web Mercator
+        run: |
+          set -euo pipefail
+          python -u src/project_mrms_webmercator.py
 
       # Diagnostics are deliberately OUTSIDE the critical live-radar path.
       # They can fail without taking the current MRMS radar offline.
@@ -199,8 +205,11 @@ jobs:
 
           cp index.html site/index.html
           cp outputs/mrms_current.png site/outputs/mrms_current.png
+          cp outputs/mrms_current_web.png site/outputs/mrms_current_web.png
           cp outputs/mrms_current.json site/outputs/mrms_current.json
+          cp outputs/mrms_web.json site/outputs/mrms_web.json
           cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
+          cp outputs/winter_phase_mask_web.png site/outputs/winter_phase_mask_web.png
           cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
           cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
@@ -208,7 +217,7 @@ jobs:
           cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
           cp outputs/main.log site/outputs/main.log
 
-          bash ./src/verify_core_outputs.sh
+          bash ./src/verify_core_outputs.sh site/outputs
 
           echo "=============================================="
           echo "PAGES CONTENT"
