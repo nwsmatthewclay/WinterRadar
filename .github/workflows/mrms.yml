@@ -15,12 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -66,6 +64,7 @@ jobs:
       - name: Run main MRMS processing
         working-directory: src
         env:
+          MPLBACKEND: Agg
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
@@ -73,15 +72,26 @@ jobs:
         run: |
           set -e
           mkdir -p ../outputs
+
+          echo "=============================================="
+          echo "RUNNING MAIN MRMS PROCESSING"
+          echo "=============================================="
+
           python -u main.py 2>&1 | tee ../outputs/main.log
 
+          echo
+          echo "MAIN OUTPUT CHECK"
+          test -s ../outputs/mrms_current.png
+          test -s ../outputs/mrms_current.json
+          test -s ../outputs/winter_phase_mask.png
+
+          ls -lh \
+            ../outputs/mrms_current.png \
+            ../outputs/mrms_current.json \
+            ../outputs/winter_phase_mask.png
+
       # ----------------------------------------------------------
-      # MRMS diagnostic
-      #
-      # Uses the safe pygrib-based diagnostic reader rather than
-      # the previous cfgrib/xarray implementation. The old process
-      # was writing the PNG successfully and then dying with exit
-      # 139 during native-library shutdown.
+      # MRMS diagnostics
       # ----------------------------------------------------------
       - name: Build MRMS diagnostics
         working-directory: src
@@ -124,11 +134,8 @@ jobs:
       - name: Normalize vertical diagnostic filename
         run: |
           set -e
-
           if [ -f outputs/vertical_dualpol_diagnostic.png ]; then
-            cp \
-              outputs/vertical_dualpol_diagnostic.png \
-              outputs/mrms_vertical_dualpol.png
+            cp outputs/vertical_dualpol_diagnostic.png outputs/mrms_vertical_dualpol.png
           elif [ ! -f outputs/mrms_vertical_dualpol.png ]; then
             echo "ERROR: vertical dual-pol diagnostic was not created."
             exit 1
@@ -172,17 +179,17 @@ jobs:
           )
 
           for file in "${files[@]}"; do
-            if [ -f "$file" ]; then
+            if [ -s "$file" ]; then
               echo "OK: $file"
               ls -lh "$file"
             else
-              echo "ERROR: MISSING $file"
+              echo "ERROR: MISSING OR EMPTY $file"
               exit 1
             fi
           done
 
       # ----------------------------------------------------------
-      # Build Pages artifact
+      # Build GitHub Pages artifact
       # ----------------------------------------------------------
       - name: Assemble Pages site
         run: |
@@ -192,55 +199,27 @@ jobs:
           mkdir -p site/outputs
 
           cp index.html site/index.html
+          cp outputs/mrms_current.png site/outputs/mrms_current.png
+          cp outputs/mrms_current.json site/outputs/mrms_current.json
+          cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
+          cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
+          cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
+          cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
+          cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
+          cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
 
-          cp outputs/mrms_current.png \
-            site/outputs/mrms_current.png
-
-          cp outputs/mrms_current.json \
-            site/outputs/mrms_current.json
-
-          cp outputs/winter_phase_mask.png \
-            site/outputs/winter_phase_mask.png
-
-          cp outputs/mrms_diagnostics.png \
-            site/outputs/mrms_diagnostics.png
-
-          cp outputs/mrms_diagnostics.json \
-            site/outputs/mrms_diagnostics.json
-
-          cp outputs/mrms_vertical_dualpol.png \
-            site/outputs/mrms_vertical_dualpol.png
-
-          cp outputs/winter_mask_diagnostics.png \
-            site/outputs/winter_mask_diagnostics.png
-
-          cp outputs/winter_mask_diagnostics.json \
-            site/outputs/winter_mask_diagnostics.json
-
-          echo
-          echo "=============================="
           echo "PAGES ARTIFACT CONTENT"
-          echo "=============================="
+          find site -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
 
-          find site -maxdepth 2 -type f \
-            -printf "%p (%s bytes)\n" | sort
-
-          echo
-          echo "=============================="
-          echo "PAGES ARTIFACT CHECK"
-          echo "=============================="
-
-          test -f site/index.html
-          test -f site/outputs/mrms_current.png
-          test -f site/outputs/mrms_current.json
-          test -f site/outputs/winter_phase_mask.png
-          test -f site/outputs/mrms_diagnostics.png
-          test -f site/outputs/mrms_diagnostics.json
-          test -f site/outputs/mrms_vertical_dualpol.png
-          test -f site/outputs/winter_mask_diagnostics.png
-          test -f site/outputs/winter_mask_diagnostics.json
-
-          echo "All Pages files verified."
+          test -s site/index.html
+          test -s site/outputs/mrms_current.png
+          test -s site/outputs/mrms_current.json
+          test -s site/outputs/winter_phase_mask.png
+          test -s site/outputs/mrms_diagnostics.png
+          test -s site/outputs/mrms_diagnostics.json
+          test -s site/outputs/mrms_vertical_dualpol.png
+          test -s site/outputs/winter_mask_diagnostics.png
+          test -s site/outputs/winter_mask_diagnostics.json
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
@@ -260,7 +239,6 @@ jobs:
       id-token: write
 
     steps:
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
