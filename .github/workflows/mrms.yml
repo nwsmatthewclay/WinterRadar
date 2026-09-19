@@ -36,11 +36,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libeccodes-dev \
-            libeccodes-tools \
-            libgeos-dev \
-            libproj-dev \
-            proj-data \
-            proj-bin
+            libeccodes-tools
 
       - name: Install Python dependencies
         run: |
@@ -52,17 +48,19 @@ jobs:
             xarray \
             cfgrib \
             matplotlib \
-            gspread \
-            google-auth \
-            google-api-python-client \
-            pygrib \
-            cartopy \
-            metpy
+            pygrib
 
-      # ==========================================================
-      # LIVE MRMS MAP — this is the known-good path
-      # ==========================================================
-      - name: Run main MRMS processing
+      - name: Core syntax QC
+        run: |
+          python -m py_compile \
+            src/config.py \
+            src/download_mrms.py \
+            src/read_mrms.py \
+            src/classifier.py \
+            src/render.py \
+            src/main.py
+
+      - name: Run core MRMS processing
         working-directory: src
         env:
           MPLBACKEND: Agg
@@ -71,32 +69,33 @@ jobs:
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/main.log
 
       - name: Verify live MRMS outputs immediately
         run: |
-          set -e
+          set -euo pipefail
           echo "=============================================="
           echo "LIVE MRMS OUTPUT CHECK"
           echo "=============================================="
-          test -s outputs/mrms_current.png
-          test -s outputs/mrms_current.json
-          test -s outputs/winter_phase_mask.png
-          ls -lh \
-            outputs/mrms_current.png \
-            outputs/mrms_current.json \
-            outputs/winter_phase_mask.png
-          echo "LIVE MRMS OUTPUTS READY"
+          ./src/verify_core_outputs.sh
 
-      # ==========================================================
-      # DIAGNOSTICS — retained so the existing site does not lose
-      # any of its diagnostic assets.
-      # ==========================================================
-      - name: Build MRMS diagnostics
-        working-directory: src
+      # Diagnostics are deliberately OUTSIDE the critical live-radar path.
+      # They can fail without taking the current MRMS radar offline.
+      - name: Download optional diagnostic 2-D fields
         continue-on-error: true
+        working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: python -u download_mrms.py --diagnostics
+
+      - name: Build MRMS diagnostics
+        continue-on-error: true
+        working-directory: src
         env:
           MPLBACKEND: Agg
           OMP_NUM_THREADS: "1"
@@ -106,25 +105,35 @@ jobs:
         run: python -u build_mrms_diagnostics.py
 
       - name: Download vertical dual-pol data
-        working-directory: src
         continue-on-error: true
+        working-directory: src
         env:
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
-        run: python -u download_vertical_dualpol.py
+        run: |
+          if [ -f download_vertical_dualpol.py ]; then
+            python -u download_vertical_dualpol.py
+          else
+            echo "Vertical dual-pol downloader is not present; skipping."
+          fi
 
       - name: Build vertical dual-pol diagnostic
-        working-directory: src
         continue-on-error: true
+        working-directory: src
         env:
           MPLBACKEND: Agg
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
-        run: python -u build_vertical_dualpol_diagnostic.py
+        run: |
+          if [ -f build_vertical_dualpol_diagnostic.py ]; then
+            python -u build_vertical_dualpol_diagnostic.py
+          else
+            echo "Vertical dual-pol diagnostic is not present; skipping."
+          fi
 
       - name: Normalize vertical diagnostic filename
         continue-on-error: true
@@ -134,23 +143,24 @@ jobs:
           fi
 
       - name: Build winter precipitation diagnostic
-        working-directory: src
         continue-on-error: true
+        working-directory: src
         env:
           MPLBACKEND: Agg
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
-        run: python -u build_winter_mask.py
+        run: |
+          if [ -f build_winter_mask.py ]; then
+            python -u build_winter_mask.py
+          else
+            echo "Winter mask diagnostic is not present; skipping."
+          fi
 
-      # ==========================================================
-      # Create harmless fallback assets when a diagnostic fails.
-      # This prevents the existing dashboard from throwing 404s.
-      # ==========================================================
       - name: Create diagnostic fallbacks if needed
         run: |
-          set -e
+          set -euo pipefail
           python - <<'PY'
           from pathlib import Path
           from PIL import Image, ImageDraw
@@ -170,21 +180,20 @@ jobs:
 
           placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
           placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
-          placeholder("winter_mask_diagnostics.png", "Winter mask diagnostic temporarily unavailable")
+          placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
 
           for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json"):
               path = out / name
               if not path.exists() or path.stat().st_size == 0:
-                  path.write_text(json.dumps({"status": "temporarily_unavailable"}, indent=2))
+                  path.write_text(
+                      json.dumps({"status": "temporarily_unavailable"}, indent=2),
+                      encoding="utf-8",
+                  )
           PY
 
-      # ==========================================================
-      # Pages artifact — always contains every file the current
-      # dashboard expects.
-      # ==========================================================
       - name: Assemble Pages site
         run: |
-          set -e
+          set -euo pipefail
           rm -rf site
           mkdir -p site/outputs
 
@@ -193,10 +202,13 @@ jobs:
           cp outputs/mrms_current.json site/outputs/mrms_current.json
           cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
           cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
-          cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
           cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
+          cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
           cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
+          cp outputs/main.log site/outputs/main.log
+
+          ./src/verify_core_outputs.sh
 
           echo "=============================================="
           echo "PAGES CONTENT"
