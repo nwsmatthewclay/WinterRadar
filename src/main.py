@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -5,23 +6,16 @@ from pathlib import Path
 import gc
 import json
 import sys
-import gc
-
-import matplotlib
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from classifier import (  # noqa: E402
-    ClassificationResult,
-    classify_initial,
-)
+from classifier import classify_initial  # noqa: E402
 from config import DATA_DIR, OUTPUT_DIR, PRODUCTS  # noqa: E402
 from download_mrms import main as download_all  # noqa: E402
 from read_mrms import get_values  # noqa: E402
-# Cartopy is used only for the final Web-Mercator raster reprojection.
 from render import (  # noqa: E402
     reflectivity_to_rgba,
     result_to_phase_rgba,
@@ -29,258 +23,83 @@ from render import (  # noqa: E402
     write_metadata,
 )
 
+# ----------------------------------------------------------------------
+# LIVE MRMS MAP
+# ----------------------------------------------------------------------
+# The MRMS 2-D products are a regular latitude/longitude grid.
+# Leaflet/Web Mercator does NOT space pixels linearly in latitude.
+#
+# Instead of stretching the native image over geographic bounds, we
+# explicitly warp the image rows into a Web-Mercator-linear Y grid.
+#
+# This preserves the working MRMS product and fixes the north/south
+# displacement without requiring Cartopy, GDAL, or a second projection
+# library.
+# ----------------------------------------------------------------------
+
+MAIN_VERSION = "7.0-webmercator-warp"
+
+MAP_SOUTH = 40.95
+MAP_WEST = -77.50
+MAP_NORTH = 46.15
+MAP_EAST = -68.40
+
+MAP_WIDTH = 1600
+EARTH_RADIUS_M = 6378137.0
 
 
 def load(name: str):
     product = PRODUCTS[name]
+
     return get_values(
         DATA_DIR / f"MRMS_{product}.latest.grib2",
         product=product,
     )
 
 
-def grid_bounds(lats: np.ndarray, lons: np.ndarray) -> list[float]:
-    """Return [south, west, north, east] for the native MRMS grid."""
-    lats = np.asarray(lats)
-    lons = np.asarray(lons)
-    lons_norm = np.where(lons > 180.0, lons - 360.0, lons)
-    return [
-        float(np.nanmin(lats)),
-        float(np.nanmin(lons_norm)),
-        float(np.nanmax(lats)),
-        float(np.nanmax(lons_norm)),
-    ]
+def normalize_longitudes(lons: np.ndarray) -> np.ndarray:
+    arr = np.asarray(
+        lons,
+        dtype=np.float64,
+    )
+
+    return np.where(
+        arr > 180.0,
+        arr - 360.0,
+        arr,
+    )
 
 
 def get_mrms_valid_time(path: Path) -> str | None:
-    """Read the actual valid timestamp from the reflectivity GRIB."""
+    """Read the actual MRMS valid time from the GRIB message."""
+
     try:
         import pygrib
 
-        grbs = pygrib.open(str(path))
-        try:
-            msg = grbs.message(1)
-            dt = getattr(msg, "validDate", None)
-            if dt is None:
-                return None
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            else:
-                dt = dt.astimezone(timezone.utc)
-            return dt.isoformat()
-        finally:
-            grbs.close()
-    except Exception as exc:
-        print(f"Warning: unable to read MRMS valid time: {exc}")
-        return None
-
-
-
-def update_metadata_bounds(metadata_path: Path, bounds: list[float], mrms_time_utc: str | None = None) -> None:
-    metadata = {}
-    if metadata_path.exists():
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except Exception:
-            metadata = {}
-
-    metadata["generated_at_utc"] = datetime.now(timezone.utc).isoformat()
-    metadata["bounds"] = bounds
-    metadata["bounds_format"] = ["south", "west", "north", "east"]
-    metadata["main_version"] = MAIN_VERSION
-    metadata["projection"] = "EPSG:4326-native-latlon"
-    if mrms_time_utc:
-        metadata["mrms_time_utc"] = mrms_time_utc
-
-    metadata_path.write_text(
-        json.dumps(metadata, indent=2),
-        encoding="utf-8",
-    )
-
-
-
-def normalize_longitudes(lons: np.ndarray) -> np.ndarray:
-    """Convert MRMS east-positive longitudes to -180..180."""
-    arr = np.asarray(lons, dtype=np.float64)
-    return np.where(arr > 180.0, arr - 360.0, arr)
-
-
-def crop_to_regional(
-    data: np.ndarray,
-    phase: np.ndarray,
-    confidence: np.ndarray,
-    intensity: np.ndarray,
-    lats: np.ndarray,
-    lons: np.ndarray,
-) -> tuple[np.ndarray, ClassificationResult, np.ndarray, np.ndarray, list[float]]:
-    """
-    Extract the regional MRMS source window without changing the native
-    north-up scan orientation.
-
-    MRMS is a regular 0.01-degree lat/lon grid with latitude decreasing
-    from north to south and longitude increasing west to east.
-    """
-    lat = np.asarray(lats, dtype=np.float64).reshape(-1)
-    lon = normalize_longitudes(lons).reshape(-1)
-
-    row_keep = (lat >= MAP_SOUTH) & (lat <= MAP_NORTH)
-    col_keep = (lon >= MAP_WEST) & (lon <= MAP_EAST)
-
-    rows = np.where(row_keep)[0]
-    cols = np.where(col_keep)[0]
-
-    if rows.size == 0 or cols.size == 0:
-        raise RuntimeError("MRMS grid does not overlap regional extent.")
-
-    r0, r1 = rows.min(), rows.max() + 1
-    c0, c1 = cols.min(), cols.max() + 1
-
-    ref_crop = np.ascontiguousarray(data[r0:r1, c0:c1])
-    phase_crop = np.ascontiguousarray(phase[r0:r1, c0:c1])
-    confidence_crop = np.ascontiguousarray(confidence[r0:r1, c0:c1])
-    intensity_crop = np.ascontiguousarray(intensity[r0:r1, c0:c1])
-
-    lat_crop = lat[r0:r1].copy()
-    lon_crop = lon[c0:c1].copy()
-
-    regional_result = ClassificationResult(
-        phase=phase_crop,
-        confidence=confidence_crop,
-        intensity=intensity_crop,
-    )
-
-    return (
-        ref_crop,
-        regional_result,
-        lat_crop,
-        lon_crop,
-        [MAP_SOUTH, MAP_WEST, MAP_NORTH, MAP_EAST],
-    )
-
-
-def render_projected_rgba(
-    rgba: np.ndarray,
-    source_lats: np.ndarray,
-    source_lons: np.ndarray,
-    output_path: Path,
-    title: str,
-) -> None:
-    """
-    Reproject an RGBA raster from the native MRMS Plate Carrée grid into
-    EPSG:3857/Web Mercator.
-
-    This is the key fix for the geographic displacement seen when a
-    latitude-linear MRMS raster is stretched directly over a Web Mercator
-    Leaflet map.
-    """
-    import matplotlib
-
-    matplotlib.use("Agg")
-
-    import matplotlib.pyplot as plt
-    import cartopy.crs as ccrs
-
-    lat = np.asarray(source_lats, dtype=np.float64).reshape(-1)
-    lon = np.asarray(source_lons, dtype=np.float64).reshape(-1)
-
-    # MRMS native coordinates are cell centers. Convert them to cell-edge
-    # extents so the image is not shifted by half a grid cell.
-    dx = float(np.nanmedian(np.diff(lon)))
-    dy = float(abs(np.nanmedian(np.diff(lat))))
-
-    west = float(lon[0] - dx / 2.0)
-    east = float(lon[-1] + dx / 2.0)
-    north = float(lat[0] + dy / 2.0)
-    south = float(lat[-1] - dy / 2.0)
-
-    # Keep the rendered image tied to the requested regional map extent.
-    west = max(west, MAP_WEST)
-    east = min(east, MAP_EAST)
-    south = max(south, MAP_SOUTH)
-    north = min(north, MAP_NORTH)
-
-    src_crs = ccrs.PlateCarree()
-    dst_crs = ccrs.Mercator(
-        central_longitude=0.0,
-        min_latitude=-80.0,
-        max_latitude=80.0,
-    )
-
-    # Match figure aspect to the projected geographic extent.
-    def merc_y(lat_deg: float) -> float:
-        rad = np.deg2rad(np.clip(lat_deg, -85.05112878, 85.05112878))
-        return float(
-            6378137.0 * np.log(np.tan(np.pi / 4.0 + rad / 2.0))
+        grbs = pygrib.open(
+            str(path)
         )
 
-    x_width = 6378137.0 * np.deg2rad(east - west)
-    y_height = merc_y(north) - merc_y(south)
-    aspect = x_width / y_height
-
-    width_in = 16.0
-    height_in = width_in / aspect
-
-    fig = plt.figure(
-        figsize=(width_in, height_in),
-        dpi=100,
-        facecolor="none",
-    )
-
-    ax = fig.add_axes(
-        [0.0, 0.0, 1.0, 1.0],
-        projection=dst_crs,
-    )
-
-    ax.set_extent(
-        [MAP_WEST, MAP_EAST, MAP_SOUTH, MAP_NORTH],
-        crs=src_crs,
-    )
-    ax.set_axis_off()
-
-    ax.imshow(
-        rgba,
-        origin="upper",
-        extent=[west, east, south, north],
-        transform=src_crs,
-        interpolation="nearest",
-    )
-
-    fig.savefig(
-        output_path,
-        dpi=100,
-        transparent=True,
-        bbox_inches=None,
-        pad_inches=0,
-    )
-
-    plt.close(fig)
-
-    print(f"Projected {title} written: {output_path}")
-    print(
-        "  Projection: EPSG:3857 / Web Mercator"
-    )
-    print(
-        f"  Source extent: "
-        f"{south:.4f}, {west:.4f}, {north:.4f}, {east:.4f}"
-    )
-
-
-def get_mrms_valid_time(path: Path) -> str | None:
-    """Read the actual valid timestamp from the reflectivity GRIB."""
-    try:
-        import pygrib
-
-        grbs = pygrib.open(str(path))
         try:
             msg = grbs.message(1)
-            dt = getattr(msg, "validDate", None)
+
+            dt = getattr(
+                msg,
+                "validDate",
+                None,
+            )
+
             if dt is None:
                 return None
 
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(
+                    tzinfo=timezone.utc
+                )
             else:
-                dt = dt.astimezone(timezone.utc)
+                dt = dt.astimezone(
+                    timezone.utc
+                )
 
             return dt.isoformat()
 
@@ -289,16 +108,423 @@ def get_mrms_valid_time(path: Path) -> str | None:
 
     except Exception as exc:
         print(
-            f"Warning: unable to read MRMS valid time: {exc}"
+            "Warning: unable to read MRMS valid time:",
+            exc,
         )
+
         return None
 
 
-def update_metadata(
+def lat_to_mercator_y(
+    lat_deg: np.ndarray | float,
+) -> np.ndarray:
+    lat_rad = np.deg2rad(
+        np.clip(
+            lat_deg,
+            -85.05112878,
+            85.05112878,
+        )
+    )
+
+    return (
+        EARTH_RADIUS_M
+        * np.log(
+            np.tan(
+                np.pi / 4.0
+                + lat_rad / 2.0
+            )
+        )
+    )
+
+
+def mercator_y_to_lat(
+    y_m: np.ndarray,
+) -> np.ndarray:
+    return np.rad2deg(
+        2.0
+        * np.arctan(
+            np.exp(
+                y_m / EARTH_RADIUS_M
+            )
+        )
+        - np.pi / 2.0
+    )
+
+
+def nearest_indices_descending(
+    axis: np.ndarray,
+    targets: np.ndarray,
+) -> np.ndarray:
+    """
+    Nearest-neighbor lookup for a monotonically descending axis.
+    """
+
+    axis = np.asarray(
+        axis,
+        dtype=np.float64,
+    )
+
+    targets = np.asarray(
+        targets,
+        dtype=np.float64,
+    )
+
+    # Reverse to ascending for searchsorted.
+    rev = axis[::-1]
+
+    positions = np.searchsorted(
+        rev,
+        targets,
+        side="left",
+    )
+
+    positions = np.clip(
+        positions,
+        0,
+        rev.size - 1,
+    )
+
+    previous = np.maximum(
+        positions - 1,
+        0,
+    )
+
+    choose_previous = (
+        np.abs(
+            targets
+            - rev[previous]
+        )
+        <=
+        np.abs(
+            targets
+            - rev[positions]
+        )
+    )
+
+    chosen = np.where(
+        choose_previous,
+        previous,
+        positions,
+    )
+
+    return (
+        axis.size
+        - 1
+        - chosen
+    ).astype(
+        np.int64
+    )
+
+
+def regional_warp_to_webmercator(
+    ref: np.ndarray,
+    phase: np.ndarray,
+    confidence: np.ndarray,
+    intensity: np.ndarray,
+    lats: np.ndarray,
+    lons: np.ndarray,
+) -> tuple[
+    np.ndarray,
+    "ClassificationResult",
+    np.ndarray,
+    np.ndarray,
+    list[float],
+]:
+    """
+    Extract the regional MRMS grid and warp it so image rows are linear
+    in Web-Mercator Y. Longitude is already linear in Web Mercator X.
+    """
+
+    from classifier import ClassificationResult
+
+    lat_axis = np.asarray(
+        lats,
+        dtype=np.float64,
+    ).reshape(-1)
+
+    lon_axis = normalize_longitudes(
+        lons
+    ).reshape(-1)
+
+    if ref.ndim != 2:
+        raise RuntimeError(
+            f"Expected 2-D reflectivity; got {ref.shape}"
+        )
+
+    if (
+        lat_axis.size != ref.shape[0]
+        or lon_axis.size != ref.shape[1]
+    ):
+        raise RuntimeError(
+            "MRMS coordinate lengths do not match the raster."
+        )
+
+    # MRMS is normally north-to-south in row order.
+    lat_step = float(
+        np.nanmedian(
+            np.diff(lat_axis)
+        )
+    )
+
+    if lat_step > 0:
+        raise RuntimeError(
+            "Unexpected MRMS latitude orientation: "
+            "expected a descending latitude axis."
+        )
+
+    lon_step = float(
+        np.nanmedian(
+            np.diff(lon_axis)
+        )
+    )
+
+    if lon_step < 0:
+        raise RuntimeError(
+            "Unexpected MRMS longitude orientation: "
+            "expected an ascending longitude axis."
+        )
+
+    # Select only the regional source window.
+    row_keep = (
+        (lat_axis >= MAP_SOUTH)
+        & (lat_axis <= MAP_NORTH)
+    )
+
+    col_keep = (
+        (lon_axis >= MAP_WEST)
+        & (lon_axis <= MAP_EAST)
+    )
+
+    rows = np.where(
+        row_keep
+    )[0]
+
+    cols = np.where(
+        col_keep
+    )[0]
+
+    if rows.size == 0:
+        raise RuntimeError(
+            "No MRMS rows overlap the regional map."
+        )
+
+    if cols.size == 0:
+        raise RuntimeError(
+            "No MRMS columns overlap the regional map."
+        )
+
+    r0 = int(rows.min())
+    r1 = int(rows.max()) + 1
+
+    c0 = int(cols.min())
+    c1 = int(cols.max()) + 1
+
+    ref_src = np.ascontiguousarray(
+        ref[r0:r1, c0:c1]
+    )
+
+    phase_src = np.ascontiguousarray(
+        phase[r0:r1, c0:c1]
+    )
+
+    confidence_src = np.ascontiguousarray(
+        confidence[r0:r1, c0:c1]
+    )
+
+    intensity_src = np.ascontiguousarray(
+        intensity[r0:r1, c0:c1]
+    )
+
+    lat_src = lat_axis[r0:r1]
+    lon_src = lon_axis[c0:c1]
+
+    # Calculate a target image height that preserves the geographic
+    # aspect ratio in Web Mercator.
+    x_w = float(
+        EARTH_RADIUS_M
+        * np.deg2rad(
+            MAP_WEST
+        )
+    )
+
+    x_e = float(
+        EARTH_RADIUS_M
+        * np.deg2rad(
+            MAP_EAST
+        )
+    )
+
+    y_s = float(
+        lat_to_mercator_y(
+            MAP_SOUTH
+        )
+    )
+
+    y_n = float(
+        lat_to_mercator_y(
+            MAP_NORTH
+        )
+    )
+
+    projected_width = (
+        x_e - x_w
+    )
+
+    projected_height = (
+        y_n - y_s
+    )
+
+    aspect = (
+        projected_width
+        / projected_height
+    )
+
+    map_height = max(
+        700,
+        int(
+            round(
+                MAP_WIDTH
+                / aspect
+            )
+        ),
+    )
+
+    # Image row 0 = north. Therefore Y centers go from north to south.
+    y_centers = np.linspace(
+        y_n,
+        y_s,
+        map_height,
+        dtype=np.float64,
+    )
+
+    target_lat = mercator_y_to_lat(
+        y_centers
+    )
+
+    # Web Mercator X is linear in longitude, so evenly spaced lon
+    # centers are sufficient horizontally.
+    x_centers = np.linspace(
+        x_w,
+        x_e,
+        MAP_WIDTH,
+        dtype=np.float64,
+    )
+
+    target_lon = np.rad2deg(
+        x_centers
+        / EARTH_RADIUS_M
+    )
+
+    row_idx = nearest_indices_descending(
+        lat_src,
+        target_lat,
+    )
+
+    col_idx = np.searchsorted(
+        lon_src,
+        target_lon,
+        side="left",
+    )
+
+    col_idx = np.clip(
+        col_idx,
+        0,
+        lon_src.size - 1,
+    )
+
+    previous = np.maximum(
+        col_idx - 1,
+        0,
+    )
+
+    choose_previous = (
+        np.abs(
+            target_lon
+            - lon_src[previous]
+        )
+        <=
+        np.abs(
+            target_lon
+            - lon_src[col_idx]
+        )
+    )
+
+    col_idx = np.where(
+        choose_previous,
+        previous,
+        col_idx,
+    ).astype(
+        np.int64
+    )
+
+    indexer = np.ix_(
+        row_idx,
+        col_idx,
+    )
+
+    ref_map = ref_src[indexer]
+
+    phase_map = phase_src[indexer]
+
+    confidence_map = confidence_src[
+        indexer
+    ]
+
+    intensity_map = intensity_src[
+        indexer
+    ]
+
+    result_map = ClassificationResult(
+        phase=phase_map,
+        confidence=confidence_map,
+        intensity=intensity_map,
+    )
+
+    print(
+        "Web-Mercator raster warp:"
+    )
+
+    print(
+        f"  Source rows: {r0}:{r1} "
+        f"({r1 - r0})"
+    )
+
+    print(
+        f"  Source cols: {c0}:{c1} "
+        f"({c1 - c0})"
+    )
+
+    print(
+        f"  Output image: "
+        f"{MAP_WIDTH} x {map_height}"
+    )
+
+    print(
+        "  Output bounds: "
+        f"{MAP_SOUTH}, {MAP_WEST}, "
+        f"{MAP_NORTH}, {MAP_EAST}"
+    )
+
+    return (
+        ref_map,
+        result_map,
+        target_lat,
+        target_lon,
+        [
+            MAP_SOUTH,
+            MAP_WEST,
+            MAP_NORTH,
+            MAP_EAST,
+        ],
+    )
+
+
+def write_map_metadata(
     metadata_path: Path,
     bounds: list[float],
     mrms_time_utc: str | None,
 ) -> None:
+
     metadata = {}
 
     if metadata_path.exists():
@@ -312,20 +538,26 @@ def update_metadata(
             metadata = {}
 
     metadata["generated_at_utc"] = (
-        datetime.now(timezone.utc).isoformat()
+        datetime.now(
+            timezone.utc
+        ).isoformat()
     )
+
     metadata["bounds"] = bounds
+
     metadata["bounds_format"] = [
         "south",
         "west",
         "north",
         "east",
     ]
+
     metadata["projection"] = (
-        "EPSG:3857-Web-Mercator"
+        "EPSG:3857-Web-Mercator-warp"
     )
+
     metadata["main_version"] = (
-        "6.0-webmercator-cartopy"
+        MAIN_VERSION
     )
 
     if mrms_time_utc:
@@ -336,18 +568,21 @@ def update_metadata(
     metadata_path.write_text(
         json.dumps(
             metadata,
-            indent=2
+            indent=2,
         ),
         encoding="utf-8",
     )
 
 
 def main() -> None:
+
     print("=" * 72)
+
     print(
         "WINTERRADAR MAIN MRMS PROCESSING — "
-        "VERSION 6.0-webmercator-cartopy"
+        f"VERSION {MAIN_VERSION}"
     )
+
     print("=" * 72)
 
     OUTPUT_DIR.mkdir(
@@ -355,7 +590,10 @@ def main() -> None:
         exist_ok=True,
     )
 
-    print("Downloading latest MRMS data...")
+    print(
+        "Downloading latest MRMS data..."
+    )
+
     download_all()
 
     ref_path = (
@@ -369,10 +607,13 @@ def main() -> None:
 
     if mrms_time_utc:
         print(
-            f"MRMS valid time: {mrms_time_utc}"
+            "MRMS valid time:",
+            mrms_time_utc,
         )
 
-    print("Loading MRMS fields...")
+    print(
+        "Loading MRMS fields..."
+    )
 
     ref, lats, lons = load(
         "reflectivity"
@@ -403,12 +644,14 @@ def main() -> None:
     )
 
     print(
-        f"  Reflectivity shape: {ref.shape}"
+        f"  Reflectivity shape: "
+        f"{ref.shape}"
     )
+
     print(
-        "  Native latitude range: "
+        "  Native latitude range:",
         f"{float(np.nanmin(lats)):.3f} to "
-        f"{float(np.nanmax(lats)):.3f}"
+        f"{float(np.nanmax(lats)):.3f}",
     )
 
     lons_norm = normalize_longitudes(
@@ -416,9 +659,9 @@ def main() -> None:
     )
 
     print(
-        "  Native longitude range: "
+        "  Native longitude range:",
         f"{float(np.nanmin(lons_norm)):.3f} to "
-        f"{float(np.nanmax(lons_norm)):.3f}"
+        f"{float(np.nanmax(lons_norm)):.3f}",
     )
 
     print(
@@ -435,17 +678,13 @@ def main() -> None:
         rqi=rqi,
     )
 
-    print(
-        "Extracting regional MRMS source grid..."
-    )
-
     (
-        ref_region,
-        result_region,
-        lat_region,
-        lon_region,
+        ref_map,
+        result_map,
+        target_lat,
+        target_lon,
         bounds,
-    ) = crop_to_regional(
+    ) = regional_warp_to_webmercator(
         ref,
         result.phase,
         result.confidence,
@@ -455,41 +694,31 @@ def main() -> None:
     )
 
     print(
-        f"  Regional grid: "
-        f"{ref_region.shape[0]} rows x "
-        f"{ref_region.shape[1]} columns"
-    )
-
-    print(
-        "Rendering radar in Web Mercator..."
+        "Writing MRMS radar overlay..."
     )
 
     radar_rgba = reflectivity_to_rgba(
-        ref_region
+        ref_map
     )
 
-    render_projected_rgba(
+    save_rgba_png(
         radar_rgba,
-        lat_region,
-        lon_region,
-        OUTPUT_DIR / "mrms_current.png",
-        "MRMS radar",
+        OUTPUT_DIR
+        / "mrms_current.png",
     )
 
     print(
-        "Rendering winter mask in Web Mercator..."
+        "Writing winter phase overlay..."
     )
 
     phase_rgba = result_to_phase_rgba(
-        result_region
+        result_map
     )
 
-    render_projected_rgba(
+    save_rgba_png(
         phase_rgba,
-        lat_region,
-        lon_region,
-        OUTPUT_DIR / "winter_phase_mask.png",
-        "winter phase mask",
+        OUTPUT_DIR
+        / "winter_phase_mask.png",
     )
 
     metadata_path = (
@@ -498,37 +727,45 @@ def main() -> None:
     )
 
     write_metadata(
-        result_region,
+        result_map,
         metadata_path,
     )
 
-    update_metadata(
+    write_map_metadata(
         metadata_path,
         bounds,
         mrms_time_utc,
     )
 
-    # Save the coordinates actually used by the web-map raster.
+    # Save the actual map-grid coordinate centers.
     np.save(
-        OUTPUT_DIR / "latitude.npy",
-        lat_region,
+        OUTPUT_DIR
+        / "latitude.npy",
+        target_lat,
     )
 
     np.save(
-        OUTPUT_DIR / "longitude.npy",
-        lon_region,
+        OUTPUT_DIR
+        / "longitude.npy",
+        target_lon,
     )
 
-    print("Created:")
+    print(
+        "Created:"
+    )
+
     print(
         "  outputs/mrms_current.png"
     )
+
     print(
         "  outputs/winter_phase_mask.png"
     )
+
     print(
         "  outputs/mrms_current.json"
     )
+
     print(
         "MAIN MRMS PROCESSING COMPLETE"
     )
@@ -542,12 +779,12 @@ def main() -> None:
         wetbulb,
         frz,
         result,
-        ref_region,
-        result_region,
+        ref_map,
+        result_map,
         radar_rgba,
         phase_rgba,
-        lat_region,
-        lon_region,
+        target_lat,
+        target_lon,
         lats,
         lons,
         lons_norm,
