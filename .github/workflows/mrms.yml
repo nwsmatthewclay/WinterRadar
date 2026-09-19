@@ -10,16 +10,14 @@ permissions:
   pages: write
   id-token: write
 
-# Do NOT cancel a running map build when the next 5-minute trigger fires.
-# GitHub will keep one run active and retain the newest pending run.
 concurrency:
-  group: mrms-map
-  cancel-in-progress: false
+  group: mrms-radar
+  cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -38,7 +36,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libeccodes-dev \
-            libeccodes-tools
+            libeccodes-tools \
+            libgeos-dev \
+            libproj-dev \
+            proj-data \
+            proj-bin
 
       - name: Install Python dependencies
         run: |
@@ -48,13 +50,19 @@ jobs:
             requests \
             Pillow \
             xarray \
-            cfgrib
+            cfgrib \
+            matplotlib \
+            gspread \
+            google-auth \
+            google-api-python-client \
+            pygrib \
+            cartopy \
+            metpy
 
-      # ----------------------------------------------------------
-      # THIS IS THE ONLY REQUIRED PROCESS FOR THE LIVE MAP.
-      # Diagnostics are intentionally not allowed to block Pages.
-      # ----------------------------------------------------------
-      - name: Run main MRMS map processing
+      # ==========================================================
+      # LIVE MRMS MAP — this is the known-good path
+      # ==========================================================
+      - name: Run main MRMS processing
         working-directory: src
         env:
           MPLBACKEND: Agg
@@ -64,41 +72,119 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: |
           set -e
-
           mkdir -p ../outputs
-
-          echo "=============================================="
-          echo "RUNNING LIVE MRMS MAP"
-          echo "=============================================="
-
           python -u main.py 2>&1 | tee ../outputs/main.log
 
-          echo
+      - name: Verify live MRMS outputs immediately
+        run: |
+          set -e
           echo "=============================================="
           echo "LIVE MRMS OUTPUT CHECK"
           echo "=============================================="
-
-          test -s ../outputs/mrms_current.png
-          test -s ../outputs/mrms_current.json
-          test -s ../outputs/winter_phase_mask.png
-
-          file ../outputs/mrms_current.png
-          file ../outputs/winter_phase_mask.png
+          test -s outputs/mrms_current.png
+          test -s outputs/mrms_current.json
+          test -s outputs/winter_phase_mask.png
           ls -lh \
-            ../outputs/mrms_current.png \
-            ../outputs/mrms_current.json \
-            ../outputs/winter_phase_mask.png
+            outputs/mrms_current.png \
+            outputs/mrms_current.json \
+            outputs/winter_phase_mask.png
+          echo "LIVE MRMS OUTPUTS READY"
 
-          echo "LIVE MRMS MAP OUTPUTS READY"
+      # ==========================================================
+      # DIAGNOSTICS — retained so the existing site does not lose
+      # any of its diagnostic assets.
+      # ==========================================================
+      - name: Build MRMS diagnostics
+        working-directory: src
+        continue-on-error: true
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: python -u build_mrms_diagnostics.py
 
-      # ----------------------------------------------------------
-      # Build and deploy Pages immediately after main.py succeeds.
-      # Nothing else can block the live radar map.
-      # ----------------------------------------------------------
+      - name: Download vertical dual-pol data
+        working-directory: src
+        continue-on-error: true
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: python -u download_vertical_dualpol.py
+
+      - name: Build vertical dual-pol diagnostic
+        working-directory: src
+        continue-on-error: true
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: python -u build_vertical_dualpol_diagnostic.py
+
+      - name: Normalize vertical diagnostic filename
+        continue-on-error: true
+        run: |
+          if [ -s outputs/vertical_dualpol_diagnostic.png ]; then
+            cp outputs/vertical_dualpol_diagnostic.png outputs/mrms_vertical_dualpol.png
+          fi
+
+      - name: Build winter precipitation diagnostic
+        working-directory: src
+        continue-on-error: true
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: python -u build_winter_mask.py
+
+      # ==========================================================
+      # Create harmless fallback assets when a diagnostic fails.
+      # This prevents the existing dashboard from throwing 404s.
+      # ==========================================================
+      - name: Create diagnostic fallbacks if needed
+        run: |
+          set -e
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+          import json
+
+          out = Path("outputs")
+          out.mkdir(exist_ok=True)
+
+          def placeholder(name, label):
+              path = out / name
+              if path.exists() and path.stat().st_size > 0:
+                  return
+              img = Image.new("RGB", (1200, 675), (238, 240, 242))
+              d = ImageDraw.Draw(img)
+              d.text((60, 300), label, fill=(80, 85, 90))
+              img.save(path, optimize=True)
+
+          placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
+          placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
+          placeholder("winter_mask_diagnostics.png", "Winter mask diagnostic temporarily unavailable")
+
+          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json"):
+              path = out / name
+              if not path.exists() or path.stat().st_size == 0:
+                  path.write_text(json.dumps({"status": "temporarily_unavailable"}, indent=2))
+          PY
+
+      # ==========================================================
+      # Pages artifact — always contains every file the current
+      # dashboard expects.
+      # ==========================================================
       - name: Assemble Pages site
         run: |
           set -e
-
           rm -rf site
           mkdir -p site/outputs
 
@@ -106,22 +192,32 @@ jobs:
           cp outputs/mrms_current.png site/outputs/mrms_current.png
           cp outputs/mrms_current.json site/outputs/mrms_current.json
           cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
+          cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
+          cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
+          cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
+          cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
+          cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
 
           echo "=============================================="
           echo "PAGES CONTENT"
           echo "=============================================="
           find site -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
 
-          test -s site/index.html
-          test -s site/outputs/mrms_current.png
-          test -s site/outputs/mrms_current.json
-          test -s site/outputs/winter_phase_mask.png
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: ./site
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
