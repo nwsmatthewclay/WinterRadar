@@ -65,16 +65,32 @@ jobs:
       # ----------------------------------------------------------
       - name: Run main MRMS processing
         working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
           set -e
           mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/main.log
 
       # ----------------------------------------------------------
-      # MRMS diagnostics
+      # MRMS diagnostic
+      #
+      # Uses the safe pygrib-based diagnostic reader rather than
+      # the previous cfgrib/xarray implementation. The old process
+      # was writing the PNG successfully and then dying with exit
+      # 139 during native-library shutdown.
       # ----------------------------------------------------------
       - name: Build MRMS diagnostics
         working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
           set -e
           python -u build_mrms_diagnostics.py
@@ -84,12 +100,23 @@ jobs:
       # ----------------------------------------------------------
       - name: Download vertical dual-pol data
         working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
           set -e
           python -u download_vertical_dualpol.py
 
       - name: Build vertical dual-pol diagnostic
         working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
           set -e
           python -u build_vertical_dualpol_diagnostic.py
@@ -112,6 +139,12 @@ jobs:
       # ----------------------------------------------------------
       - name: Build winter precipitation diagnostic
         working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
           set -e
           python -u build_winter_mask.py
@@ -149,7 +182,7 @@ jobs:
           done
 
       # ----------------------------------------------------------
-      # Build GitHub Pages artifact
+      # Build Pages artifact
       # ----------------------------------------------------------
       - name: Assemble Pages site
         run: |
