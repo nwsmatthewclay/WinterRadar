@@ -1,375 +1,229 @@
 from __future__ import annotations
 
+import argparse
 import gzip
+import os
 import shutil
 import time
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from config import DATA_DIR, MRMS_BASE, PRODUCTS
-
-
-# ------------------------------------------------------------
-# Settings
-# ------------------------------------------------------------
-
-MAX_ATTEMPTS = 5
-
-CONNECT_TIMEOUT = 20
-READ_TIMEOUT = 120
-
-CHUNK_SIZE = 1024 * 1024  # 1 MB
-
-USER_AGENT = (
-    "WinterRadar/1.0 "
-    "(MRMS winter precipitation visualization project)"
+from config import (
+    DATA_DIR,
+    MRMS_BASE,
+    LIVE_PRODUCTS,
+    OPTIONAL_DIAGNOSTIC_PRODUCTS,
+    REQUIRED_LIVE_PRODUCTS,
+    REQUIRED_ATTEMPTS,
+    REQUIRED_CONNECT_TIMEOUT,
+    REQUIRED_READ_TIMEOUT,
+    OPTIONAL_ATTEMPTS,
+    OPTIONAL_CONNECT_TIMEOUT,
+    OPTIONAL_READ_TIMEOUT,
 )
 
+USER_AGENT = "WinterRadar/1.0 (NWS MRMS operational visualization)"
+RETRYABLE_STATUS = (408, 429, 500, 502, 503, 504)
 
-# ------------------------------------------------------------
-# HTTP session
-# ------------------------------------------------------------
-
-SESSION = requests.Session()
-
-SESSION.headers.update(
-    {
-        "User-Agent": USER_AGENT,
-        "Accept": "*/*",
-        "Accept-Encoding": "identity",
-        "Connection": "keep-alive",
-    }
-)
-
-
-# ------------------------------------------------------------
-# Download helpers
-# ------------------------------------------------------------
-
-def download_gzip(url: str, destination: Path) -> None:
-    """
-    Download a gzip file to a temporary path.
-
-    The file is not considered successful until the complete
-    gzip stream has been written.
-    """
-
-    DATA_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
+def _session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=0,
+        connect=0,
+        read=0,
+        redirect=2,
+        status=0,
+        backoff_factor=0,
     )
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    session.headers.update({"User-Agent": USER_AGENT, "Accept": "*/*"})
+    return session
 
-    temp_gz = destination.with_suffix(
-        destination.suffix + ".download"
-    )
 
-    # Remove any debris from an earlier failed attempt.
-    temp_gz.unlink(
-        missing_ok=True
-    )
+def _validate_grib(path: Path) -> None:
+    if not path.exists() or path.stat().st_size < 16:
+        raise RuntimeError(f"Downloaded GRIB is missing or too small: {path}")
 
-    print(f"Downloading:")
-    print(f"  {url}")
-    print(f"  -> {temp_gz}")
-
-    with SESSION.get(
-        url,
-        stream=True,
-        timeout=(
-            CONNECT_TIMEOUT,
-            READ_TIMEOUT,
-        ),
-    ) as response:
-
-        response.raise_for_status()
-
-        expected_size = response.headers.get(
-            "Content-Length"
+    with path.open("rb") as fh:
+        magic = fh.read(4)
+    if magic != b"GRIB":
+        raise RuntimeError(
+            f"Downloaded file is not a GRIB2 payload (starts with {magic!r}): {path}"
         )
 
-        if expected_size:
-            expected_size = int(expected_size)
 
-            print(
-                f"  Expected compressed size: "
-                f"{expected_size:,} bytes"
-            )
+def _download_to_gz(
+    session: requests.Session,
+    url: str,
+    gz_path: Path,
+    *,
+    attempts: int,
+    connect_timeout: int,
+    read_timeout: int,
+) -> None:
+    part = gz_path.with_name(gz_path.name + ".part")
+    if part.exists():
+        part.unlink()
 
-        bytes_written = 0
+    last_error: Exception | None = None
 
-        with temp_gz.open(
-            "wb"
-        ) as output:
-
-            for chunk in response.iter_content(
-                chunk_size=CHUNK_SIZE
-            ):
-
-                if not chunk:
-                    continue
-
-                output.write(chunk)
-                bytes_written += len(chunk)
-
-    print(
-        f"  Downloaded: "
-        f"{bytes_written:,} bytes"
-    )
-
-    # --------------------------------------------------------
-    # Basic Content-Length check
-    # --------------------------------------------------------
-
-    if (
-        expected_size is not None
-        and bytes_written != expected_size
-    ):
-        raise IOError(
-            "Downloaded file size does not match "
-            f"Content-Length "
-            f"({bytes_written} != {expected_size})"
-        )
-
-    # --------------------------------------------------------
-    # Validate the gzip stream completely
-    # --------------------------------------------------------
-
-    print("  Checking gzip integrity...")
-
-    decompressed_bytes = 0
-
-    with gzip.open(
-        temp_gz,
-        "rb",
-    ) as source:
-
-        while True:
-            chunk = source.read(
-                CHUNK_SIZE
-            )
-
-            if not chunk:
-                break
-
-            decompressed_bytes += len(chunk)
-
-    if decompressed_bytes <= 0:
-        raise IOError(
-            "Gzip stream was valid but contained "
-            "no decompressed data."
-        )
-
-    print(
-        f"  Gzip OK: "
-        f"{decompressed_bytes:,} decompressed bytes"
-    )
-
-    # --------------------------------------------------------
-    # Decompress to another temporary file
-    # --------------------------------------------------------
-
-    temp_grib = destination.with_suffix(
-        destination.suffix + ".tmp"
-    )
-
-    temp_grib.unlink(
-        missing_ok=True
-    )
-
-    print(
-        f"  Decompressing -> {temp_grib}"
-    )
-
-    with gzip.open(
-        temp_gz,
-        "rb",
-    ) as source, temp_grib.open(
-        "wb"
-    ) as target:
-
-        shutil.copyfileobj(
-            source,
-            target,
-            length=CHUNK_SIZE,
-        )
-
-    # --------------------------------------------------------
-    # Atomically replace the final GRIB2 file
-    # --------------------------------------------------------
-
-    temp_grib.replace(
-        destination
-    )
-
-    temp_gz.unlink(
-        missing_ok=True
-    )
-
-    print(
-        f"  Final file: {destination}"
-    )
-
-
-def download_latest(
-    product: str,
-) -> Path:
-
-    url = (
-        f"{MRMS_BASE}/{product}/"
-        f"MRMS_{product}.latest.grib2.gz"
-    )
-
-    destination = (
-        DATA_DIR
-        / f"MRMS_{product}.latest.grib2"
-    )
-
-    last_error = None
-
-    for attempt in range(
-        1,
-        MAX_ATTEMPTS + 1,
-    ):
-
-        print("")
-        print(
-            f"Attempt {attempt}/{MAX_ATTEMPTS} "
-            f"for {product}"
-        )
-
-        # Never allow an old partial output to survive.
-        destination.with_suffix(
-            destination.suffix + ".download"
-        ).unlink(
-            missing_ok=True
-        )
-
-        destination.with_suffix(
-            destination.suffix + ".tmp"
-        ).unlink(
-            missing_ok=True
-        )
-
+    for attempt in range(1, attempts + 1):
         try:
-
-            download_gzip(
+            print(f"  HTTP GET attempt {attempt}/{attempts}")
+            with session.get(
                 url,
-                destination,
-            )
+                timeout=(connect_timeout, read_timeout),
+                stream=True,
+            ) as response:
+                if response.status_code in RETRYABLE_STATUS:
+                    raise requests.HTTPError(
+                        f"Transient HTTP {response.status_code}",
+                        response=response,
+                    )
+                response.raise_for_status()
 
-            print(
-                f"SUCCESS: {product}"
-            )
+                with part.open("wb") as fh:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            fh.write(chunk)
 
-            return destination
+            if part.stat().st_size < 32:
+                raise RuntimeError(f"Downloaded payload is unexpectedly small: {part}")
+
+            # Validate the compressed stream before making it the live file.
+            with gzip.open(part, "rb") as fh:
+                magic = fh.read(4)
+            if magic != b"GRIB":
+                raise RuntimeError(
+                    f"Compressed response does not contain a GRIB payload: {url}"
+                )
+
+            os.replace(part, gz_path)
+            return
 
         except Exception as exc:
-
             last_error = exc
+            if part.exists():
+                part.unlink()
+            if attempt < attempts:
+                delay = 2 ** (attempt - 1)
+                print(f"  Download failed: {exc}; retrying in {delay}s")
+                time.sleep(delay)
+            else:
+                break
 
-            print(
-                f"FAILED: {product}"
+    raise RuntimeError(f"Failed to download {url}: {last_error}")
+
+
+def _decompress_atomic(gz_path: Path, grib_path: Path) -> None:
+    part = grib_path.with_name(grib_path.name + ".part")
+    if part.exists():
+        part.unlink()
+
+    try:
+        with gzip.open(gz_path, "rb") as src, part.open("wb") as dst:
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+        _validate_grib(part)
+        os.replace(part, grib_path)
+    finally:
+        if part.exists():
+            part.unlink()
+
+
+def download_product(product: str, *, required: bool) -> Path | None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    url = f"{MRMS_BASE}/{product}/MRMS_{product}.latest.grib2.gz"
+    gz_path = DATA_DIR / f"MRMS_{product}.latest.grib2.gz"
+    grib_path = DATA_DIR / f"MRMS_{product}.latest.grib2"
+
+    print(f"Downloading {product} ({'required' if required else 'optional'})")
+
+    try:
+        with _session() as session:
+            _download_to_gz(
+                session,
+                url,
+                gz_path,
+                attempts=REQUIRED_ATTEMPTS if required else OPTIONAL_ATTEMPTS,
+                connect_timeout=REQUIRED_CONNECT_TIMEOUT if required else OPTIONAL_CONNECT_TIMEOUT,
+                read_timeout=REQUIRED_READ_TIMEOUT if required else OPTIONAL_READ_TIMEOUT,
             )
-
-            print(
-                f"Reason: {type(exc).__name__}: {exc}"
-            )
-
-            # Clean up anything from the failed attempt.
-            destination.with_suffix(
-                destination.suffix + ".download"
-            ).unlink(
-                missing_ok=True
-            )
-
-            destination.with_suffix(
-                destination.suffix + ".tmp"
-            ).unlink(
-                missing_ok=True
-            )
-
-            destination.unlink(
-                missing_ok=True
-            )
-
-            if attempt < MAX_ATTEMPTS:
-
-                wait_seconds = 5 * attempt
-
-                print(
-                    f"Retrying in "
-                    f"{wait_seconds} seconds..."
-                )
-
-                time.sleep(
-                    wait_seconds
-                )
-
-    raise RuntimeError(
-        f"Unable to download valid MRMS product "
-        f"{product} after {MAX_ATTEMPTS} attempts. "
-        f"Last error: {last_error}"
-    )
+        _decompress_atomic(gz_path, grib_path)
+        print(f"  OK -> {grib_path} ({grib_path.stat().st_size:,} bytes)")
+        return grib_path
+    except Exception as exc:
+        if required:
+            raise
+        print(f"  OPTIONAL DOWNLOAD FAILED: {exc}")
+        return None
 
 
-# ------------------------------------------------------------
-# Main
-# ------------------------------------------------------------
+def download_required_live_products() -> dict[str, Path | None]:
+    """Download only the hard-required live radar product."""
+    return {
+        "reflectivity": download_product(
+            REQUIRED_LIVE_PRODUCTS["reflectivity"],
+            required=True,
+        )
+    }
 
-def main():
 
-    DATA_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+def download_optional_live_products() -> dict[str, Path | None]:
+    """Best-effort phase-support fields for the live map."""
+    results: dict[str, Path | None] = {}
+    for name, product in LIVE_PRODUCTS.items():
+        if name in REQUIRED_LIVE_PRODUCTS:
+            continue
+        results[name] = download_product(product, required=False)
+    return results
 
-    print("")
+
+def download_live_products() -> dict[str, Path | None]:
+    """Backward-compatible wrapper: required first, then optional."""
+    results = download_required_live_products()
+    results.update(download_optional_live_products())
+    return results
+
+def download_diagnostic_products() -> dict[str, Path | None]:
+    """Best-effort download of non-critical 2-D diagnostic fields."""
+    results: dict[str, Path | None] = {}
+    for name, product in OPTIONAL_DIAGNOSTIC_PRODUCTS.items():
+        results[name] = download_product(product, required=False)
+    return results
+
+
+def main(include_diagnostics: bool = False) -> None:
     print("=" * 72)
     print("MRMS DOWNLOAD")
     print("=" * 72)
 
-    successful = 0
+    live = download_live_products()
 
-    for name, product in PRODUCTS.items():
+    if include_diagnostics:
+        print("=" * 72)
+        print("OPTIONAL DIAGNOSTIC DOWNLOADS")
+        print("=" * 72)
+        download_diagnostic_products()
 
-        print("")
-        print(
-            f"Downloading {name}: {product}"
-        )
+    missing = [
+        name for name, path in live.items() if path is None and name not in REQUIRED_LIVE_PRODUCTS
+    ]
+    if missing:
+        print("Live phase-support fields unavailable: " + ", ".join(missing))
 
-        try:
-
-            path = download_latest(
-                product
-            )
-
-            print(
-                f"  -> {path}"
-            )
-
-            successful += 1
-
-        except Exception as exc:
-
-            print("")
-            print(
-                f"ERROR downloading "
-                f"{product}: {exc}"
-            )
-
-            # Fail the complete run rather than allowing
-            # one missing field to contaminate the classifier.
-            raise
-
-    print("")
-    print("=" * 72)
-    print(
-        f"MRMS DOWNLOAD COMPLETE: "
-        f"{successful}/{len(PRODUCTS)} fields"
-    )
-    print("=" * 72)
+    print("MRMS DOWNLOAD COMPLETE")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Also download best-effort non-critical diagnostic 2-D products.",
+    )
+    args = parser.parse_args()
+    main(include_diagnostics=args.diagnostics)
