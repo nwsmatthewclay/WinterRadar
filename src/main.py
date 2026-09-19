@@ -2,45 +2,30 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import gc
 import json
 import sys
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-sys.path.insert(
-    0,
-    str(Path(__file__).resolve().parent),
-)
-
-from classifier import classify_initial
-
-from config import (
-    DATA_DIR,
-    OUTPUT_DIR,
-    PRODUCTS,
-)
-
-from download_mrms import main as download_all
-
-from read_mrms import get_values
-
-from render import (
+from classifier import classify_initial  # noqa: E402
+from config import DATA_DIR, OUTPUT_DIR, PRODUCTS  # noqa: E402
+from download_mrms import main as download_all  # noqa: E402
+from read_mrms import get_values  # noqa: E402
+from render import (  # noqa: E402
     reflectivity_to_rgba,
     result_to_phase_rgba,
     save_rgba_png,
     write_metadata,
 )
 
+# Explicit marker so the Actions log proves which main.py is running.
+MAIN_VERSION = "3.0-btv-crop"
 
-# ---------------------------------------------------------------
-# BTV regional map extent.
-#
-# This keeps the browser image manageable and focused on the area
-# used by WFO Burlington. The map can still zoom to towns/cities.
-# ---------------------------------------------------------------
-
+# Regional map extent for the BTV CWA / surrounding area.
 MAP_SOUTH = 41.50
 MAP_WEST = -76.50
 MAP_NORTH = 45.60
@@ -48,13 +33,18 @@ MAP_EAST = -69.50
 
 
 def load(name: str):
-
     product = PRODUCTS[name]
-
     return get_values(
         DATA_DIR / f"MRMS_{product}.latest.grib2",
         product=product,
     )
+
+
+def normalize_longitudes(lons: np.ndarray) -> np.ndarray:
+    """Convert longitude coordinates to the conventional -180..180 range."""
+    arr = np.asarray(lons, dtype=np.float64).copy()
+    arr = np.where(arr > 180.0, arr - 360.0, arr)
+    return arr
 
 
 def normalize_orientation(
@@ -62,102 +52,46 @@ def normalize_orientation(
     lats: np.ndarray,
     lons: np.ndarray,
 ) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
-    """
-    Ensure image row 0 is north and image column 0 is west.
-    """
+    """Ensure row 0 is north and column 0 is west."""
+    lats_work = np.asarray(lats).copy()
+    lons_work = normalize_longitudes(lons)
+    result_arrays = [np.asarray(a) for a in arrays]
 
-    lats_work = np.asarray(lats)
-    lons_work = np.asarray(lons)
+    # MRMS latitude/longitude axes are normally 1-D.
+    if lats_work.ndim == 1:
+        lat_step = float(np.nanmedian(np.diff(lats_work)))
+        if np.isfinite(lat_step) and lat_step > 0:
+            result_arrays = [np.flipud(a) for a in result_arrays]
+            lats_work = np.flipud(lats_work)
 
-    result_arrays = [
-        np.asarray(a)
-        for a in arrays
-    ]
+    if lons_work.ndim == 1:
+        lon_step = float(np.nanmedian(np.diff(lons_work)))
+        if np.isfinite(lon_step) and lon_step < 0:
+            result_arrays = [np.fliplr(a) for a in result_arrays]
+            lons_work = np.flip(lons_work)
 
-    if lats_work.ndim == 2:
+    # Fallback for 2-D coordinate arrays.
+    elif lats_work.ndim == 2 and lons_work.ndim == 2:
+        lat_step = float(np.nanmedian(lats_work[1:, :] - lats_work[:-1, :]))
+        if np.isfinite(lat_step) and lat_step > 0:
+            result_arrays = [np.flipud(a) for a in result_arrays]
+            lats_work = np.flipud(lats_work)
+            lons_work = np.flipud(lons_work)
 
-        lat_step = np.nanmedian(
-            lats_work[1:, :] -
-            lats_work[:-1, :]
-        )
+        lon_step = float(np.nanmedian(lons_work[:, 1:] - lons_work[:, :-1]))
+        if np.isfinite(lon_step) and lon_step < 0:
+            result_arrays = [np.fliplr(a) for a in result_arrays]
+            lats_work = np.fliplr(lats_work)
+            lons_work = np.fliplr(lons_work)
 
-    else:
-
-        lat_step = np.nanmedian(
-            np.diff(lats_work)
-        )
-
-    if (
-        np.isfinite(lat_step) and
-        lat_step > 0
-    ):
-
-        result_arrays = [
-            np.flipud(a)
-            for a in result_arrays
-        ]
-
-        lats_work = np.flipud(
-            lats_work
-        )
-
-        lons_work = np.flipud(
-            lons_work
-        )
-
-    if lons_work.ndim == 2:
-
-        lon_step = np.nanmedian(
-            lons_work[:, 1:] -
-            lons_work[:, :-1]
-        )
-
-    else:
-
-        lon_step = np.nanmedian(
-            np.diff(lons_work)
-        )
-
-    if (
-        np.isfinite(lon_step) and
-        lon_step < 0
-    ):
-
-        result_arrays = [
-            np.fliplr(a)
-            for a in result_arrays
-        ]
-
-        lats_work = np.fliplr(
-            lats_work
-        )
-
-        lons_work = np.fliplr(
-            lons_work
-        )
-
-    return (
-        result_arrays,
-        lats_work,
-        lons_work,
-    )
+    return result_arrays, lats_work, lons_work
 
 
-def normalize_longitudes(
-    lons: np.ndarray,
-) -> np.ndarray:
-    """
-    Convert longitude coordinates to the -180..180 convention used by
-    the Leaflet map and the BTV crop bounds.
-
-    MRMS latitude/longitude coordinates are commonly encoded as
-    degrees east (e.g. 230..300 across CONUS), so a direct comparison
-    with negative longitudes such as -76..-69 would otherwise produce
-    a false "no overlap" result.
-    """
-    arr = np.asarray(lons, dtype=np.float64).copy()
-    arr = np.where(arr > 180.0, arr - 360.0, arr)
-    return arr
+def _nearest_index(axis: np.ndarray, value: float) -> int:
+    """Index of the coordinate nearest to value."""
+    axis = np.asarray(axis)
+    idx = int(np.nanargmin(np.abs(axis - value)))
+    return idx
 
 
 def crop_to_btv_region(
@@ -165,95 +99,103 @@ def crop_to_btv_region(
     lats: np.ndarray,
     lons: np.ndarray,
 ) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
+    """
+    Crop by nearest coordinate indices rather than boolean masks.
 
+    This avoids the false 'no overlap' failure caused by small coordinate
+    convention differences and works with either increasing or decreasing
+    1-D axes after normalization.
+    """
     lats_arr = np.asarray(lats)
     lons_arr = normalize_longitudes(lons)
 
-    if (
-        lats_arr.ndim == 1 and
-        lons_arr.ndim == 1
-    ):
+    print("Coordinate check before BTV crop:")
+    print(
+        f"  Latitude shape: {lats_arr.shape}, "
+        f"range: {float(np.nanmin(lats_arr)):.3f} to {float(np.nanmax(lats_arr)):.3f}"
+    )
+    print(
+        f"  Longitude shape: {lons_arr.shape}, "
+        f"range: {float(np.nanmin(lons_arr)):.3f} to {float(np.nanmax(lons_arr)):.3f}"
+    )
+    if lats_arr.ndim == 1:
+        print(f"  Latitude samples: {lats_arr[0]:.3f}, {lats_arr[-1]:.3f}")
+    if lons_arr.ndim == 1:
+        print(f"  Longitude samples: {lons_arr[0]:.3f}, {lons_arr[-1]:.3f}")
 
-        row_keep = (
-            (lats_arr >= MAP_SOUTH) &
-            (lats_arr <= MAP_NORTH)
-        )
+    # 1-D axes: this is the normal MRMS case.
+    if lats_arr.ndim == 1 and lons_arr.ndim == 1:
+        lat_min = float(np.nanmin(lats_arr))
+        lat_max = float(np.nanmax(lats_arr))
+        lon_min = float(np.nanmin(lons_arr))
+        lon_max = float(np.nanmax(lons_arr))
 
-        col_keep = (
-            (lons_arr >= MAP_WEST) &
-            (lons_arr <= MAP_EAST)
-        )
-
-        if (
-            not np.any(row_keep) or
-            not np.any(col_keep)
-        ):
+        if not (lat_min <= MAP_NORTH and lat_max >= MAP_SOUTH):
             raise RuntimeError(
-                "MRMS grid does not overlap the BTV map extent."
+                f"MRMS latitude range {lat_min:.3f}..{lat_max:.3f} "
+                f"does not include BTV extent {MAP_SOUTH:.2f}..{MAP_NORTH:.2f}."
+            )
+        if not (lon_min <= MAP_EAST and lon_max >= MAP_WEST):
+            raise RuntimeError(
+                f"MRMS longitude range {lon_min:.3f}..{lon_max:.3f} "
+                f"does not include BTV extent {MAP_WEST:.2f}..{MAP_EAST:.2f}."
             )
 
-        rows = np.where(row_keep)[0]
-        cols = np.where(col_keep)[0]
+        r_a = _nearest_index(lats_arr, MAP_SOUTH)
+        r_b = _nearest_index(lats_arr, MAP_NORTH)
+        c_a = _nearest_index(lons_arr, MAP_WEST)
+        c_b = _nearest_index(lons_arr, MAP_EAST)
 
-        r0, r1 = rows[0], rows[-1] + 1
-        c0, c1 = cols[0], cols[-1] + 1
+        r0, r1 = sorted((r_a, r_b))
+        c0, c1 = sorted((c_a, c_b))
 
-        cropped = [
-            a[r0:r1, c0:c1]
-            for a in arrays
-        ]
+        # One grid-cell of padding keeps the requested extent fully inside.
+        r0 = max(0, r0 - 1)
+        r1 = min(lats_arr.size - 1, r1 + 1)
+        c0 = max(0, c0 - 1)
+        c1 = min(lons_arr.size - 1, c1 + 1)
 
-        return (
-            cropped,
-            lats_arr[r0:r1],
-            lons_arr[c0:c1],
-        )
+        # End indices are exclusive.
+        r1 += 1
+        c1 += 1
 
+        cropped = [np.ascontiguousarray(a[r0:r1, c0:c1]) for a in arrays]
+
+        print(f"  Crop rows: {r0}:{r1}  ({r1-r0})")
+        print(f"  Crop cols: {c0}:{c1}  ({c1-c0})")
+
+        return cropped, lats_arr[r0:r1].copy(), lons_arr[c0:c1].copy()
+
+    # 2-D fallback.
     inside = (
-        np.isfinite(lats_arr) &
-        np.isfinite(lons_arr) &
-        (lats_arr >= MAP_SOUTH) &
-        (lats_arr <= MAP_NORTH) &
-        (lons_arr >= MAP_WEST) &
-        (lons_arr <= MAP_EAST)
+        np.isfinite(lats_arr)
+        & np.isfinite(lons_arr)
+        & (lats_arr >= MAP_SOUTH)
+        & (lats_arr <= MAP_NORTH)
+        & (lons_arr >= MAP_WEST)
+        & (lons_arr <= MAP_EAST)
     )
 
-    rows = np.where(
-        np.any(inside, axis=1)
-    )[0]
+    rows = np.where(np.any(inside, axis=1))[0]
+    cols = np.where(np.any(inside, axis=0))[0]
 
-    cols = np.where(
-        np.any(inside, axis=0)
-    )[0]
+    if rows.size == 0 or cols.size == 0:
+        raise RuntimeError("MRMS 2-D coordinate grid does not overlap the BTV map extent.")
 
-    if (
-        rows.size == 0 or
-        cols.size == 0
-    ):
-        raise RuntimeError(
-            "MRMS grid does not overlap the BTV map extent."
-        )
+    r0 = max(0, int(rows[0]) - 1)
+    r1 = min(lats_arr.shape[0], int(rows[-1]) + 2)
+    c0 = max(0, int(cols[0]) - 1)
+    c1 = min(lons_arr.shape[1], int(cols[-1]) + 2)
 
-    r0, r1 = rows[0], rows[-1] + 1
-    c0, c1 = cols[0], cols[-1] + 1
-
-    cropped = [
-        a[r0:r1, c0:c1]
-        for a in arrays
-    ]
-
+    cropped = [np.ascontiguousarray(a[r0:r1, c0:c1]) for a in arrays]
     return (
         cropped,
-        lats_arr[r0:r1, c0:c1],
-        lons_arr[r0:r1, c0:c1],
+        np.ascontiguousarray(lats_arr[r0:r1, c0:c1]),
+        np.ascontiguousarray(lons_arr[r0:r1, c0:c1]),
     )
 
 
-def grid_bounds(
-    lats: np.ndarray,
-    lons: np.ndarray,
-) -> list[float]:
-
+def grid_bounds(lats: np.ndarray, lons: np.ndarray) -> list[float]:
     return [
         float(np.nanmin(lats)),
         float(np.nanmin(lons)),
@@ -262,104 +204,49 @@ def grid_bounds(
     ]
 
 
-def write_map_metadata(
-    metadata_path: Path,
-    bounds: list[float],
-) -> None:
-
+def write_map_metadata(metadata_path: Path, bounds: list[float]) -> None:
     metadata = {}
-
     if metadata_path.exists():
-
         try:
-            metadata = json.loads(
-                metadata_path.read_text(
-                    encoding="utf-8"
-                )
-            )
-
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except Exception:
             metadata = {}
 
-    metadata["generated_at_utc"] = (
-        datetime.now(
-            timezone.utc
-        ).isoformat()
-    )
-
+    metadata["generated_at_utc"] = datetime.now(timezone.utc).isoformat()
     metadata["bounds"] = bounds
-
-    metadata["bounds_format"] = [
-        "south",
-        "west",
-        "north",
-        "east",
-    ]
+    metadata["bounds_format"] = ["south", "west", "north", "east"]
+    metadata["main_version"] = MAIN_VERSION
 
     metadata_path.write_text(
-        json.dumps(
-            metadata,
-            indent=2
-        ),
+        json.dumps(metadata, indent=2),
         encoding="utf-8",
     )
 
 
-def main():
+def main() -> None:
+    print("=" * 72)
+    print(f"WINTERRADAR MAIN MRMS PROCESSING — VERSION {MAIN_VERSION}")
+    print("=" * 72)
 
-    OUTPUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print(
-        "Downloading latest MRMS data..."
-    )
-
+    print("Downloading latest MRMS data...")
     download_all()
 
-    print(
-        "Loading MRMS fields..."
-    )
+    print("Loading MRMS fields...")
+    ref, lats, lons = load("reflectivity")
+    pflag, _, _ = load("precip_flag")
+    bb_top, _, _ = load("bb_top")
+    bb_bottom, _, _ = load("bb_bottom")
+    rqi, _, _ = load("rqi")
+    wetbulb, _, _ = load("wetbulb")
+    frz, _, _ = load("freezing_level")
 
-    ref, lats, lons = load(
-        "reflectivity"
-    )
+    # Downloaded for diagnostics/science work; not needed to render the two map overlays.
+    _precip_rate, _, _ = load("precip_rate")
+    del _precip_rate
 
-    pflag, _, _ = load(
-        "precip_flag"
-    )
-
-    bb_top, _, _ = load(
-        "bb_top"
-    )
-
-    bb_bottom, _, _ = load(
-        "bb_bottom"
-    )
-
-    rqi, _, _ = load(
-        "rqi"
-    )
-
-    wetbulb, _, _ = load(
-        "wetbulb"
-    )
-
-    frz, _, _ = load(
-        "freezing_level"
-    )
-
-    precip_rate, _, _ = load(
-        "precip_rate"
-    )
-
-    del precip_rate
-
-    print(
-        "Classifying winter precipitation..."
-    )
-
+    print("Classifying winter precipitation...")
     classification = classify_initial(
         reflectivity=ref,
         precip_flag=pflag,
@@ -370,11 +257,7 @@ def main():
         rqi=rqi,
     )
 
-    (
-        normalized,
-        lats,
-        lons,
-    ) = normalize_orientation(
+    normalized, lats, lons = normalize_orientation(
         [
             ref,
             classification.phase,
@@ -386,38 +269,12 @@ def main():
     )
 
     ref = normalized[0]
-
     classification.phase = normalized[1]
     classification.confidence = normalized[2]
     classification.intensity = normalized[3]
 
-    print(
-        "MRMS geographic grid after longitude normalization:"
-    )
-    print(
-        f"  Latitude: {float(np.nanmin(lats)):.3f} to "
-        f"{float(np.nanmax(lats)):.3f}"
-    )
-    normalized_lons = normalize_longitudes(lons)
-    print(
-        f"  Longitude: {float(np.nanmin(normalized_lons)):.3f} to "
-        f"{float(np.nanmax(normalized_lons)):.3f}"
-    )
-    print(
-        "BTV crop extent:"
-        f" {MAP_SOUTH} to {MAP_NORTH} N, "
-        f"{MAP_WEST} to {MAP_EAST} W"
-    )
-
-    print(
-        "Cropping products to the BTV regional map area..."
-    )
-
-    (
-        cropped,
-        lats,
-        lons,
-    ) = crop_to_btv_region(
+    print("Cropping products to the BTV regional map area...")
+    cropped, lats, lons = crop_to_btv_region(
         [
             ref,
             classification.phase,
@@ -429,93 +286,37 @@ def main():
     )
 
     ref = cropped[0]
-
     classification.phase = cropped[1]
     classification.confidence = cropped[2]
     classification.intensity = cropped[3]
 
-    bounds = grid_bounds(
-        lats,
-        lons,
-    )
+    bounds = grid_bounds(lats, lons)
+    print("Final map bounds:", bounds)
 
-    print(
-        "Map bounds:",
-        bounds,
-    )
+    print("Writing MRMS radar overlay...")
+    radar_rgba = reflectivity_to_rgba(ref)
+    save_rgba_png(radar_rgba, OUTPUT_DIR / "mrms_current.png")
 
-    # ---------------------------------------------------------------
-    # MRMS RADAR OVERLAY
-    # ---------------------------------------------------------------
+    print("Writing winter phase overlay...")
+    phase_rgba = result_to_phase_rgba(classification)
+    save_rgba_png(phase_rgba, OUTPUT_DIR / "winter_phase_mask.png")
 
-    radar_rgba = reflectivity_to_rgba(
-        ref
-    )
+    metadata_path = OUTPUT_DIR / "mrms_current.json"
+    write_metadata(classification, metadata_path)
+    write_map_metadata(metadata_path, bounds)
 
-    save_rgba_png(
-        radar_rgba,
-        OUTPUT_DIR /
-        "mrms_current.png",
-    )
+    np.save(OUTPUT_DIR / "latitude.npy", lats)
+    np.save(OUTPUT_DIR / "longitude.npy", lons)
 
-    # ---------------------------------------------------------------
-    # WINTER PHASE OVERLAY
-    #
-    # This file is ALWAYS written, even when every pixel is
-    # transparent. This prevents stale/missing artifact behavior.
-    # ---------------------------------------------------------------
+    # Release large native arrays before process shutdown.
+    del ref, pflag, bb_top, bb_bottom, rqi, wetbulb, frz, classification
+    gc.collect()
 
-    phase_rgba = result_to_phase_rgba(
-        classification
-    )
-
-    save_rgba_png(
-        phase_rgba,
-        OUTPUT_DIR /
-        "winter_phase_mask.png",
-    )
-
-    # ---------------------------------------------------------------
-    # Metadata
-    # ---------------------------------------------------------------
-
-    metadata_path = (
-        OUTPUT_DIR /
-        "mrms_current.json"
-    )
-
-    write_metadata(
-        classification,
-        metadata_path,
-    )
-
-    write_map_metadata(
-        metadata_path,
-        bounds,
-    )
-
-    # ---------------------------------------------------------------
-    # Coordinates for research / debugging
-    # ---------------------------------------------------------------
-
-    np.save(
-        OUTPUT_DIR /
-        "latitude.npy",
-        lats,
-    )
-
-    np.save(
-        OUTPUT_DIR /
-        "longitude.npy",
-        lons,
-    )
-
-    print(
-        "Created:"
-        "\n  outputs/mrms_current.png"
-        "\n  outputs/winter_phase_mask.png"
-        "\n  outputs/mrms_current.json"
-    )
+    print("Created:")
+    print("  outputs/mrms_current.png")
+    print("  outputs/winter_phase_mask.png")
+    print("  outputs/mrms_current.json")
+    print("MAIN MRMS PROCESSING COMPLETE")
 
 
 if __name__ == "__main__":
