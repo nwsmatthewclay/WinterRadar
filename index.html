@@ -716,34 +716,34 @@ const NWS_FEATURE_BASE =
     "https://mapservices.weather.noaa.gov/static/rest/services/" +
     "nws_reference_maps/nws_reference_map/FeatureServer";
 
-const NWS_LAYER_URLS = {
-    cwa:
-        NWS_FEATURE_BASE +
-        "/1/query?where=" +
-        encodeURIComponent("cwa='BTV'") +
-        "&outFields=cwa,wfo,city,state&returnGeometry=true" +
-        "&outSR=4326&f=geojson",
-
-    county:
-        NWS_FEATURE_BASE +
-        "/2/query?where=" +
-        encodeURIComponent("cwa LIKE '%BTV%'") +
-        "&outFields=state,cwa,countyname,fips&returnGeometry=true" +
-        "&outSR=4326&f=geojson",
-
-    zone:
-        NWS_FEATURE_BASE +
-        "/8/query?where=" +
-        encodeURIComponent("cwa='BTV'") +
-        "&outFields=state,zone,cwa,name,state_zone" +
-        "&returnGeometry=true&outSR=4326&f=geojson",
-
-    state:
-        NWS_FEATURE_BASE +
-        "/3/query?where=1%3D1" +
-        "&outFields=state,name,fips&returnGeometry=true" +
-        "&outSR=4326&f=geojson"
+const NWS_LAYER_CONFIG = {
+    cwa: {
+        id: 1,
+        fields: "cwa,wfo,city,state,st"
+    },
+    county: {
+        id: 2,
+        fields: "state,cwa,countyname,fips"
+    },
+    zone: {
+        id: 8,
+        fields: "state,zone,cwa,name,state_zone,shortname"
+    },
+    state: {
+        id: 3,
+        fields: "state,name"
+    }
 };
+
+// CWA and state boundaries are small enough to load in full.
+// Counties and public forecast zones are loaded for the current map extent
+// so the map remains responsive while still showing every applicable
+// boundary in view.
+const NWS_DYNAMIC_LAYERS = {
+    county: true,
+    zone: true
+};
+
 
 const NWS_STYLES = {
     cwa: {
@@ -833,6 +833,18 @@ function initializeMap() {
     });
 
     map.on("zoomend", updateLayerScaleHints);
+
+    map.on("moveend", function() {
+        ["county", "zone"].forEach(function(name) {
+            const checkbox = document.getElementById(
+                name === "county" ? "countyToggle" : "zoneToggle"
+            );
+
+            if (checkbox && checkbox.checked && referenceLoaded[name]) {
+                refreshDynamicReferenceLayer(name);
+            }
+        });
+    });
 }
 
 
@@ -1009,67 +1021,21 @@ async function toggleReferenceLayer(name, enabled) {
         return;
     }
 
-    if (!referenceLoaded[name]) {
-        await loadReferenceLayer(name);
-    }
-
-    const layer = referenceLayers[name];
-
-    if (layer && !map.hasLayer(layer)) {
-        layer.addTo(map);
-    }
-}
-
-
-async function loadReferenceLayer(name) {
-
-    if (referenceLoaded[name]) {
-        return;
-    }
-
     try {
-
-        const response = await fetch(
-            NWS_LAYER_URLS[name],
-            {
-                cache: "no-store"
-            }
-        );
-
-        if (!response.ok) {
-            throw new Error(
-                "NWS layer request failed: " +
-                response.status
-            );
+        if (!referenceLoaded[name]) {
+            await loadReferenceLayer(name);
+        } else if (NWS_DYNAMIC_LAYERS[name]) {
+            await refreshDynamicReferenceLayer(name);
         }
 
-        const geojson = await response.json();
+        const layer = referenceLayers[name];
 
-        referenceLayers[name] = L.geoJSON(
-            geojson,
-            {
-                style: NWS_STYLES[name],
-
-                interactive: false,
-
-                /*
-                 * Deliberately no permanent labels.
-                 * Forecast-zone numbers and county names are not
-                 * rendered anywhere on the map.
-                 */
-            }
-        );
-
-        referenceLoaded[name] = true;
+        if (layer && !map.hasLayer(layer)) {
+            layer.addTo(map);
+        }
 
     } catch (error) {
-
-        console.error(
-            "Unable to load NWS " +
-            name +
-            " layer:",
-            error
-        );
+        console.error("Unable to enable NWS " + name + " layer:", error);
 
         const checkbox = document.getElementById(
             name === "county"
@@ -1085,6 +1051,159 @@ async function loadReferenceLayer(name) {
             checkbox.checked = false;
         }
     }
+}
+
+
+function getMapExtent4326() {
+
+    const bounds = map.getBounds();
+
+    return {
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth()
+    };
+}
+
+
+async function fetchNWSGeoJSON(name, extent) {
+
+    const config = NWS_LAYER_CONFIG[name];
+
+    if (!config) {
+        throw new Error("Unknown NWS layer: " + name);
+    }
+
+    const url =
+        NWS_FEATURE_BASE +
+        "/" + config.id + "/query";
+
+    const params = new URLSearchParams();
+
+    params.set("where", "1=1");
+    params.set("outFields", config.fields);
+    params.set("returnGeometry", "true");
+    params.set("outSR", "4326");
+    params.set("f", "geojson");
+    params.set("returnExceededLimitFeatures", "true");
+
+    if (extent) {
+        params.set(
+            "geometry",
+            [
+                extent.west,
+                extent.south,
+                extent.east,
+                extent.north
+            ].join(",")
+        );
+        params.set("geometryType", "esriGeometryEnvelope");
+        params.set("inSR", "4326");
+        params.set("spatialRel", "esriSpatialRelIntersects");
+    }
+
+    const response = await fetch(
+        url + "?" + params.toString(),
+        {
+            cache: "no-store"
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            "NWS layer " + name + " request failed: " + response.status
+        );
+    }
+
+    const geojson = await response.json();
+
+    if (geojson.error) {
+        throw new Error(
+            "NWS layer " + name + " returned an error: " +
+            JSON.stringify(geojson.error)
+        );
+    }
+
+    return geojson;
+}
+
+
+function installReferenceGeoJSON(name, geojson) {
+
+    if (
+        referenceLayers[name] &&
+        map.hasLayer(referenceLayers[name])
+    ) {
+        map.removeLayer(referenceLayers[name]);
+    }
+
+    referenceLayers[name] = L.geoJSON(
+        geojson,
+        {
+            style: NWS_STYLES[name],
+            interactive: false
+        }
+    );
+
+    if (referenceLayers[name]) {
+        referenceLayers[name].addTo(map);
+    }
+}
+
+
+async function loadReferenceLayer(name) {
+
+    if (referenceLoaded[name]) {
+        return;
+    }
+
+    // Counties and public forecast zones are loaded for the current map
+    // extent. CWA and state layers load all features.
+    const extent = NWS_DYNAMIC_LAYERS[name]
+        ? getMapExtent4326()
+        : null;
+
+    const geojson = await fetchNWSGeoJSON(name, extent);
+
+    installReferenceGeoJSON(name, geojson);
+
+    referenceLoaded[name] = true;
+
+    console.info(
+        "Loaded NWS " + name + " layer: " +
+        ((geojson.features || []).length) + " features"
+    );
+}
+
+
+async function refreshDynamicReferenceLayer(name) {
+
+    if (!NWS_DYNAMIC_LAYERS[name]) {
+        return;
+    }
+
+    const checkbox = document.getElementById(
+        name === "county" ? "countyToggle" : "zoneToggle"
+    );
+
+    if (!checkbox || !checkbox.checked) {
+        return;
+    }
+
+    const geojson = await fetchNWSGeoJSON(
+        name,
+        getMapExtent4326()
+    );
+
+    installReferenceGeoJSON(name, geojson);
+
+    referenceLoaded[name] = true;
+
+    console.info(
+        "Refreshed NWS " + name + " layer for current map extent: " +
+        ((geojson.features || []).length) + " features"
+    );
 }
 
 
