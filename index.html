@@ -406,6 +406,164 @@ html, body {
 .mixed { background: rgb(220,95,195); }
 .unknown { background: rgb(145,150,155); }
 
+
+/* ------------------------------------------------------------
+   24-HOUR MRMS HISTORY / LOOP
+------------------------------------------------------------ */
+.history-panel {
+    margin-top: 9px;
+    padding: 11px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 3px 12px rgba(25,35,45,.06);
+}
+
+.history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 9px;
+}
+
+.history-title {
+    font-size: 12px;
+    font-weight: 850;
+    letter-spacing: .02em;
+}
+
+.history-subtitle {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.history-status {
+    padding: 4px 7px;
+    border: 1px solid #d0d8de;
+    border-radius: 999px;
+    background: #f5f8fa;
+    color: #65737d;
+    font-size: 9px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.history-status.live {
+    background: #edf7ee;
+    color: #3e7046;
+}
+
+.history-status.playing {
+    background: #eaf3fb;
+    color: #2f678f;
+}
+
+.history-controls {
+    display: grid;
+    grid-template-columns: auto auto auto minmax(160px, 1fr) auto auto auto;
+    align-items: center;
+    gap: 7px;
+}
+
+.history-control-btn {
+    min-width: 34px;
+    height: 31px;
+    border: 1px solid #bfc8cf;
+    border-radius: 6px;
+    background: #fff;
+    color: #30404c;
+    padding: 0 9px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.history-control-btn:hover:not(:disabled) {
+    background: #f3f6f8;
+}
+
+.history-control-btn:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
+.history-slider-wrap {
+    min-width: 0;
+}
+
+#historySlider {
+    width: 100%;
+    margin: 0;
+}
+
+.history-speed {
+    height: 31px;
+    border: 1px solid #bfc8cf;
+    border-radius: 6px;
+    background: #fff;
+    color: #30404c;
+    padding: 0 7px;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.history-time-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 7px;
+    color: #55646e;
+    font-size: 10px;
+}
+
+.history-time-main {
+    font-weight: 800;
+    color: #293b47;
+}
+
+.history-time-meta {
+    color: #74818a;
+    text-align: right;
+}
+
+.history-note {
+    margin-top: 7px;
+    color: #75818a;
+    font-size: 9px;
+    line-height: 1.35;
+}
+
+@media (max-width: 900px) {
+    .history-controls {
+        grid-template-columns: auto auto auto 1fr;
+    }
+
+    .history-speed,
+    .history-live-btn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 600px) {
+    .history-controls {
+        grid-template-columns: repeat(3, auto) 1fr;
+    }
+
+    .history-time-row {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .history-time-meta {
+        text-align: left;
+    }
+}
+
 details.diagnostics {
     margin-top: 12px;
     border: 1px solid var(--line);
@@ -760,6 +918,54 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
     </div>
 
+
+    <section class="history-panel">
+
+        <div class="history-head">
+            <div>
+                <div class="history-title">24-Hour MRMS Time History &amp; Loop</div>
+                <div class="history-subtitle">
+                    Timestamped MRMS observations are archived from NOAA's historical feed.
+                    Use the slider for individual frames or play the loop.
+                </div>
+            </div>
+            <div id="historyStatus" class="history-status">Loading history…</div>
+        </div>
+
+        <div class="history-controls">
+            <button id="historyPrev" class="history-control-btn" type="button" onclick="historyStep(-1)" title="Previous frame">◀</button>
+            <button id="historyPlay" class="history-control-btn" type="button" onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
+            <button id="historyNext" class="history-control-btn" type="button" onclick="historyStep(1)" title="Next frame">▶</button>
+
+            <div class="history-slider-wrap">
+                <input id="historySlider" type="range" min="0" max="0" value="0" step="1" disabled oninput="selectHistoryFrame(Number(this.value), true)">
+            </div>
+
+            <select id="historySpeed" class="history-speed" aria-label="Loop speed" onchange="setHistorySpeed(this.value)">
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+                <option value="4">4×</option>
+            </select>
+
+            <button class="history-control-btn history-live-btn" type="button" onclick="showLiveMap()" title="Return to live radar">LIVE</button>
+            <button class="history-control-btn" type="button" onclick="refreshHistoryManifest()" title="Refresh archived frame list">↻</button>
+        </div>
+
+        <div class="history-time-row">
+            <div>
+                <span class="history-time-main" id="historyTimeMain">History unavailable</span>
+                <span id="historyTimeCount"></span>
+            </div>
+            <div class="history-time-meta" id="historyTimeMeta">—</div>
+        </div>
+
+        <div class="history-note" id="historyNote">
+            Winter mask playback uses the most recent archived 10-minute phase snapshot at or before each radar observation.
+        </div>
+
+    </section>
+
     <details class="diagnostics">
         <summary>Diagnostics</summary>
 
@@ -768,7 +974,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
             <div class="phase-qc-head">
                 <div>
                     <div class="phase-qc-title">Winter Phase Engine QC</div>
-                    <div class="diag-desc">Modified Bourgouin probabilities from the synchronized HRRR vertical profile.</div>
+                    <div class="diag-desc">Modified Bourgouin probabilities from the synchronized RAP vertical profile.</div>
                 </div>
                 <div id="phaseQCStatus" class="phase-qc-status">Loading…</div>
             </div>
@@ -990,17 +1196,22 @@ function initializeMap() {
 }
 
 
-function createImageOverlay(url, bounds, opacity, zIndex) {
+function createImageOverlay(url, bounds, opacity, zIndex, crossOrigin = true) {
+
+    const options = {
+        opacity: opacity,
+        interactive: false,
+        zIndex: zIndex
+    };
+
+    if (crossOrigin) {
+        options.crossOrigin = true;
+    }
 
     return L.imageOverlay(
         url,
         bounds,
-        {
-            opacity: opacity,
-            interactive: false,
-            zIndex: zIndex,
-            crossOrigin: true
-        }
+        options
     );
 }
 
@@ -1082,6 +1293,13 @@ function loadRadarLayers(metadata) {
 
 function toggleRadar(enabled) {
 
+    if (historyMode) {
+        if (historyFrames.length) {
+            renderHistoryFrame(historyIndex, false);
+        }
+        return;
+    }
+
     if (enabled) {
 
         if (!currentBounds) {
@@ -1111,6 +1329,13 @@ function toggleRadar(enabled) {
 
 
 function togglePhase(enabled) {
+
+    if (historyMode) {
+        if (historyFrames.length) {
+            renderHistoryFrame(historyIndex, false);
+        }
+        return;
+    }
 
     if (enabled) {
 
@@ -1598,6 +1823,395 @@ function escapeHtml(value) {
 }
 
 
+
+/* ------------------------------------------------------------
+   24-HOUR MRMS HISTORY / LOOP
+------------------------------------------------------------ */
+let historyFrames = [];
+let historyPhases = [];
+let historyIndex = -1;
+let historyMode = false;
+let historyPlaying = false;
+let historyTimer = null;
+let historySpeed = 1;
+let historyBounds = null;
+let historyRefreshBusy = false;
+
+
+function formatUtcTime(value) {
+    const dt = new Date(value);
+    if (!Number.isFinite(dt.getTime())) return "Invalid time";
+
+    return new Intl.DateTimeFormat("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
+        timeZoneName: "short"
+    }).format(dt);
+}
+
+
+function formatLocalTime(value) {
+    const dt = new Date(value);
+    if (!Number.isFinite(dt.getTime())) return "Invalid time";
+
+    return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZoneName: "short"
+    }).format(dt);
+}
+
+
+function updateHistoryControls() {
+    const slider = document.getElementById("historySlider");
+    const prev = document.getElementById("historyPrev");
+    const next = document.getElementById("historyNext");
+    const play = document.getElementById("historyPlay");
+    const speed = document.getElementById("historySpeed");
+
+    const hasFrames = historyFrames.length > 0;
+    const validIndex = historyIndex >= 0 && historyIndex < historyFrames.length;
+
+    if (slider) {
+        slider.disabled = !hasFrames;
+        slider.max = String(Math.max(historyFrames.length - 1, 0));
+        slider.value = validIndex ? String(historyIndex) : "0";
+    }
+
+    if (prev) prev.disabled = !hasFrames || historyIndex <= 0;
+    if (next) next.disabled = !hasFrames || historyIndex >= historyFrames.length - 1;
+    if (play) {
+        play.disabled = historyFrames.length < 2;
+        play.textContent = historyPlaying ? "❚❚" : "▶";
+    }
+    if (speed) speed.value = String(historySpeed);
+}
+
+
+function updateHistoryReadout() {
+    const main = document.getElementById("historyTimeMain");
+    const count = document.getElementById("historyTimeCount");
+    const meta = document.getElementById("historyTimeMeta");
+    const status = document.getElementById("historyStatus");
+
+    if (!main || !count || !meta || !status) return;
+
+    if (!historyFrames.length || historyIndex < 0 || historyIndex >= historyFrames.length) {
+        main.textContent = "History unavailable";
+        count.textContent = "";
+        meta.textContent = "—";
+        status.textContent = "Unavailable";
+        status.className = "history-status";
+        return;
+    }
+
+    const frame = historyFrames[historyIndex];
+    main.textContent = formatUtcTime(frame.timestamp_utc);
+    count.textContent = "  •  Frame " + (historyIndex + 1) + " of " + historyFrames.length;
+
+    const phaseTime = frame.phase_timestamp_utc
+        ? formatUtcTime(frame.phase_timestamp_utc)
+        : "No archived phase snapshot";
+
+    meta.textContent =
+        "Local: " + formatLocalTime(frame.timestamp_utc) +
+        "  •  Phase: " + phaseTime;
+
+    if (historyMode && historyPlaying) {
+        status.textContent = "Playing history";
+        status.className = "history-status playing";
+    } else if (historyMode) {
+        status.textContent = "History mode";
+        status.className = "history-status";
+    } else {
+        status.textContent = "LIVE";
+        status.className = "history-status live";
+    }
+}
+
+
+function setHistoryStatus(textValue, className) {
+    const status = document.getElementById("historyStatus");
+    if (!status) return;
+    status.textContent = textValue;
+    status.className = "history-status" + (className ? " " + className : "");
+}
+
+
+async function refreshHistoryManifest() {
+    if (historyRefreshBusy) return;
+    historyRefreshBusy = true;
+
+    const previouslySelected =
+        historyFrames[historyIndex]
+            ? historyFrames[historyIndex].timestamp_utc
+            : null;
+
+    try {
+        const response = await fetch(
+            "./outputs/mrms_history.json?v=" + Date.now(),
+            { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+            throw new Error("History manifest unavailable: " + response.status);
+        }
+
+        const manifest = await response.json();
+        const frames = Array.isArray(manifest.frames) ? manifest.frames : [];
+
+        historyFrames = frames
+            .filter(function(frame) {
+                return frame &&
+                    frame.timestamp_utc &&
+                    frame.radar_url;
+            })
+            .sort(function(a, b) {
+                return new Date(a.timestamp_utc) - new Date(b.timestamp_utc);
+            });
+
+        historyBounds = Array.isArray(manifest.bounds) && manifest.bounds.length === 4
+            ? [
+                [Number(manifest.bounds[0]), Number(manifest.bounds[1])],
+                [Number(manifest.bounds[2]), Number(manifest.bounds[3])]
+            ]
+            : null;
+
+        if (previouslySelected) {
+            const found = historyFrames.findIndex(function(frame) {
+                return frame.timestamp_utc === previouslySelected;
+            });
+            historyIndex = found >= 0 ? found : Math.max(historyFrames.length - 1, 0);
+        } else {
+            historyIndex = Math.max(historyFrames.length - 1, 0);
+        }
+
+        updateHistoryControls();
+        updateHistoryReadout();
+
+        const hours = Number(manifest.history_hours || 24);
+        const phaseCount = Number(manifest.phase_snapshot_count || 0);
+        const note = document.getElementById("historyNote");
+
+        if (note) {
+            note.textContent =
+                historyFrames.length + " archived MRMS frames covering up to " +
+                hours + " hours. " + phaseCount +
+                " phase snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
+        }
+
+        if (!historyFrames.length) {
+            setHistoryStatus("No frames yet");
+            return;
+        }
+
+        if (historyMode) {
+            renderHistoryFrame(historyIndex, false);
+        } else {
+            setHistoryStatus(historyFrames.length + " frames ready");
+        }
+
+    } catch (error) {
+        console.warn("MRMS history update failed:", error);
+        historyFrames = [];
+        historyIndex = -1;
+        historyBounds = null;
+        updateHistoryControls();
+        updateHistoryReadout();
+        setHistoryStatus("Unavailable");
+    } finally {
+        historyRefreshBusy = false;
+    }
+}
+
+
+function removeMapOverlay(layerRef) {
+    if (layerRef && map && map.hasLayer(layerRef)) {
+        map.removeLayer(layerRef);
+    }
+}
+
+
+function renderHistoryFrame(index, fitView) {
+    if (!map || !historyFrames.length) return;
+
+    index = Math.max(0, Math.min(index, historyFrames.length - 1));
+    historyIndex = index;
+
+    const frame = historyFrames[index];
+    const bounds = historyBounds || BTV_BOUNDS;
+    currentBounds = bounds;
+
+    removeMapOverlay(radarOverlay);
+    removeMapOverlay(phaseOverlay);
+
+    radarOverlay = null;
+    phaseOverlay = null;
+
+    if (document.getElementById("radarToggle").checked) {
+        radarOverlay = createImageOverlay(
+            frame.radar_url,
+            bounds,
+            0.92,
+            500,
+            false
+        );
+        radarOverlay.addTo(map);
+    }
+
+    if (document.getElementById("phaseToggle").checked && frame.phase_url) {
+        phaseOverlay = createImageOverlay(
+            frame.phase_url,
+            bounds,
+            1.0,
+            550,
+            false
+        );
+        phaseOverlay.addTo(map);
+
+        phaseOverlay.on("error", function() {
+            console.warn("Historical winter phase mask failed to load.");
+        });
+    }
+
+    updateHistoryControls();
+    updateHistoryReadout();
+
+    if (fitView) {
+        map.fitBounds(bounds, {
+            padding: [10, 10]
+        });
+    }
+}
+
+
+function enterHistoryMode() {
+    if (!historyFrames.length) {
+        refreshHistoryManifest();
+        return;
+    }
+
+    historyMode = true;
+    stopHistoryPlayback();
+
+    historyIndex = Math.max(historyIndex, 0);
+    renderHistoryFrame(historyIndex, true);
+}
+
+
+function showLiveMap() {
+    historyMode = false;
+    stopHistoryPlayback();
+
+    updateHistoryReadout();
+    setHistoryStatus("LIVE", "live");
+    refreshData();
+}
+
+
+function selectHistoryFrame(index, enterMode) {
+    if (!historyFrames.length) return;
+
+    if (enterMode) {
+        historyMode = true;
+    }
+
+    stopHistoryPlayback();
+    renderHistoryFrame(index, false);
+}
+
+
+function historyStep(direction) {
+    if (!historyFrames.length) return;
+    historyMode = true;
+
+    const next = Math.max(
+        0,
+        Math.min(
+            historyFrames.length - 1,
+            historyIndex + direction
+        )
+    );
+
+    renderHistoryFrame(next, false);
+}
+
+
+function setHistorySpeed(value) {
+    const parsed = Number(value);
+    historySpeed = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+
+    if (historyPlaying) {
+        startHistoryPlayback();
+    }
+}
+
+
+function startHistoryPlayback() {
+    stopHistoryPlayback();
+
+    if (historyFrames.length < 2) return;
+
+    historyMode = true;
+    historyPlaying = true;
+    updateHistoryControls();
+    updateHistoryReadout();
+
+    const interval = Math.max(35, Math.round(150 / historySpeed));
+
+    historyTimer = window.setInterval(function() {
+        if (!historyFrames.length) {
+            stopHistoryPlayback();
+            return;
+        }
+
+        let next = historyIndex + 1;
+        if (next >= historyFrames.length) {
+            next = 0;
+        }
+
+        renderHistoryFrame(next, false);
+    }, interval);
+}
+
+
+function stopHistoryPlayback() {
+    if (historyTimer !== null) {
+        window.clearInterval(historyTimer);
+        historyTimer = null;
+    }
+
+    historyPlaying = false;
+    updateHistoryControls();
+    updateHistoryReadout();
+}
+
+
+function toggleHistoryPlayback() {
+    if (!historyFrames.length) {
+        refreshHistoryManifest();
+        return;
+    }
+
+    if (historyPlaying) {
+        stopHistoryPlayback();
+    } else {
+        historyMode = true;
+        startHistoryPlayback();
+    }
+}
+
+
 async function refreshData() {
 
     try {
@@ -1650,10 +2264,13 @@ async function refreshData() {
             "radarTime"
         ).textContent = display;
 
-        loadRadarLayers(metadata);
+        if (!historyMode) {
+            loadRadarLayers(metadata);
+        }
 
         refreshDiagnosticImages();
         refreshPhaseQC();
+        refreshHistoryManifest();
 
         document.getElementById(
             "loading"
@@ -1688,8 +2305,8 @@ async function refreshPhaseQC() {
 
         const status = document.getElementById("phaseQCStatus");
         const phaseStatus = String(qc.phase_status || "unknown");
-        const good = phaseStatus === "modified_bourgouin_hrrr" && qc.status === "ok";
-        status.textContent = good ? "HRRR + Bourgouin" : phaseStatus.replaceAll("_", " ");
+        const good = qc.status === "ok" && (phaseStatus === "modified_bourgouin_rap" || phaseStatus === "modified_bourgouin_hrrr");
+        status.textContent = good ? "RAP + Bourgouin" : phaseStatus.replaceAll("_", " ");
         status.className = "phase-qc-status " + (good ? "good" : "warn");
 
         const means = qc.mean_probability_percent || {};
@@ -1764,6 +2381,7 @@ function closeLayerPanelWhenClickingOutside(event) {
 
 initializeMap();
 refreshData();
+refreshHistoryManifest();
 
 window.setInterval(
     refreshData,
