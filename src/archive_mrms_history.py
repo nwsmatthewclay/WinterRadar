@@ -28,6 +28,8 @@ import json
 import math
 import os
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import unescape
@@ -85,12 +87,15 @@ HISTORY_FALLBACK_BOUNDS = [
 # per 10 minutes to leave room under GitHub's 1,000-assets-per-release limit.
 HISTORY_HOURS = 24
 PHASE_BUCKET_MINUTES = 10
-MAX_NEW_RADAR_FRAMES_PER_RUN = 40
+MAX_NEW_RADAR_FRAMES_PER_RUN = int(
+    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "40")
+)
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
 USER_AGENT = "WinterRadar/1.1 (MRMS 24-hour history collector)"
 GITHUB_API_VERSION = "2026-03-10"
+HISTORY_DEBUG = os.environ.get("MRMS_HISTORY_DEBUG", "0") == "1"
 
 
 @dataclass(frozen=True)
@@ -468,15 +473,23 @@ def phase_png_to_webp(
     return rgba_to_webp_bytes(projected, quality=90)
 
 
-def decode_reflectivity_from_gzip(
-    payload: bytes,
+def decode_reflectivity_from_file(
+    grib_path: Path,
     expected_shape: tuple[int, int],
 ) -> np.ndarray:
-    """Decode one timestamped MRMS GRIB via Python ecCodes from gzip bytes."""
-    codes_get, codes_get_values, codes_grib_new_from_file, codes_release = _load_eccodes()
-    with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as gz:
+    """Decode one timestamped MRMS GRIB using ecCodes from a real file handle.
+
+    ecCodes' ``codes_grib_new_from_file`` expects a file object backed by a
+    real OS file descriptor. Feeding it ``io.BytesIO`` or ``gzip.GzipFile``
+    can produce the opaque ``fileno`` failure seen in GitHub Actions. The
+    gzip member is therefore fully decompressed to disk first, then opened
+    in binary mode for ecCodes.
+    """
+    codes_get_values, codes_grib_new_from_file, codes_release = _load_eccodes()
+
+    with grib_path.open("rb") as grib_file:
         while True:
-            gid = codes_grib_new_from_file(gz)
+            gid = codes_grib_new_from_file(grib_file)
             if gid is None:
                 break
             try:
@@ -493,8 +506,10 @@ def decode_reflectivity_from_gzip(
                     return arr
             finally:
                 codes_release(gid)
+
     raise RuntimeError(
-        f"Could not decode a {expected_shape[0]}x{expected_shape[1]} MRMS reflectivity field."
+        f"Could not decode a {expected_shape[0]}x{expected_shape[1]} MRMS reflectivity field "
+        f"from {grib_path.name}."
     )
 
 
@@ -506,31 +521,91 @@ def download_and_render_observation(
     crop_bounds: tuple[float, float, float, float],
     row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
 ) -> bytes:
+    """Download one MRMS frame, decode it from a real file, and return WebP bytes."""
     print(f"    Downloading {observation.filename}")
-    response = session.get(
-        observation.source_url,
-        timeout=REQUEST_TIMEOUT,
-        headers={"User-Agent": USER_AGENT, "Accept": "application/octet-stream"},
+
+    # ecCodes requires a real file descriptor. Keep both the compressed MRMS
+    # payload and the decompressed GRIB on disk only for the duration of one
+    # frame, then remove them in the finally block. This also avoids holding
+    # the full 3500x7000 GRIB payload in Python memory.
+    gz_tmp = tempfile.NamedTemporaryFile(
+        prefix="mrms_history_",
+        suffix=".grib2.gz",
+        delete=False,
     )
-    response.raise_for_status()
-    payload = response.content
-    if len(payload) < 32 or payload[:2] != b"\x1f\x8b":
-        raise RuntimeError(
-            f"MRMS historical response is not gzip data: {observation.filename}"
+    gz_path = Path(gz_tmp.name)
+    gz_tmp.close()
+
+    grib_fd, grib_name = tempfile.mkstemp(
+        prefix="mrms_history_",
+        suffix=".grib2",
+    )
+    os.close(grib_fd)
+    grib_path = Path(grib_name)
+
+    try:
+        with session.get(
+            observation.source_url,
+            timeout=REQUEST_TIMEOUT,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/octet-stream"},
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+
+            content_type = response.headers.get("Content-Type", "").lower()
+            print(f"      HTTP {response.status_code}; content-type={content_type or 'unknown'}")
+
+            bytes_written = 0
+            with gz_path.open("wb") as out_file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    out_file.write(chunk)
+                    bytes_written += len(chunk)
+
+            if bytes_written < 32:
+                raise RuntimeError(
+                    f"MRMS historical response is unexpectedly small ({bytes_written} bytes): "
+                    f"{observation.filename}"
+                )
+
+            with gz_path.open("rb") as check:
+                magic = check.read(2)
+            if magic != b"\x1f\x8b":
+                raise RuntimeError(
+                    f"MRMS historical response is not gzip data: {observation.filename}"
+                )
+
+        # Fully validate/decompress the gzip member to a physical GRIB file.
+        with gzip.open(gz_path, "rb") as source, grib_path.open("wb") as target:
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+
+        with grib_path.open("rb") as check:
+            if check.read(4) != b"GRIB":
+                raise RuntimeError(
+                    f"Decompressed MRMS payload is not a GRIB file: {observation.filename}"
+                )
+
+        reflectivity = decode_reflectivity_from_file(grib_path, expected_shape)
+
+        y0, y1, x0, x1 = crop
+        regional = reflectivity[y0:y1, x0:x1]
+        rgba = reflectivity_to_rgba(regional)
+        del reflectivity, regional
+
+        projected = subset_to_webmercator(rgba, crop_bounds, row_map_cache)
+        del rgba
+
+        data = rgba_to_webp_bytes(projected, quality=88)
+        print(
+            f"      Decoded/rendered {observation.asset_name}: "
+            f"{len(data):,} WebP bytes"
         )
+        return data
 
-    reflectivity = decode_reflectivity_from_gzip(payload, expected_shape)
-    del payload
-
-    y0, y1, x0, x1 = crop
-    regional = reflectivity[y0:y1, x0:x1]
-    rgba = reflectivity_to_rgba(regional)
-    del reflectivity, regional
-
-    projected = subset_to_webmercator(rgba, crop_bounds, row_map_cache)
-    del rgba
-
-    return rgba_to_webp_bytes(projected, quality=88)
+    finally:
+        gz_path.unlink(missing_ok=True)
+        grib_path.unlink(missing_ok=True)
 
 
 def phase_bucket_for_timestamp(value: datetime) -> datetime:
@@ -767,8 +842,15 @@ def run_archive() -> None:
             )
         except Exception as exc:
             # A single bad historical frame should not suppress the remaining
-            # backlog; the next workflow run will retry it.
-            print(f"      WARNING: unable to archive {obs.asset_name}: {exc}")
+            # backlog; the next workflow run will retry it. Always print the
+            # exception type, and include the full traceback for diagnosis.
+            print(
+                f"      WARNING: unable to archive {obs.asset_name}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            if HISTORY_DEBUG:
+                import traceback
+                traceback.print_exc()
 
     # --------------------------------------------------------------
     # Phase snapshot: one 10-minute bucket per interval.
