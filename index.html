@@ -2258,6 +2258,129 @@ function removeMapOverlay(layerRef) {
 }
 
 
+// Historical frames are stored as GitHub Release assets. Some browsers /
+// hosting combinations will reject a Release download as an embeddable image.
+// Try the native URL first, then fall back to an image proxy only after the
+// browser reports an image-load failure. The archive itself is unchanged.
+function historyImageProxyUrl(url) {
+    if (!url) return url;
+    return 'https://wsrv.nl/?url=' + encodeURIComponent(url) + '&output=webp';
+}
+
+
+function addHistoricalRadarOverlay(frame, bounds) {
+    const nativeUrl = frame.radar_url;
+
+    const overlay = createImageOverlay(
+        nativeUrl,
+        bounds,
+        overlayOpacity,
+        500,
+        false
+    );
+
+    overlay.on('error', function() {
+        // Prevent repeated fallback loops for the same frame.
+        if (frame.__historyProxyTried) {
+            console.warn('Historical MRMS radar failed to load:', nativeUrl);
+            setHistoryStatus('Frame image unavailable');
+            return;
+        }
+
+        frame.__historyProxyTried = true;
+        const proxyUrl = historyImageProxyUrl(nativeUrl);
+
+        if (radarOverlay === overlay) {
+            removeMapOverlay(overlay);
+            radarOverlay = null;
+        }
+
+        const fallback = createImageOverlay(
+            proxyUrl,
+            bounds,
+            overlayOpacity,
+            500,
+            false
+        );
+
+        fallback.on('load', function() {
+            console.info('Historical MRMS radar loaded through image fallback.');
+            if (historyMode) {
+                setHistoryStatus('History mode');
+            }
+        });
+
+        fallback.on('error', function() {
+            console.warn('Historical MRMS radar fallback failed:', nativeUrl);
+            setHistoryStatus('Frame image unavailable');
+        });
+
+        fallback.addTo(map);
+        fallback.setOpacity(overlayOpacity);
+        radarOverlay = fallback;
+    });
+
+    overlay.on('load', function() {
+        if (historyMode) {
+            setHistoryStatus(historyPlaying ? 'Playing history' : 'History mode');
+        }
+    });
+
+    overlay.addTo(map);
+    overlay.setOpacity(overlayOpacity);
+    return overlay;
+}
+
+
+function addHistoricalPhaseOverlay(frame, bounds) {
+    if (!frame.phase_url) return null;
+
+    const nativeUrl = frame.phase_url;
+    const overlay = createImageOverlay(
+        nativeUrl,
+        bounds,
+        overlayOpacity,
+        550,
+        false
+    );
+
+    overlay.on('error', function() {
+        if (frame.__phaseProxyTried) {
+            console.warn('Historical winter phase mask failed to load:', nativeUrl);
+            return;
+        }
+
+        frame.__phaseProxyTried = true;
+        const proxyUrl = historyImageProxyUrl(nativeUrl);
+
+        if (phaseOverlay === overlay) {
+            removeMapOverlay(overlay);
+            phaseOverlay = null;
+        }
+
+        const fallback = createImageOverlay(
+            proxyUrl,
+            bounds,
+            overlayOpacity,
+            550,
+            false
+        );
+
+        fallback.on('error', function() {
+            console.warn('Historical winter phase mask fallback failed:', nativeUrl);
+        });
+
+        fallback.addTo(map);
+        fallback.setOpacity(overlayOpacity);
+        phaseOverlay = fallback;
+    });
+
+    overlay.addTo(map);
+    overlay.setOpacity(overlayOpacity);
+    return overlay;
+}
+
+
 function renderHistoryFrame(index, fitView) {
     if (!map || !historyFrames.length) return;
 
@@ -2275,31 +2398,11 @@ function renderHistoryFrame(index, fitView) {
     phaseOverlay = null;
 
     if (document.getElementById("radarToggle").checked) {
-        radarOverlay = createImageOverlay(
-            frame.radar_url,
-            bounds,
-            overlayOpacity,
-            500,
-            false
-        );
-        radarOverlay.addTo(map);
-        radarOverlay.setOpacity(overlayOpacity);
+        radarOverlay = addHistoricalRadarOverlay(frame, bounds);
     }
 
     if (document.getElementById("phaseToggle").checked && frame.phase_url) {
-        phaseOverlay = createImageOverlay(
-            frame.phase_url,
-            bounds,
-            overlayOpacity,
-            550,
-            false
-        );
-        phaseOverlay.addTo(map);
-        phaseOverlay.setOpacity(overlayOpacity);
-
-        phaseOverlay.on("error", function() {
-            console.warn("Historical winter phase mask failed to load.");
-        });
+        phaseOverlay = addHistoricalPhaseOverlay(frame, bounds);
     }
 
     updateHistoryControls();
