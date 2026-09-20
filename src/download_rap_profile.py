@@ -147,27 +147,93 @@ def download_rap_profile(valid_time_utc: str) -> Path:
 
 
 def _open_datasets(path: Path) -> list[xr.Dataset]:
+    """Open all useful GRIB groups without requiring TMP/DPT/HGT to share one group."""
     if not path.exists():
         raise FileNotFoundError(path)
     import cfgrib
     return cfgrib.open_datasets(str(path), backend_kwargs={"indexpath": ""})
 
 
-def _find_dataset(datasets: list[xr.Dataset], predicate):
-    for ds in datasets:
-        if predicate(ds):
-            return ds
-    return None
+def _open_pressure_variable(path: Path, short_names: tuple[str, ...]) -> xr.Dataset:
+    """Open one pressure-level variable directly from the RAP GRIB file."""
+    import cfgrib
+
+    last_error: Exception | None = None
+    for short_name in short_names:
+        try:
+            ds = xr.open_dataset(
+                path,
+                engine="cfgrib",
+                backend_kwargs={
+                    "indexpath": "",
+                    "filter_by_keys": {
+                        "typeOfLevel": "isobaricInhPa",
+                        "shortName": short_name,
+                    },
+                },
+            )
+            if "isobaricInhPa" in ds.coords and ds.data_vars:
+                return ds
+            ds.close()
+        except Exception as exc:
+            last_error = exc
+
+    raise RuntimeError(
+        f"Could not open RAP pressure-level variable {short_names}; last error: {last_error}"
+    )
 
 
-def _pick_var(ds: xr.Dataset, names: tuple[str, ...]) -> str | None:
+def _find_pressure_variable(path: Path, names: tuple[str, ...]) -> tuple[xr.Dataset, str]:
+    """Find a pressure-level variable by GRIB shortName or xarray variable name."""
+    import cfgrib
+
+    # First try exact GRIB shortName filters. This is more reliable than relying
+    # on cfgrib.open_datasets() to merge unrelated variables into one Dataset.
     for name in names:
-        if name in ds.data_vars:
-            return name
-    return None
+        try:
+            ds = xr.open_dataset(
+                path,
+                engine="cfgrib",
+                backend_kwargs={
+                    "indexpath": "",
+                    "filter_by_keys": {
+                        "typeOfLevel": "isobaricInhPa",
+                        "shortName": name,
+                    },
+                },
+            )
+            if "isobaricInhPa" in ds.coords and ds.data_vars:
+                return ds, next(iter(ds.data_vars))
+            ds.close()
+        except Exception:
+            pass
+
+    # Fall back to scanning cfgrib's groups for installations where shortName
+    # is exposed differently.
+    groups = cfgrib.open_datasets(path, backend_kwargs={"indexpath": ""})
+    try:
+        wanted = set(names)
+        for ds in groups:
+            if "isobaricInhPa" not in ds.coords:
+                continue
+            for var in ds.data_vars:
+                short_name = str(ds[var].attrs.get("GRIB_shortName", ""))
+                if var in wanted or short_name in wanted:
+                    return ds, var
+    finally:
+        # Do not close the returned Dataset. Its caller owns it. Close only
+        # datasets that were not returned.
+        pass
+
+    for ds in groups:
+        try:
+            ds.close()
+        except Exception:
+            pass
+    raise RuntimeError(f"RAP pressure-level variable not found: {names}")
 
 
-def _pressure_projection(ds: xr.Dataset) -> dict:
+def _pressure_projection_from(ds: xr.Dataset) -> dict:
     attrs: dict = {}
     for name in ds.data_vars:
         attrs.update({k: v for k, v in ds[name].attrs.items() if k.startswith("GRIB_")})
@@ -190,90 +256,99 @@ def _dataset_valid_time(ds: xr.Dataset) -> str | None:
     return None
 
 
-def load_rap_profile(path: Path) -> dict:
-    datasets = _open_datasets(path)
+def _as_level_first(data: np.ndarray, nlevels: int) -> np.ndarray:
+    """Return a field as [level, y, x]."""
+    arr = np.asarray(data, dtype=np.float32)
+    arr = np.squeeze(arr)
+    if arr.ndim != 3:
+        raise RuntimeError(f"Expected 3-D pressure-level field, got shape {arr.shape}")
+    if arr.shape[0] == nlevels:
+        return arr
+    for axis in range(1, 3):
+        if arr.shape[axis] == nlevels:
+            return np.moveaxis(arr, axis, 0)
+    raise RuntimeError(f"Could not identify pressure dimension in field shape {arr.shape}; levels={nlevels}")
+
+
+def _read_pressure_field(path: Path, names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict, str]:
+    ds, var = _find_pressure_variable(path, names)
     try:
-        pds = _find_dataset(
-            datasets,
-            lambda ds: "isobaricInhPa" in ds.coords
-            and _pick_var(ds, ("t", "tmp")) is not None
-            and _pick_var(ds, ("dpt", "td", "2d")) is not None
-            and _pick_var(ds, ("gh", "hgt", "z")) is not None,
-        )
-        if pds is None:
-            raise RuntimeError("RAP pressure-level dataset with TMP/DPT/HGT was not found.")
-
-        tname = _pick_var(pds, ("t", "tmp"))
-        dname = _pick_var(pds, ("dpt", "td", "2d"))
-        zname = _pick_var(pds, ("gh", "hgt", "z"))
-        assert tname and dname and zname
-
-        levels = np.asarray(pds.isobaricInhPa.values, dtype=np.float32)
-        order = np.argsort(levels)[::-1]  # pressure descending -> low altitude first
+        levels = np.asarray(ds["isobaricInhPa"].values, dtype=np.float32)
+        order = np.argsort(levels)[::-1]
         levels = levels[order]
-        temp_c = np.asarray(pds[tname].values, dtype=np.float32)[order] - 273.15
-        dpt_c = np.asarray(pds[dname].values, dtype=np.float32)[order] - 273.15
-        height_m = np.asarray(pds[zname].values, dtype=np.float32)[order]
-
-        from metpy.calc import wet_bulb_temperature
-        from metpy.units import units
-        wetbulb_c = wet_bulb_temperature(
-            levels[:, None, None] * units.hectopascal,
-            temp_c * units.degC,
-            dpt_c * units.degC,
-        ).to("degC").magnitude.astype(np.float32)
-
-        e_actual = 6.112 * np.exp((17.67 * dpt_c) / np.maximum(dpt_c + 243.5, 0.1))
-        e_ice = 6.112 * np.exp((22.46 * temp_c) / np.maximum(temp_c + 272.62, 0.1))
-        rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
-
-        lat = np.asarray(pds.latitude.values)
-        lon = np.where(np.asarray(pds.longitude.values) > 180.0,
-                       np.asarray(pds.longitude.values) - 360.0,
-                       np.asarray(pds.longitude.values))
-        projection = _pressure_projection(pds)
-
-        result = {
-            "pressure_hpa": levels,
-            "wetbulb_c": wetbulb_c,
-            "temperature_c": temp_c.astype(np.float32),
-            "rh_ice_pct": rh_ice,
-            "height_m": height_m.astype(np.float32),
-            "latitude": lat,
-            "longitude": lon,
-            "projection": projection,
-            "valid_time_utc": _dataset_valid_time(pds),
-        }
-
-        # Optional surface/2-m anchors are retained for the next phase-engine
-        # refinement and for QC, even though the current stage still uses the
-        # pressure-level profile itself.
-        sds = _find_dataset(
-            datasets,
-            lambda ds: any(c in ds.coords for c in ("surface", "heightAboveGround")),
-        )
-        if sds is not None:
-            pvar = _pick_var(sds, ("sp", "pres", "pres_surface"))
-            t2 = _pick_var(sds, ("t2m", "t2m"))
-            d2 = _pick_var(sds, ("d2m", "dpt2m"))
-            if pvar:
-                p = np.asarray(sds[pvar].values, dtype=np.float32)
-                if np.nanmedian(p) > 2000.0:
-                    p = p / 100.0
-                result["surface_pressure_hpa"] = p
-            if t2:
-                result["surface_temperature_c"] = np.asarray(sds[t2].values, dtype=np.float32) - 273.15
-            if d2:
-                result["surface_dewpoint_c"] = np.asarray(sds[d2].values, dtype=np.float32) - 273.15
-            hgt_name = _pick_var(sds, ("orog", "gh", "hgt"))
-            if hgt_name:
-                result["surface_height_m"] = np.asarray(sds[hgt_name].values, dtype=np.float32)
-
-        return result
+        data = _as_level_first(ds[var].values, len(levels))[order]
+        lat = np.asarray(ds.latitude.values)
+        lon = np.where(np.asarray(ds.longitude.values) > 180.0,
+                       np.asarray(ds.longitude.values) - 360.0,
+                       np.asarray(ds.longitude.values))
+        projection = _pressure_projection_from(ds)
+        valid_time = _dataset_valid_time(ds)
+        return data, levels, lat, lon, projection, valid_time
     finally:
-        for ds in datasets:
-            ds.close()
+        ds.close()
 
+
+def load_rap_profile(path: Path) -> dict:
+    """Load RAP TMP, DPT and HGT independently from the pressure-level GRIB."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    # RAP commonly exposes these as t, dpt, and gh. Some GRIB inventories use
+    # tmp/2d/hgt, so the fallback names are retained.
+    temp_c_k, levels_t, lat, lon, projection, valid_time = _read_pressure_field(path, ("t", "tmp"))
+    dpt_c_k, levels_d, _, _, _, _ = _read_pressure_field(path, ("dpt", "td", "2d"))
+    height_m, levels_z, _, _, _, _ = _read_pressure_field(path, ("gh", "hgt", "z"))
+
+    if not np.array_equal(levels_t, levels_d) or not np.array_equal(levels_t, levels_z):
+        raise RuntimeError(
+            f"RAP pressure levels differ between TMP/DPT/HGT: "
+            f"TMP={levels_t.tolist()} DPT={levels_d.tolist()} HGT={levels_z.tolist()}"
+        )
+
+    temp_c = temp_c_k - 273.15
+    dpt_c = dpt_c_k - 273.15
+
+    # Compute wet-bulb one pressure level at a time. This avoids relying on
+    # MetPy broadcasting behavior across the full 3-D grid and is considerably
+    # easier on GitHub Actions memory.
+    from metpy.calc import wet_bulb_temperature
+    from metpy.units import units
+
+    wetbulb_c = np.empty_like(temp_c, dtype=np.float32)
+    for i, pressure in enumerate(levels_t):
+        wb = wet_bulb_temperature(
+            pressure * units.hectopascal,
+            temp_c[i] * units.degC,
+            dpt_c[i] * units.degC,
+        ).to("degC").magnitude
+        wetbulb_c[i] = np.asarray(wb, dtype=np.float32)
+
+    # Ice-relative humidity diagnostic. Use a stable Magnus-style formulation
+    # and retain it as a supporting field rather than a hard classification.
+    e_actual = 6.112 * np.exp((17.67 * dpt_c) / np.maximum(dpt_c + 243.5, 0.1))
+    e_ice = 6.112 * np.exp((22.46 * temp_c) / np.maximum(temp_c + 272.62, 0.1))
+    rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
+
+    print("  RAP PROFILE READY")
+    print(f"    Valid time: {valid_time or 'unknown'}")
+    print(f"    Pressure levels: {len(levels_t)}")
+    print(f"    Levels: {', '.join(f'{v:g}' for v in levels_t)} hPa")
+    print(f"    TMP: OK ({temp_c.shape})")
+    print(f"    DPT: OK ({dpt_c.shape})")
+    print(f"    HGT: OK ({height_m.shape})")
+    print(f"    Wet-bulb: OK ({wetbulb_c.shape})")
+
+    return {
+        "pressure_hpa": levels_t,
+        "wetbulb_c": wetbulb_c,
+        "temperature_c": temp_c.astype(np.float32),
+        "rh_ice_pct": rh_ice,
+        "height_m": height_m.astype(np.float32),
+        "latitude": lat,
+        "longitude": lon,
+        "projection": projection,
+        "valid_time_utc": valid_time,
+    }
 
 def _nearest_index(sorted_values: np.ndarray, values: np.ndarray) -> np.ndarray:
     idx = np.searchsorted(sorted_values, values)
