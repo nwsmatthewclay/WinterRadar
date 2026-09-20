@@ -287,6 +287,123 @@ html, body {
     box-shadow: 0 3px 12px rgba(25,35,45,.17);
 }
 
+/* History controls positioned directly over the map */
+.map-history-control {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 9px;
+    border: 1px solid rgba(155, 167, 176, .95);
+    border-radius: 8px;
+    background: rgba(255,255,255,.94);
+    box-shadow: 0 3px 12px rgba(25,35,45,.18);
+    backdrop-filter: blur(3px);
+}
+
+.map-history-btn {
+    min-width: 32px;
+    height: 30px;
+    border: 1px solid #bfc8cf;
+    border-radius: 6px;
+    background: #fff;
+    color: #30404c;
+    padding: 0 8px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.map-history-btn:hover:not(:disabled) {
+    background: #f3f6f8;
+}
+
+.map-history-btn:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
+.map-history-slider-wrap {
+    flex: 1;
+    min-width: 80px;
+}
+
+#mapHistorySlider {
+    display: block;
+    width: 100%;
+    margin: 0;
+    cursor: pointer;
+}
+
+.map-history-readout {
+    min-width: 155px;
+    color: #334650;
+    font-size: 9px;
+    font-weight: 800;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.opacity-control {
+    position: absolute;
+    right: 9px;
+    bottom: 61px;
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 9px;
+    border: 1px solid rgba(174, 184, 192, .95);
+    border-radius: 7px;
+    background: rgba(255,255,255,.95);
+    box-shadow: 0 2px 8px rgba(25,35,45,.15);
+}
+
+.opacity-control label {
+    color: #41515c;
+    font-size: 9px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+#opacitySlider {
+    width: 105px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.opacity-value {
+    min-width: 34px;
+    color: #166b9f;
+    font-size: 9px;
+    font-weight: 900;
+    text-align: right;
+}
+
+@media (max-width: 700px) {
+    .map-history-control {
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        gap: 5px;
+        padding: 7px;
+    }
+
+    .map-history-readout {
+        display: none;
+    }
+
+    .opacity-control {
+        right: 8px;
+        bottom: 56px;
+    }
+}
+
 .search-results.open { display: block; }
 
 .result-row {
@@ -863,6 +980,44 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                 </div>
             </div>
 
+            <div class="opacity-control" title="Adjust radar and winter mask opacity">
+                <label for="opacitySlider">Opacity</label>
+                <input
+                    id="opacitySlider"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value="100"
+                    step="1"
+                    oninput="setOverlayOpacity(Number(this.value))"
+                    aria-label="Overlay opacity"
+                >
+                <span id="opacityValue" class="opacity-value">100%</span>
+            </div>
+
+            <div class="map-history-control" aria-label="24-hour MRMS history controls">
+                <button id="mapHistoryPrev" class="map-history-btn" type="button"
+                    onclick="historyStep(-1)" title="Previous frame">◀</button>
+                <button id="mapHistoryPlay" class="map-history-btn" type="button"
+                    onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
+                <div class="map-history-slider-wrap">
+                    <input
+                        id="mapHistorySlider"
+                        type="range"
+                        min="0"
+                        max="0"
+                        value="0"
+                        step="1"
+                        disabled
+                        oninput="selectHistoryFrame(Number(this.value), true)"
+                        aria-label="MRMS history time"
+                    >
+                </div>
+                <button id="mapHistoryNext" class="map-history-btn" type="button"
+                    onclick="historyStep(1)" title="Next frame">▶</button>
+                <div id="mapHistoryReadout" class="map-history-readout">LIVE</div>
+            </div>
+
             <div id="searchResults" class="search-results"></div>
         </div>
 
@@ -1255,11 +1410,12 @@ function loadRadarLayers(metadata) {
         radarOverlay = createImageOverlay(
             "./outputs/mrms_current_web.png?v=" + Date.now(),
             currentBounds,
-            0.92,
+            overlayOpacity,
             500
         );
 
         radarOverlay.addTo(map);
+        radarOverlay.setOpacity(overlayOpacity);
     }
 
     if (
@@ -1273,11 +1429,12 @@ function loadRadarLayers(metadata) {
         phaseOverlay = createImageOverlay(
             "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
             currentBounds,
-            1.0,
+            overlayOpacity,
             550
         );
 
         phaseOverlay.addTo(map);
+        phaseOverlay.setOpacity(overlayOpacity);
 
         phaseOverlay.on("error", function() {
             console.warn("Winter phase mask is not available yet.");
@@ -1313,11 +1470,12 @@ function toggleRadar(enabled) {
         radarOverlay = createImageOverlay(
             "./outputs/mrms_current_web.png?v=" + Date.now(),
             currentBounds,
-            0.92,
+            overlayOpacity,
             500
         );
 
         radarOverlay.addTo(map);
+        radarOverlay.setOpacity(overlayOpacity);
 
     } else {
 
@@ -1350,11 +1508,12 @@ function togglePhase(enabled) {
         phaseOverlay = createImageOverlay(
             "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
             currentBounds,
-            1.0,
+            overlayOpacity,
             550
         );
 
         phaseOverlay.addTo(map);
+        phaseOverlay.setOpacity(overlayOpacity);
 
         phaseOverlay.on("error", function() {
             console.warn("Winter phase mask is not available.");
@@ -1836,6 +1995,36 @@ let historyTimer = null;
 let historySpeed = 1;
 let historyBounds = null;
 let historyRefreshBusy = false;
+let overlayOpacity = 1.0;
+
+
+function applyOverlayOpacity() {
+    if (radarOverlay) {
+        radarOverlay.setOpacity(
+            document.getElementById("radarToggle").checked ? overlayOpacity : 0
+        );
+    }
+
+    if (phaseOverlay) {
+        phaseOverlay.setOpacity(
+            document.getElementById("phaseToggle").checked ? overlayOpacity : 0
+        );
+    }
+}
+
+
+function setOverlayOpacity(percent) {
+    const value = Math.max(0, Math.min(100, Number(percent) || 0));
+    overlayOpacity = value / 100;
+
+    const slider = document.getElementById("opacitySlider");
+    const label = document.getElementById("opacityValue");
+
+    if (slider) slider.value = String(value);
+    if (label) label.textContent = value + "%";
+
+    applyOverlayOpacity();
+}
 
 
 function formatUtcTime(value) {
@@ -1895,6 +2084,25 @@ function updateHistoryControls() {
         play.textContent = historyPlaying ? "❚❚" : "▶";
     }
     if (speed) speed.value = String(historySpeed);
+
+    const mapSlider = document.getElementById("mapHistorySlider");
+    const mapPrev = document.getElementById("mapHistoryPrev");
+    const mapNext = document.getElementById("mapHistoryNext");
+    const mapPlay = document.getElementById("mapHistoryPlay");
+
+    if (mapSlider) {
+        mapSlider.disabled = !hasFrames;
+        mapSlider.max = String(Math.max(historyFrames.length - 1, 0));
+        mapSlider.value = validIndex ? String(historyIndex) : "0";
+    }
+
+    if (mapPrev) mapPrev.disabled = !hasFrames || historyIndex <= 0;
+    if (mapNext) mapNext.disabled = !hasFrames || historyIndex >= historyFrames.length - 1;
+
+    if (mapPlay) {
+        mapPlay.disabled = historyFrames.length < 2;
+        mapPlay.textContent = historyPlaying ? "❚❚" : "▶";
+    }
 }
 
 
@@ -1903,6 +2111,7 @@ function updateHistoryReadout() {
     const count = document.getElementById("historyTimeCount");
     const meta = document.getElementById("historyTimeMeta");
     const status = document.getElementById("historyStatus");
+    const mapReadout = document.getElementById("mapHistoryReadout");
 
     if (!main || !count || !meta || !status) return;
 
@@ -1912,6 +2121,7 @@ function updateHistoryReadout() {
         meta.textContent = "—";
         status.textContent = "Unavailable";
         status.className = "history-status";
+        if (mapReadout) mapReadout.textContent = "History unavailable";
         return;
     }
 
@@ -1926,6 +2136,12 @@ function updateHistoryReadout() {
     meta.textContent =
         "Local: " + formatLocalTime(frame.timestamp_utc) +
         "  •  Phase: " + phaseTime;
+
+    if (mapReadout) {
+        mapReadout.textContent =
+            (historyMode ? formatLocalTime(frame.timestamp_utc) : "LIVE") +
+            "  •  " + (historyIndex + 1) + "/" + historyFrames.length;
+    }
 
     if (historyMode && historyPlaying) {
         status.textContent = "Playing history";
@@ -2062,22 +2278,24 @@ function renderHistoryFrame(index, fitView) {
         radarOverlay = createImageOverlay(
             frame.radar_url,
             bounds,
-            0.92,
+            overlayOpacity,
             500,
             false
         );
         radarOverlay.addTo(map);
+        radarOverlay.setOpacity(overlayOpacity);
     }
 
     if (document.getElementById("phaseToggle").checked && frame.phase_url) {
         phaseOverlay = createImageOverlay(
             frame.phase_url,
             bounds,
-            1.0,
+            overlayOpacity,
             550,
             false
         );
         phaseOverlay.addTo(map);
+        phaseOverlay.setOpacity(overlayOpacity);
 
         phaseOverlay.on("error", function() {
             console.warn("Historical winter phase mask failed to load.");
@@ -2392,6 +2610,57 @@ document.addEventListener(
     "click",
     closeLayerPanelWhenClickingOutside
 );
+
+
+// Left/Right control MRMS history instead of Leaflet map panning.
+// Ignore text-entry and other form controls so normal browser editing remains intact.
+document.addEventListener("keydown", function(event) {
+    const tag = event.target && event.target.tagName
+        ? event.target.tagName.toLowerCase()
+        : "";
+
+    if (
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        tag === "button" ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+    ) {
+        // Arrow keys on a focused slider continue to control the slider normally.
+        return;
+    }
+
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+        return;
+    }
+
+    if (!historyFrames.length) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!historyMode) {
+        historyMode = true;
+        stopHistoryPlayback();
+        historyIndex = Math.max(
+            0,
+            Math.min(
+                historyIndex >= 0 ? historyIndex : historyFrames.length - 1,
+                historyFrames.length - 1
+            )
+        );
+    }
+
+    historyStep(event.key === "ArrowLeft" ? -1 : 1);
+}, true);
+
+
+// Ensure the requested startup state is exactly 100%.
+setOverlayOpacity(100);
 </script>
 
 </body>
