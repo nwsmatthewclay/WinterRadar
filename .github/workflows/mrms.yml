@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
@@ -48,16 +48,21 @@ jobs:
             xarray \
             cfgrib \
             matplotlib \
-            pygrib
+            pygrib \
+            metpy \
+            pyproj
 
       - name: Core syntax QC
         run: |
+          set -euo pipefail
           python -m py_compile \
             src/config.py \
             src/download_mrms.py \
             src/read_mrms.py \
             src/classifier.py \
             src/render.py \
+            src/download_rap_profile.py \
+            src/phase_profile.py \
             src/main.py \
             src/project_mrms_webmercator.py \
             src/build_phase_diagnostics.py
@@ -99,8 +104,7 @@ jobs:
           set -euo pipefail
           python -u src/project_mrms_webmercator.py
 
-      # Diagnostics are deliberately OUTSIDE the critical live-radar path.
-      # They can fail without taking the current MRMS radar offline.
+      # Existing MRMS diagnostic products remain outside the critical live-radar path.
       - name: Download optional diagnostic 2-D fields
         continue-on-error: true
         working-directory: src
@@ -122,43 +126,14 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: python -u build_mrms_diagnostics.py
 
-      - name: Download vertical dual-pol data
-        continue-on-error: true
-        working-directory: src
-        env:
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
+      # The legacy vertical dual-pol path currently expects the old 3-D directory
+      # layout and is intentionally not allowed to fail noisily while the new
+      # profile/phase pipeline is being validated.  We will build the new 3-D
+      # dual-pol downloader in a separate controlled step.
+      - name: Legacy vertical dual-pol diagnostic status
         run: |
-          if [ -f download_vertical_dualpol.py ]; then
-            python -u download_vertical_dualpol.py
-          else
-            echo "Vertical dual-pol downloader is not present; skipping."
-          fi
-
-      - name: Build vertical dual-pol diagnostic
-        continue-on-error: true
-        working-directory: src
-        env:
-          MPLBACKEND: Agg
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          if [ -f build_vertical_dualpol_diagnostic.py ]; then
-            python -u build_vertical_dualpol_diagnostic.py
-          else
-            echo "Vertical dual-pol diagnostic is not present; skipping."
-          fi
-
-      - name: Normalize vertical diagnostic filename
-        continue-on-error: true
-        run: |
-          if [ -s outputs/vertical_dualpol_diagnostic.png ]; then
-            cp outputs/vertical_dualpol_diagnostic.png outputs/mrms_vertical_dualpol.png
-          fi
+          echo "Vertical 3-D dual-pol diagnostic deferred while RAP phase engine is being validated."
+          echo "Current live phase engine uses RAP thermodynamic profiles; MRMS 2-D RHOHV/ZDR remain available for diagnostics."
 
       - name: Build winter precipitation diagnostic
         continue-on-error: true
@@ -197,7 +172,7 @@ jobs:
               img.save(path, optimize=True)
 
           placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
-          placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
+          placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic deferred")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
           placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
           placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
@@ -205,10 +180,7 @@ jobs:
           for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json"):
               path = out / name
               if not path.exists() or path.stat().st_size == 0:
-                  path.write_text(
-                      json.dumps({"status": "temporarily_unavailable"}, indent=2),
-                      encoding="utf-8",
-                  )
+                  path.write_text(json.dumps({"status": "temporarily_unavailable"}, indent=2), encoding="utf-8")
           PY
 
       - name: Assemble Pages site
