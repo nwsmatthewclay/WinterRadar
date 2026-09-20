@@ -5,7 +5,7 @@ from __future__ import annotations
 NOAA/NCEP explicitly recommends RAP for upper-level analysis and short-range
 forecasting because the distributed HRRR product does not provide full 3-D
 upper-level fields. This module uses the NOMADS RAP GRIB filter to request only
-pressure-level TMP/DPT/HGT plus a few surface fields over the WinterRadar domain.
+pressure-level TMP/RH/HGT plus 2-m surface fields over the WinterRadar domain.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -49,7 +49,8 @@ def _url(cycle: datetime, fhr: int) -> str:
         "lev_2_m_above_ground": "on",
         "var_PRES": "on",
         "var_TMP": "on",
-        "var_DPT": "on",
+        "var_DPT": "on",  # 2-m DPT; pressure levels use RH instead
+        "var_RH": "on",
         "var_HGT": "on",
     }
     for lev in PRESSURE_LEVELS:
@@ -100,7 +101,7 @@ def download_rap_profile(valid_time_utc: str) -> Path:
     headers = {"User-Agent": "WinterRadar/phase-profile (NWS operational decision support)"}
 
     print(f"  RAP profile source: {cycle:%Y-%m-%d %H}Z F{fhr:02d} (valid ~{target:%Y-%m-%d %H:%M}Z)")
-    print("  Downloading RAP pressure-level TMP/DPT/HGT subset...")
+    print("  Downloading RAP pressure-level TMP/RH/HGT subset...")
 
     last_error: Exception | None = None
     for attempt in range(1, 4):
@@ -147,7 +148,7 @@ def download_rap_profile(valid_time_utc: str) -> Path:
 
 
 def _open_datasets(path: Path) -> list[xr.Dataset]:
-    """Open all useful GRIB groups without requiring TMP/DPT/HGT to share one group."""
+    """Open all useful GRIB groups without requiring TMP/RH/HGT to share one group."""
     if not path.exists():
         raise FileNotFoundError(path)
     import cfgrib
@@ -208,63 +209,29 @@ def _find_pressure_variable(path: Path, names: tuple[str, ...]) -> tuple[xr.Data
         except Exception:
             pass
 
-    # Fall back to scanning every cfgrib group. RAP/NOMADS files can expose
-    # dewpoint with a different shortName or only through GRIB metadata.
+    # Fall back to scanning cfgrib's groups for installations where shortName
+    # is exposed differently.
     groups = cfgrib.open_datasets(path, backend_kwargs={"indexpath": ""})
-    wanted = {str(x).lower() for x in names}
-
-    if wanted.intersection({"dpt", "td", "2d"}):
-        terms = ("dew point", "dewpoint", "dew-point")
-    elif wanted.intersection({"t", "tmp"}):
-        terms = ("temperature", "air temperature")
-    elif wanted.intersection({"gh", "hgt", "z"}):
-        terms = ("geopotential height", "geopotential", "height")
-    else:
-        terms = ()
-
-    scan_error = None
     try:
+        wanted = set(names)
         for ds in groups:
-            level_coord = None
-            for coord in ("isobaricInhPa", "isobaricInPa"):
-                if coord in ds.coords:
-                    level_coord = coord
-                    break
-            if level_coord is None:
+            if "isobaricInhPa" not in ds.coords:
                 continue
-
             for var in ds.data_vars:
-                attrs = ds[var].attrs
-                candidates = {
-                    str(var).lower(),
-                    str(attrs.get("GRIB_shortName", "")).lower(),
-                    str(attrs.get("GRIB_cfVarName", "")).lower(),
-                    str(attrs.get("GRIB_name", "")).lower(),
-                    str(attrs.get("long_name", "")).lower(),
-                }
-
-                if candidates.intersection(wanted):
+                short_name = str(ds[var].attrs.get("GRIB_shortName", ""))
+                if var in wanted or short_name in wanted:
                     return ds, var
-
-                if terms and any(
-                    term in candidate
-                    for candidate in candidates
-                    for term in terms
-                ):
-                    return ds, var
-    except Exception as exc:
-        scan_error = exc
+    finally:
+        # Do not close the returned Dataset. Its caller owns it. Close only
+        # datasets that were not returned.
+        pass
 
     for ds in groups:
         try:
             ds.close()
         except Exception:
             pass
-
-    detail = f"; scan error: {scan_error}" if scan_error else ""
-    raise RuntimeError(
-        f"RAP pressure-level variable not found: {names}{detail}"
-    )
+    raise RuntimeError(f"RAP pressure-level variable not found: {names}")
 
 
 def _pressure_projection_from(ds: xr.Dataset) -> dict:
@@ -323,31 +290,42 @@ def _read_pressure_field(path: Path, names: tuple[str, ...]) -> tuple[np.ndarray
 
 
 def load_rap_profile(path: Path) -> dict:
-    """Load RAP TMP, DPT and HGT independently from the pressure-level GRIB."""
+    """Load RAP TMP, RH and HGT pressure-level fields and derive dew point."""
     if not path.exists():
         raise FileNotFoundError(path)
 
-    # RAP commonly exposes these as t, dpt, and gh. Some GRIB inventories use
-    # tmp/2d/hgt, so the fallback names are retained.
-    temp_c_k, levels_t, lat, lon, projection, valid_time = _read_pressure_field(path, ("t", "tmp"))
-    dpt_c_k, levels_d, _, _, _, _ = _read_pressure_field(path, ("dpt", "td", "2d"))
+    # RAP awp130 pressure-level files provide temperature (TMP), relative
+    # humidity (RH), and geopotential height (HGT) on isobaric levels. The
+    # pressure-level file does not provide DPT; DPT is available for the 2-m
+    # field. Derive pressure-level dew point from TMP + RH.
+    temp_k, levels_t, lat, lon, projection, valid_time = _read_pressure_field(path, ("t", "tmp"))
+    rh_pct, levels_r, _, _, _, _ = _read_pressure_field(path, ("r", "rh", "relative_humidity"))
     height_m, levels_z, _, _, _, _ = _read_pressure_field(path, ("gh", "hgt", "z"))
 
-    if not np.array_equal(levels_t, levels_d) or not np.array_equal(levels_t, levels_z):
+    if not np.array_equal(levels_t, levels_r) or not np.array_equal(levels_t, levels_z):
         raise RuntimeError(
-            f"RAP pressure levels differ between TMP/DPT/HGT: "
-            f"TMP={levels_t.tolist()} DPT={levels_d.tolist()} HGT={levels_z.tolist()}"
+            f"RAP pressure levels differ between TMP/RH/HGT: "
+            f"TMP={levels_t.tolist()} RH={levels_r.tolist()} HGT={levels_z.tolist()}"
         )
 
-    temp_c = temp_c_k - 273.15
-    dpt_c = dpt_c_k - 273.15
+    temp_c = temp_k - 273.15
+    rh_pct = np.clip(rh_pct, 0.1, 100.0).astype(np.float32)
+
+    from metpy.calc import dewpoint_from_relative_humidity, wet_bulb_temperature
+    from metpy.units import units
+
+    # Derive dew point one pressure level at a time to control memory use.
+    dpt_c = np.empty_like(temp_c, dtype=np.float32)
+    for i in range(len(levels_t)):
+        dp = dewpoint_from_relative_humidity(
+            temp_c[i] * units.degC,
+            rh_pct[i] * units.percent,
+        ).to("degC").magnitude
+        dpt_c[i] = np.asarray(dp, dtype=np.float32)
 
     # Compute wet-bulb one pressure level at a time. This avoids relying on
     # MetPy broadcasting behavior across the full 3-D grid and is considerably
     # easier on GitHub Actions memory.
-    from metpy.calc import wet_bulb_temperature
-    from metpy.units import units
-
     wetbulb_c = np.empty_like(temp_c, dtype=np.float32)
     for i, pressure in enumerate(levels_t):
         wb = wet_bulb_temperature(
@@ -368,7 +346,8 @@ def load_rap_profile(path: Path) -> dict:
     print(f"    Pressure levels: {len(levels_t)}")
     print(f"    Levels: {', '.join(f'{v:g}' for v in levels_t)} hPa")
     print(f"    TMP: OK ({temp_c.shape})")
-    print(f"    DPT: OK ({dpt_c.shape})")
+    print(f"    RH: OK ({rh_pct.shape})")
+    print(f"    DPT: DERIVED FROM TMP+RH ({dpt_c.shape})")
     print(f"    HGT: OK ({height_m.shape})")
     print(f"    Wet-bulb: OK ({wetbulb_c.shape})")
 
@@ -383,6 +362,7 @@ def load_rap_profile(path: Path) -> dict:
         "projection": projection,
         "valid_time_utc": valid_time,
     }
+
 
 def _nearest_index(sorted_values: np.ndarray, values: np.ndarray) -> np.ndarray:
     idx = np.searchsorted(sorted_values, values)
