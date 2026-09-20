@@ -695,6 +695,7 @@ def choose_phase_asset(
         "timestamp_utc": bucket.isoformat(),
         "asset_name": asset["name"],
         "url": asset["browser_download_url"],
+        "api_url": asset.get("url"),
     }
 
 
@@ -723,7 +724,10 @@ def build_manifest(
                 "timestamp_utc": obs.valid_time.isoformat(),
                 "radar_url": asset["browser_download_url"],
                 "radar_asset": asset["name"],
+                "radar_api_url": asset.get("url"),
                 "phase_url": phase["url"] if phase else None,
+                "phase_asset": phase["asset_name"] if phase else None,
+                "phase_api_url": phase.get("api_url") if phase else None,
                 "phase_timestamp_utc": phase["timestamp_utc"] if phase else None,
             }
         )
