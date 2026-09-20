@@ -59,7 +59,8 @@ jobs:
             src/classifier.py \
             src/render.py \
             src/main.py \
-            src/project_mrms_webmercator.py
+            src/project_mrms_webmercator.py \
+            src/build_phase_diagnostics.py
 
       - name: Run core MRMS processing
         working-directory: src
@@ -81,6 +82,17 @@ jobs:
           echo "LIVE MRMS OUTPUT CHECK"
           echo "=============================================="
           bash ./src/verify_core_outputs.sh
+
+      - name: Build phase probability and QC diagnostics
+        continue-on-error: true
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u src/build_phase_diagnostics.py
 
       - name: Project browser MRMS rasters to Web Mercator
         run: |
@@ -187,8 +199,10 @@ jobs:
           placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
           placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
+          placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
+          placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
 
-          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json"):
+          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json"):
               path = out / name
               if not path.exists() or path.stat().st_size == 0:
                   path.write_text(
@@ -213,6 +227,9 @@ jobs:
           cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
           cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
+          cp outputs/phase_probability.png site/outputs/phase_probability.png
+          cp outputs/phase_diagnostics.png site/outputs/phase_diagnostics.png
+          cp outputs/phase_qc.json site/outputs/phase_qc.json
           cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
           cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
           cp outputs/main.log site/outputs/main.log
