@@ -20,7 +20,9 @@ from read_mrms import get_values  # noqa: E402
 from render import reflectivity_to_rgba, result_to_phase_rgba, save_rgba_png, write_metadata  # noqa: E402
 
 MAIN_VERSION = "9.0-profile-phase"
-PROFILE_CHUNK_ROWS = 64
+PROFILE_CHUNK_ROWS = 70
+DIAG_Y_FACTOR = 10
+DIAG_X_FACTOR = 10
 
 
 def _path_for(name: str) -> Path:
@@ -106,7 +108,7 @@ def validate_core_inputs(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray) ->
         raise RuntimeError(f"Longitude length {len(lons)} does not match image columns {ref.shape[1]}")
 
 
-def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, mrms_time_utc: str) -> tuple[ClassificationResult, dict]:
+def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, mrms_time_utc: str) -> tuple[ClassificationResult, dict, dict[str, np.ndarray]]:
     profile_path = download_hrrr_profile(mrms_time_utc)
     profile = load_hrrr_profile(profile_path)
 
@@ -118,6 +120,18 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
     mean_me = []
     mean_re = []
     mean_ice = []
+
+    diag_h = ref.shape[0] // DIAG_Y_FACTOR
+    diag_w = ref.shape[1] // DIAG_X_FACTOR
+    diag = {
+        "rain": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+        "snow": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+        "sleet": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+        "freezing_rain": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+        "melting_energy": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+        "refreezing_energy": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+        "prob_ice": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+    }
 
     for y0 in range(0, ref.shape[0], PROFILE_CHUNK_ROWS):
         y1 = min(y0 + PROFILE_CHUNK_ROWS, ref.shape[0])
@@ -144,6 +158,19 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         intensity[y0:y1] = rain_intensity_dbz(ref[y0:y1])
         intensity[y0:y1][~precip] = 0
 
+        # Build a compact 10x-downsampled diagnostic grid. We keep probabilities
+        # separate from the categorical mask so the QC panel can show ambiguity.
+        if (y1 - y0) % DIAG_Y_FACTOR == 0 and ref.shape[1] % DIAG_X_FACTOR == 0:
+            dy0 = y0 // DIAG_Y_FACTOR
+            dy1 = y1 // DIAG_Y_FACTOR
+            for key in ("rain", "snow", "sleet", "freezing_rain", "melting_energy", "refreezing_energy", "prob_ice"):
+                arr = np.asarray(probs[key], dtype=np.float32).copy()
+                arr[~precip] = np.nan
+                h2 = arr.shape[0] // DIAG_Y_FACTOR
+                w2 = arr.shape[1] // DIAG_X_FACTOR
+                block = arr.reshape(h2, DIAG_Y_FACTOR, w2, DIAG_X_FACTOR)
+                diag[key][dy0:dy1] = np.nanmean(block, axis=(1, 3))
+
         for key in max_prob:
             max_prob[key] = max(max_prob[key], float(np.nanmax(probs[key])))
         mean_me.append(float(np.nanmean(probs["melting_energy"])))
@@ -162,7 +189,9 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         "mean_refreezing_energy_jkg": float(np.mean(mean_re)),
         "mean_prob_ice_percent": float(np.mean(mean_ice)),
     }
-    return ClassificationResult(phase=phase, confidence=confidence, intensity=intensity), diagnostics
+    diagnostics["precip_pixels"] = int(np.count_nonzero(np.isfinite(ref) & (ref >= 10.0)))
+    diagnostics["diagnostic_grid"] = {"width": int(diag_w), "height": int(diag_h), "downsample_factor": 10}
+    return ClassificationResult(phase=phase, confidence=confidence, intensity=intensity), diagnostics, diag
 
 
 def main() -> None:
@@ -209,10 +238,11 @@ def main() -> None:
     phase_status = "fallback_initial"
     phase_error = None
     phase_diagnostics = {}
+    phase_probability_data = None
     try:
         if not mrms_time_utc:
             raise RuntimeError("MRMS valid time unavailable; cannot synchronize HRRR profile.")
-        result, phase_diagnostics = _profile_phase_result(ref, lats, lons_norm, mrms_time_utc)
+        result, phase_diagnostics, phase_probability_data = _profile_phase_result(ref, lats, lons_norm, mrms_time_utc)
         phase_status = "modified_bourgouin_hrrr"
     except Exception as exc:
         phase_error = f"{type(exc).__name__}: {exc}"
@@ -226,6 +256,19 @@ def main() -> None:
             freezing_level_m=None,
             rqi=rqi,
         )
+        diag_h = max(1, ref.shape[0] // DIAG_Y_FACTOR)
+        diag_w = max(1, ref.shape[1] // DIAG_X_FACTOR)
+        phase_probability_data = {
+            "rain": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+            "snow": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+            "sleet": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+            "freezing_rain": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+            "melting_energy": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+            "refreezing_energy": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+            "prob_ice": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
+        }
+
+    np.savez_compressed(OUTPUT_DIR / "phase_probabilities.npz", **phase_probability_data)
 
     save_rgba_png(result_to_phase_rgba(result), OUTPUT_DIR / "winter_phase_mask.png")
     write_metadata(result, metadata_path)
