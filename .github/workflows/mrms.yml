@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -230,11 +230,122 @@ jobs:
                   )
           PY
 
+      # GitHub Release assets are intentionally delivered as downloads with
+      # application/octet-stream/attachment semantics. They are excellent
+      # persistent storage for Actions, but not reliable <img> sources in the
+      # browser. Stage the archived WebP frames into the Pages deployment so
+      # the history viewer can load them same-origin with image/webp.
+      - name: Stage archived MRMS history for Pages
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          rm -rf site_history_tmp
+          mkdir -p site_history_tmp
+
+          python - <<'PY'
+          import concurrent.futures
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import quote
+
+          import requests
+
+          manifest_path = Path("outputs/mrms_history.json")
+          history_dir = Path("site_history_tmp")
+          history_dir.mkdir(parents=True, exist_ok=True)
+
+          if not manifest_path.exists() or manifest_path.stat().st_size == 0:
+              print("No MRMS history manifest found; skipping history staging.")
+              raise SystemExit(0)
+
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          frames = manifest.get("frames", [])
+
+          assets = {}
+          for frame in frames:
+              radar_name = frame.get("radar_asset")
+              radar_api = frame.get("radar_api_url")
+              if radar_name and radar_api:
+                  assets[radar_name] = radar_api
+
+              phase_name = frame.get("phase_asset")
+              phase_api = frame.get("phase_api_url")
+              if phase_name and phase_api:
+                  assets[phase_name] = phase_api
+
+          print(f"History frames in manifest: {len(frames)}")
+          print(f"Unique history assets to stage: {len(assets)}")
+          if not assets:
+              print("No stageable history assets are present yet.")
+              raise SystemExit(0)
+
+          token = os.environ.get("GITHUB_TOKEN", "")
+          session = requests.Session()
+          session.headers.update({
+              "Accept": "application/octet-stream",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2026-03-10",
+              "User-Agent": "WinterRadar/1.1 (Pages history staging)",
+          })
+
+          def download(item):
+              name, api_url = item
+              target = history_dir / name
+              if target.exists() and target.stat().st_size > 0:
+                  return name, True, "cached"
+
+              last_error = None
+              for attempt in range(1, 4):
+                  try:
+                      response = session.get(api_url, timeout=(20, 120), allow_redirects=True)
+                      response.raise_for_status()
+                      data = response.content
+                      if len(data) < 64 or not data[:4] == b"RIFF" or data[8:12] != b"WEBP":
+                          raise RuntimeError(f"unexpected payload ({len(data):,} bytes; not WebP)")
+                      target.write_bytes(data)
+                      return name, True, f"{len(data):,} bytes"
+                  except Exception as exc:
+                      last_error = exc
+              return name, False, str(last_error)
+
+          failures = []
+          completed = 0
+          items = sorted(assets.items())
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
+              futures = [pool.submit(download, item) for item in items]
+              for future in concurrent.futures.as_completed(futures):
+                  name, ok, info = future.result()
+                  completed += 1
+                  if not ok:
+                      failures.append((name, info))
+                  if completed % 50 == 0 or completed == len(items):
+                      print(f"  Staged {completed}/{len(items)} history assets")
+
+          if failures:
+              print(f"History staging failures: {len(failures)}")
+              for name, error in failures[:10]:
+                  print(f"  FAILED {name}: {error}")
+              if len(failures) > 10:
+                  print(f"  ... plus {len(failures) - 10} more")
+              raise SystemExit(1)
+
+          print("MRMS history staging complete.")
+          PY
+
       - name: Assemble Pages site
         run: |
           set -euo pipefail
           rm -rf site
-          mkdir -p site/outputs
+          mkdir -p site/outputs site/history
+
+          if [ -d site_history_tmp ]; then
+            cp -a site_history_tmp/. site/history/
+          fi
 
           cp index.html site/index.html
           cp outputs/mrms_current.png site/outputs/mrms_current.png
@@ -265,6 +376,7 @@ jobs:
           echo "PAGES CONTENT"
           echo "=============================================="
           find site -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          echo "History assets staged: $(find site/history -type f 2>/dev/null | wc -l)"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
