@@ -405,6 +405,7 @@ def load_rap_profile(path: Path) -> dict:
         "_projected_y": hy.astype(np.float64),
         "_x_axis": x_axis,
         "_y_axis": y_axis,
+        "_transformer": transformer,
     }
 
     print("  RAP PROFILE READY", flush=True)
@@ -433,12 +434,15 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
     lat = np.asarray(lats, dtype=np.float64)
     lon = np.asarray(lons, dtype=np.float64)
     if lat.ndim == 1:
-        lat2, lon2 = lat[:, None], lon[None, :]
+        # pyproj requires X and Y to have identical shapes. A (Ny,1) latitude
+        # array and (1,Nx) longitude array do not broadcast inside
+        # Transformer.transform(), so explicitly build the MRMS chunk grid.
+        lat2, lon2 = np.meshgrid(lat, lon, indexing="ij")
     else:
         lat2, lon2 = lat, lon
 
     # Reuse cached RAP projection coordinates.
-    transformer = _make_transformer(profile["projection"])
+    transformer = profile.get("_transformer") or _make_transformer(profile["projection"])
     hx = np.asarray(profile.get("_projected_x"), dtype=np.float64)
     hy = np.asarray(profile.get("_projected_y"), dtype=np.float64)
     x_axis = np.asarray(profile.get("_x_axis"), dtype=np.float64)
