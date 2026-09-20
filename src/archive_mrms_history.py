@@ -46,12 +46,11 @@ from render import reflectivity_to_rgba
 def _load_eccodes():
     try:
         from eccodes import (
-            codes_get,
             codes_get_values,
             codes_grib_new_from_file,
             codes_release,
         )
-        return codes_get, codes_get_values, codes_grib_new_from_file, codes_release
+        return codes_get_values, codes_grib_new_from_file, codes_release
     except ImportError as exc:  # pragma: no cover - exercised on Actions, not local container
         raise RuntimeError(
             "Python eccodes is required for MRMS history decoding. "
@@ -485,6 +484,8 @@ def decode_reflectivity_from_file(
     gzip member is therefore fully decompressed to disk first, then opened
     in binary mode for ecCodes.
     """
+    # Keep this unpacking in lockstep with _load_eccodes().  The history
+    # decoder only needs these three ecCodes calls.
     codes_get_values, codes_grib_new_from_file, codes_release = _load_eccodes()
 
     with grib_path.open("rb") as grib_file:
