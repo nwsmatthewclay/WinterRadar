@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-"""Retrieve a compact RAP pressure-level profile for winter precipitation type.
+"""Fast, robust RAP pressure-level reader for WinterRadar phase analysis.
 
-NOAA/NCEP explicitly recommends RAP for upper-level analysis and short-range
-forecasting because the distributed HRRR product does not provide full 3-D
-upper-level fields. This module uses the NOMADS RAP GRIB filter to request only
-pressure-level TMP/RH/HGT over the Northeast phase-analysis domain used by WinterRadar.
+The workflow downloads a small NOMADS RAP awp130 subset containing TMP, RH,
+and HGT on pressure levels.  This module deliberately avoids opening the
+entire GRIB with xarray/cfgrib or calling MetPy's iterative wet-bulb solver on
+every grid point.  ecCodes reads the filtered GRIB directly in one pass, and a
+vectorized psychrometric Newton solve derives wet-bulb temperature.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,6 @@ import time
 
 import numpy as np
 import requests
-import xarray as xr
 from pyproj import CRS, Transformer
 
 from config import DATA_DIR
@@ -30,6 +30,10 @@ PRESSURE_LEVELS = (
     750, 725, 700, 675, 650, 625, 600, 575, 550, 525, 500,
 )
 
+TMP_NAMES = {"t", "tmp"}
+RH_NAMES = {"r", "rh", "relative_humidity"}
+HGT_NAMES = {"gh", "hgt", "z"}
+
 
 def _url(cycle: datetime, fhr: int) -> str:
     date = cycle.strftime("%Y%m%d")
@@ -43,9 +47,6 @@ def _url(cycle: datetime, fhr: int) -> str:
         "toplat": str(TOP_LAT),
         "bottomlat": str(BOTTOM_LAT),
         "dir": f"/rap.{date}",
-        # Only the pressure-level fields used by the phase engine are requested.
-        # Surface fields and PRES are unnecessary because the sampled pressure
-        # coordinate already comes from the GRIB isobaric levels.
         "var_TMP": "on",
         "var_RH": "on",
         "var_HGT": "on",
@@ -56,21 +57,18 @@ def _url(cycle: datetime, fhr: int) -> str:
 
 
 def _candidate_sequence(target: datetime):
-    """Yield candidate RAP cycle/fhr pairs ordered from most synchronous to older."""
     target_hour = target.replace(minute=0, second=0, microsecond=0)
     for back in range(0, 7):
         cycle = target_hour - timedelta(hours=back)
-        fhr = back
-        yield cycle, fhr
+        yield cycle, back
 
 
 def download_rap_profile(valid_time_utc: str) -> Path:
-    """Download one compact RAP pressure-level subset without a duplicate probe request."""
+    """Download one compact RAP pressure-level subset."""
     target = datetime.fromisoformat(valid_time_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     part = RAP_PROFILE_FILE.with_suffix(".part")
     headers = {"User-Agent": "WinterRadar/phase-profile (NWS operational decision support)"}
-
     last_error: Exception | None = None
 
     for attempt_index, (cycle, fhr) in enumerate(_candidate_sequence(target), start=1):
@@ -78,29 +76,29 @@ def download_rap_profile(valid_time_utc: str) -> Path:
         print(
             f"  RAP profile candidate {attempt_index}/7: "
             f"{cycle:%Y-%m-%d %H}Z F{fhr:02d} "
-            f"({LEFT_LON:g} to {RIGHT_LON:g}, {BOTTOM_LAT:g} to {TOP_LAT:g})"
-        , flush=True)
-
+            f"({LEFT_LON:g} to {RIGHT_LON:g}, {BOTTOM_LAT:g} to {TOP_LAT:g})",
+            flush=True,
+        )
         try:
-            with requests.get(url, stream=True, timeout=(20, 180), headers=headers) as r:
+            with requests.get(url, stream=True, timeout=(20, 120), headers=headers) as r:
                 if r.status_code == 404:
-                    last_error = RuntimeError(f"RAP candidate unavailable: HTTP 404 for {cycle:%Y-%m-%d %H}Z F{fhr:02d}")
                     print("  Candidate unavailable (HTTP 404); trying the next cycle.", flush=True)
+                    last_error = RuntimeError(f"HTTP 404 for RAP candidate {cycle:%Y-%m-%d %H}Z F{fhr:02d}")
                     continue
                 r.raise_for_status()
-
                 content_length = r.headers.get("Content-Length")
                 expected = int(content_length) if content_length else None
-                if expected:
-                    print(f"  RAP response size: {expected / 1024 / 1024:.1f} MiB", flush=True)
-                else:
-                    print("  RAP response size: unknown (chunked transfer)", flush=True)
+                print(
+                    f"  RAP response size: {expected / 1024 / 1024:.1f} MiB"
+                    if expected else "  RAP response size: unknown (chunked transfer)",
+                    flush=True,
+                )
 
+                total = 0
+                first_chunk = True
+                next_report = 256 * 1024
                 with part.open("wb") as fh:
-                    total = 0
-                    first_chunk = True
-                    next_report = 10 * 1024 * 1024
-                    for chunk in r.iter_content(1024 * 1024):
+                    for chunk in r.iter_content(256 * 1024):
                         if not chunk:
                             continue
                         if first_chunk:
@@ -112,240 +110,241 @@ def download_rap_profile(valid_time_utc: str) -> Path:
                         if total >= next_report:
                             if expected:
                                 pct = 100.0 * total / expected
-                                print(f"  RAP download: {total / 1024 / 1024:.1f} MiB ({pct:.0f}%)", flush=True)
+                                print(f"  RAP download: {total / 1024 / 1024:.2f} MiB ({pct:.0f}%)", flush=True)
                             else:
-                                print(f"  RAP download: {total / 1024 / 1024:.1f} MiB", flush=True)
-                            next_report += 10 * 1024 * 1024
+                                print(f"  RAP download: {total / 1024 / 1024:.2f} MiB", flush=True)
+                            next_report += 2 * 1024 * 1024
 
                 if total < 4096:
                     raise RuntimeError(f"RAP subset is unexpectedly small ({total} bytes).")
                 if expected is not None and total != expected:
                     raise RuntimeError(f"RAP download size mismatch: expected {expected}, got {total}")
 
-            print(f"  RAP subset download complete: {total / 1024 / 1024:.1f} MiB", flush=True)
+            print(f"  RAP subset download complete: {total / 1024 / 1024:.2f} MiB", flush=True)
             part.replace(RAP_PROFILE_FILE)
             return RAP_PROFILE_FILE
-
         except Exception as exc:
             last_error = exc
             part.unlink(missing_ok=True)
-            print(
-                f"  RAP candidate failed: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-            # Avoid hammering NOMADS if the server is already working on a request.
-            time.sleep(10.0)
+            print(f"  RAP candidate failed: {type(exc).__name__}: {exc}", flush=True)
+            time.sleep(5.0)
 
     raise RuntimeError(f"No usable RAP pressure-level subset found in the last 7 hours: {last_error}")
 
 
-def _open_datasets(path: Path) -> list[xr.Dataset]:
-    """Open all useful GRIB groups without requiring TMP/RH/HGT to share one group."""
-    if not path.exists():
-        raise FileNotFoundError(path)
-    import cfgrib
-    return cfgrib.open_datasets(str(path), backend_kwargs={"indexpath": ""})
-
-
-def _open_pressure_variable(path: Path, short_names: tuple[str, ...]) -> xr.Dataset:
-    """Open one pressure-level variable directly from the RAP GRIB file."""
-    import cfgrib
-
-    last_error: Exception | None = None
-    for short_name in short_names:
-        try:
-            ds = xr.open_dataset(
-                path,
-                engine="cfgrib",
-                backend_kwargs={
-                    "indexpath": "",
-                    "filter_by_keys": {
-                        "typeOfLevel": "isobaricInhPa",
-                        "shortName": short_name,
-                    },
-                },
-            )
-            if "isobaricInhPa" in ds.coords and ds.data_vars:
-                return ds
-            ds.close()
-        except Exception as exc:
-            last_error = exc
-
-    raise RuntimeError(
-        f"Could not open RAP pressure-level variable {short_names}; last error: {last_error}"
-    )
-
-
-def _find_pressure_variable(path: Path, names: tuple[str, ...]) -> tuple[xr.Dataset, str]:
-    """Open a RAP pressure-level variable with targeted GRIB filters.
-
-    The RAP awp130 pressure-level product provides TMP, RH, and HGT on
-    isobaric levels. Pressure-level DPT is not part of this product, so callers
-    derive dew point from TMP + RH after loading.
-    """
-    errors: list[str] = []
-    for name in names:
-        try:
-            ds = xr.open_dataset(
-                path,
-                engine="cfgrib",
-                backend_kwargs={
-                    "indexpath": "",
-                    "filter_by_keys": {
-                        "typeOfLevel": "isobaricInhPa",
-                        "shortName": name,
-                    },
-                },
-            )
-            if "isobaricInhPa" in ds.coords and ds.data_vars:
-                return ds, next(iter(ds.data_vars))
-            ds.close()
-            errors.append(f"{name}: no pressure-level data variables")
-        except Exception as exc:
-            errors.append(f"{name}: {type(exc).__name__}: {exc}")
-
-    raise RuntimeError(
-        f"RAP pressure-level variable not found for {names}. "
-        f"Targeted cfgrib attempts: {' | '.join(errors)}"
-    )
-
-
-def _pressure_projection_from(ds: xr.Dataset) -> dict:
-    attrs: dict = {}
-    for name in ds.data_vars:
-        attrs.update({k: v for k, v in ds[name].attrs.items() if k.startswith("GRIB_")})
-    attrs.update({k: v for k, v in ds.attrs.items() if k.startswith("GRIB_")})
-    return attrs
-
-
-def _dataset_valid_time(ds: xr.Dataset) -> str | None:
-    for coord_name in ("valid_time", "time"):
-        if coord_name in ds.coords:
-            arr = np.asarray(ds[coord_name].values)
-            if arr.size:
-                value = arr.reshape(-1)[0]
-                try:
-                    text = np.datetime_as_string(value.astype("datetime64[s]"), unit="s")
-                    if text != "NaT":
-                        return text + "+00:00"
-                except (TypeError, ValueError, AttributeError):
-                    pass
-    return None
-
-
-def _as_level_first(data: np.ndarray, nlevels: int) -> np.ndarray:
-    """Return a field as [level, y, x]."""
-    arr = np.asarray(data, dtype=np.float32)
-    arr = np.squeeze(arr)
-    if arr.ndim != 3:
-        raise RuntimeError(f"Expected 3-D pressure-level field, got shape {arr.shape}")
-    if arr.shape[0] == nlevels:
-        return arr
-    for axis in range(1, 3):
-        if arr.shape[axis] == nlevels:
-            return np.moveaxis(arr, axis, 0)
-    raise RuntimeError(f"Could not identify pressure dimension in field shape {arr.shape}; levels={nlevels}")
-
-
-def _read_pressure_field(path: Path, names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict, str]:
-    ds, var = _find_pressure_variable(path, names)
+def _get_string(gid, key: str) -> str | None:
     try:
-        levels = np.asarray(ds["isobaricInhPa"].values, dtype=np.float32)
-        order = np.argsort(levels)[::-1]
-        levels = levels[order]
-        data = _as_level_first(ds[var].values, len(levels))[order]
-        lat = np.asarray(ds.latitude.values)
-        lon = np.where(np.asarray(ds.longitude.values) > 180.0,
-                       np.asarray(ds.longitude.values) - 360.0,
-                       np.asarray(ds.longitude.values))
-        projection = _pressure_projection_from(ds)
-        valid_time = _dataset_valid_time(ds)
-        return data, levels, lat, lon, projection, valid_time
-    finally:
-        ds.close()
+        import eccodes
+        return str(eccodes.codes_get(gid, key))
+    except Exception:
+        return None
 
 
-def load_rap_profile(path: Path) -> dict:
-    """Load RAP TMP, RH, and HGT pressure-level fields and derive dew point."""
-    if not path.exists():
-        raise FileNotFoundError(path)
+def _get_float(gid, key: str) -> float | None:
+    try:
+        import eccodes
+        value = eccodes.codes_get(gid, key)
+        return float(value)
+    except Exception:
+        return None
 
-    # RAP awp130 pressure-level files provide temperature (TMP), relative
-    # humidity (RH), and geopotential height (HGT) on isobaric levels.
-    # Pressure-level dew point is not provided, so derive DPT from TMP + RH.
-    temp_k, levels_t, lat, lon, projection, valid_time = _read_pressure_field(path, ("t", "tmp"))
-    rh_pct, levels_r, _, _, _, _ = _read_pressure_field(path, ("r", "rh", "relative_humidity"))
-    height_m, levels_z, _, _, _, _ = _read_pressure_field(path, ("gh", "hgt", "z"))
 
-    if not np.array_equal(levels_t, levels_r) or not np.array_equal(levels_t, levels_z):
-        raise RuntimeError(
-            f"RAP pressure levels differ between TMP/RH/HGT: "
-            f"TMP={levels_t.tolist()} RH={levels_r.tolist()} HGT={levels_z.tolist()}"
-        )
+def _get_int(gid, key: str) -> int | None:
+    try:
+        import eccodes
+        value = eccodes.codes_get(gid, key)
+        return int(value)
+    except Exception:
+        return None
 
-    temp_c = temp_k - 273.15
-    rh_pct = np.clip(rh_pct, 0.1, 100.0).astype(np.float32)
 
-    from metpy.calc import dewpoint_from_relative_humidity, wet_bulb_temperature
-    from metpy.units import units
+def _safe_array(gid, key: str) -> np.ndarray:
+    import eccodes
+    return np.asarray(eccodes.codes_get_array(gid, key), dtype=np.float64)
 
-    # Derive dew point one pressure level at a time to control memory use.
-    dpt_c = np.empty_like(temp_c, dtype=np.float32)
-    for i in range(len(levels_t)):
-        dp = dewpoint_from_relative_humidity(
-            temp_c[i] * units.degC,
-            rh_pct[i] * units.percent,
-        ).to("degC").magnitude
-        dpt_c[i] = np.asarray(dp, dtype=np.float32)
 
-    # Compute wet-bulb one pressure level at a time. This avoids relying on
-    # MetPy broadcasting behavior across the full 3-D grid and is considerably
-    # easier on GitHub Actions memory.
+def _projection_from_gid(gid) -> dict:
+    keys = (
+        "gridType",
+        "LaDInDegrees",
+        "LoVInDegrees",
+        "Latin1InDegrees",
+        "Latin2InDegrees",
+        "DxInMetres",
+        "DyInMetres",
+        "Nx",
+        "Ny",
+        "iScansNegatively",
+        "jScansPositively",
+    )
+    out: dict[str, float | int | str] = {}
+    for key in keys:
+        try:
+            import eccodes
+            value = eccodes.codes_get(gid, key)
+            out[f"GRIB_{key}"] = value
+        except Exception:
+            continue
+    return out
 
-    wetbulb_c = np.empty_like(temp_c, dtype=np.float32)
-    for i, pressure in enumerate(levels_t):
-        wb = wet_bulb_temperature(
-            pressure * units.hectopascal,
-            temp_c[i] * units.degC,
-            dpt_c[i] * units.degC,
-        ).to("degC").magnitude
-        wetbulb_c[i] = np.asarray(wb, dtype=np.float32)
 
-    # Ice-relative humidity diagnostic. Use a stable Magnus-style formulation
-    # and retain it as a supporting field rather than a hard classification.
-    e_actual = 6.112 * np.exp((17.67 * dpt_c) / np.maximum(dpt_c + 243.5, 0.1))
-    e_ice = 6.112 * np.exp((22.46 * temp_c) / np.maximum(temp_c + 272.62, 0.1))
-    rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
+def _valid_time_from_gid(gid) -> str | None:
+    import eccodes
 
-    print("  RAP PROFILE READY")
-    print(f"    Valid time: {valid_time or 'unknown'}")
-    print(f"    Pressure levels: {len(levels_t)}")
-    print(f"    Levels: {', '.join(f'{v:g}' for v in levels_t)} hPa")
-    print(f"    TMP: OK ({temp_c.shape})")
-    print(f"    RH: OK ({rh_pct.shape})")
-    print(f"    DPT: DERIVED FROM TMP+RH ({dpt_c.shape})")
-    print(f"    HGT: OK ({height_m.shape})")
-    print(f"    Wet-bulb: OK ({wetbulb_c.shape})")
+    # Prefer explicit validity keys when present.
+    for date_key, time_key in (("validityDate", "validityTime"),):
+        try:
+            date = int(eccodes.codes_get(gid, date_key))
+            hhmm = int(eccodes.codes_get(gid, time_key))
+            dt = datetime.strptime(f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+        except Exception:
+            pass
+
+    try:
+        date = int(eccodes.codes_get(gid, "dataDate"))
+        hhmm = int(eccodes.codes_get(gid, "dataTime"))
+        forecast = int(eccodes.codes_get(gid, "forecastTime"))
+        dt = datetime.strptime(f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+        return (dt + timedelta(hours=forecast)).isoformat()
+    except Exception:
+        return None
+
+
+def _decode_pressure_fields(path: Path) -> dict:
+    """Read TMP/RH/HGT from the filtered GRIB in one sequential ecCodes pass."""
+    import eccodes
+
+    wanted = {"TMP": TMP_NAMES, "RH": RH_NAMES, "HGT": HGT_NAMES}
+    fields: dict[str, dict[float, np.ndarray]] = {k: {} for k in wanted}
+    lat = lon = None
+    projection: dict = {}
+    valid_time = None
+    shape = None
+    n_messages = 0
+
+    print("  Reading RAP GRIB with ecCodes (single pass)...", flush=True)
+    with path.open("rb") as fh:
+        while True:
+            gid = eccodes.codes_grib_new_from_file(fh)
+            if gid is None:
+                break
+            n_messages += 1
+            try:
+                type_of_level = _get_string(gid, "typeOfLevel")
+                if type_of_level != "isobaricInhPa":
+                    continue
+                short_name = (_get_string(gid, "shortName") or "").lower()
+                level = _get_float(gid, "level")
+                if level is None:
+                    continue
+
+                field_name = None
+                for name, candidates in wanted.items():
+                    if short_name in candidates:
+                        field_name = name
+                        break
+                if field_name is None:
+                    continue
+
+                # Keep only requested pressure levels.
+                nearest = min(PRESSURE_LEVELS, key=lambda x: abs(x - level))
+                if abs(nearest - level) > 0.01:
+                    continue
+
+                values = _safe_array(gid, "values")
+                ni = _get_int(gid, "Ni")
+                nj = _get_int(gid, "Nj")
+                if ni is None or nj is None or ni * nj != values.size:
+                    raise RuntimeError(f"Unexpected RAP grid shape: Ni={ni}, Nj={nj}, values={values.size}")
+                values = values.reshape(nj, ni)
+
+                missing = _get_float(gid, "missingValue")
+                if missing is not None and np.isfinite(missing):
+                    values[np.isclose(values, missing, rtol=0.0, atol=1e-6)] = np.nan
+                values[~np.isfinite(values)] = np.nan
+
+                fields[field_name][nearest] = values
+                shape = values.shape
+
+                if lat is None:
+                    lat = _safe_array(gid, "latitudes").reshape(shape)
+                    lon = _safe_array(gid, "longitudes").reshape(shape)
+                    lon = np.where(lon > 180.0, lon - 360.0, lon)
+                    projection = _projection_from_gid(gid)
+                    valid_time = _valid_time_from_gid(gid)
+            finally:
+                eccodes.codes_release(gid)
+
+    print(f"  RAP GRIB messages inspected: {n_messages}", flush=True)
+    if lat is None or lon is None or not shape:
+        raise RuntimeError("RAP GRIB contained no usable isobaric pressure-level fields.")
+
+    missing_fields = [name for name, data in fields.items() if len(data) != len(PRESSURE_LEVELS)]
+    if missing_fields:
+        details = ", ".join(f"{name}: {sorted(data)}" for name, data in fields.items())
+        raise RuntimeError(f"RAP pressure-level fields incomplete ({details}); missing {missing_fields}")
+
+    ordered = {}
+    for name in wanted:
+        ordered[name] = np.stack([fields[name][lev] for lev in PRESSURE_LEVELS]).astype(np.float32)
 
     return {
-        "pressure_hpa": levels_t,
-        "wetbulb_c": wetbulb_c,
-        "temperature_c": temp_c.astype(np.float32),
-        "rh_ice_pct": rh_ice,
-        "height_m": height_m.astype(np.float32),
-        "latitude": lat,
-        "longitude": lon,
+        "temperature_k": ordered["TMP"],
+        "rh_pct": ordered["RH"],
+        "height_m": ordered["HGT"],
+        "pressure_hpa": np.asarray(PRESSURE_LEVELS, dtype=np.float32),
+        "latitude": np.asarray(lat, dtype=np.float32),
+        "longitude": np.asarray(lon, dtype=np.float32),
         "projection": projection,
         "valid_time_utc": valid_time,
     }
 
-def _nearest_index(sorted_values: np.ndarray, values: np.ndarray) -> np.ndarray:
-    idx = np.searchsorted(sorted_values, values)
-    idx = np.clip(idx, 1, len(sorted_values) - 1)
-    left = idx - 1
-    right = idx
-    choose_right = np.abs(values - sorted_values[right]) < np.abs(values - sorted_values[left])
-    return np.where(choose_right, right, left).astype(np.int64)
+
+def _sat_vapor_pressure_water(temp_c: np.ndarray) -> np.ndarray:
+    """Magnus saturation vapor pressure over water, hPa."""
+    t = np.asarray(temp_c, dtype=np.float32)
+    denom = np.maximum(t + 243.5, 0.1)
+    return (6.112 * np.exp(17.67 * t / denom)).astype(np.float32)
+
+
+def _dewpoint_from_rh(temp_c: np.ndarray, rh_pct: np.ndarray) -> np.ndarray:
+    """Vectorized Magnus inversion for dewpoint temperature in Celsius."""
+    t = np.asarray(temp_c, dtype=np.float32)
+    rh = np.clip(np.asarray(rh_pct, dtype=np.float32), 0.1, 100.0)
+    a = 17.67
+    b = 243.5
+    gamma = np.log(rh / 100.0) + (a * t) / (b + np.maximum(t, -243.0))
+    return (b * gamma / np.maximum(a - gamma, 0.01)).astype(np.float32)
+
+
+def _wetbulb_vectorized(temp_c: np.ndarray, dewpoint_c: np.ndarray, pressure_hpa: np.ndarray) -> np.ndarray:
+    """Vectorized psychrometric wet-bulb solution using Newton iterations."""
+    t = np.asarray(temp_c, dtype=np.float32)
+    td = np.asarray(dewpoint_c, dtype=np.float32)
+    p = np.asarray(pressure_hpa, dtype=np.float32)[:, None, None]
+
+    es_td = _sat_vapor_pressure_water(td)
+    tw = np.clip(0.5 * (t + td), td, t).astype(np.float32)
+
+    # Psychrometric constant in hPa/K; Lv varies weakly with temperature.
+    cp = 1004.0
+    epsilon = 0.622
+    lv = np.maximum(2.45e6 - 2360.0 * t, 2.2e6)
+    gamma = (cp * p) / (epsilon * lv)
+
+    valid = np.isfinite(t) & np.isfinite(td) & np.isfinite(p) & np.isfinite(es_td)
+    tw = np.where(valid, tw, np.nan)
+
+    for _ in range(8):
+        es = _sat_vapor_pressure_water(tw)
+        d_es = es * 17.67 * 243.5 / np.maximum((tw + 243.5) ** 2, 0.01)
+        f = es - gamma * (t - tw) - es_td
+        df = d_es + gamma
+        step = np.divide(f, np.maximum(df, 1e-4), out=np.zeros_like(f), where=np.isfinite(df))
+        tw = np.clip(tw - step, td, t)
+
+    return tw.astype(np.float32)
 
 
 def _make_transformer(projection: dict) -> Transformer:
@@ -365,6 +364,70 @@ def _make_transformer(projection: dict) -> Transformer:
     return Transformer.from_crs("EPSG:4326", crs, always_xy=True)
 
 
+def load_rap_profile(path: Path) -> dict:
+    """Load RAP TMP/RH/HGT and derive DPT, wet-bulb, and RH-ice."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    data = _decode_pressure_fields(path)
+    temp_c = data["temperature_k"] - 273.15
+    rh_pct = np.clip(data["rh_pct"], 0.1, 100.0).astype(np.float32)
+
+    print(f"  RAP fields decoded: {temp_c.shape}", flush=True)
+    print("  Deriving pressure-level dew point from TMP + RH...", flush=True)
+    dpt_c = _dewpoint_from_rh(temp_c, rh_pct)
+
+    print("  Deriving pressure-level wet-bulb temperature...", flush=True)
+    wetbulb_c = _wetbulb_vectorized(temp_c, dpt_c, data["pressure_hpa"])
+
+    e_actual = _sat_vapor_pressure_water(dpt_c)
+    e_ice = 6.112 * np.exp((22.46 * temp_c) / np.maximum(temp_c + 272.62, 0.1))
+    rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
+
+    # Cache projected RAP coordinates so sample_profile_to_mrms does not
+    # transform the RAP grid again for every MRMS chunk.
+    transformer = _make_transformer(data["projection"])
+    hx, hy = transformer.transform(data["longitude"], data["latitude"])
+    x_axis = hx[0, :].astype(np.float64)
+    y_axis = hy[:, 0].astype(np.float64)
+
+    profile = {
+        "pressure_hpa": data["pressure_hpa"],
+        "wetbulb_c": wetbulb_c,
+        "temperature_c": temp_c.astype(np.float32),
+        "rh_ice_pct": rh_ice,
+        "height_m": data["height_m"].astype(np.float32),
+        "latitude": data["latitude"],
+        "longitude": data["longitude"],
+        "projection": data["projection"],
+        "valid_time_utc": data["valid_time_utc"],
+        "_projected_x": hx.astype(np.float64),
+        "_projected_y": hy.astype(np.float64),
+        "_x_axis": x_axis,
+        "_y_axis": y_axis,
+    }
+
+    print("  RAP PROFILE READY", flush=True)
+    print(f"    Valid time: {data['valid_time_utc'] or 'unknown'}", flush=True)
+    print(f"    Pressure levels: {len(data['pressure_hpa'])}", flush=True)
+    print(f"    Levels: {', '.join(f'{v:g}' for v in data['pressure_hpa'])} hPa", flush=True)
+    print(f"    TMP: OK ({temp_c.shape})", flush=True)
+    print(f"    RH: OK ({rh_pct.shape})", flush=True)
+    print(f"    DPT: DERIVED FROM TMP+RH ({dpt_c.shape})", flush=True)
+    print(f"    HGT: OK ({data['height_m'].shape})", flush=True)
+    print(f"    Wet-bulb: OK ({wetbulb_c.shape})", flush=True)
+    return profile
+
+
+def _nearest_index(sorted_values: np.ndarray, values: np.ndarray) -> np.ndarray:
+    idx = np.searchsorted(sorted_values, values)
+    idx = np.clip(idx, 1, len(sorted_values) - 1)
+    left = idx - 1
+    right = idx
+    choose_right = np.abs(values - sorted_values[right]) < np.abs(values - sorted_values[left])
+    return np.where(choose_right, right, left).astype(np.int64)
+
+
 def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) -> dict:
     """Nearest-neighbor sample RAP profile fields onto an MRMS chunk."""
     lat = np.asarray(lats, dtype=np.float64)
@@ -374,25 +437,17 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
     else:
         lat2, lon2 = lat, lon
 
+    # Reuse cached RAP projection coordinates.
     transformer = _make_transformer(profile["projection"])
-    hlat = np.asarray(profile["latitude"], dtype=np.float64)
-    hlon = np.asarray(profile["longitude"], dtype=np.float64)
-    hx, hy = transformer.transform(hlon, hlat)
+    hx = np.asarray(profile.get("_projected_x"), dtype=np.float64)
+    hy = np.asarray(profile.get("_projected_y"), dtype=np.float64)
+    x_axis = np.asarray(profile.get("_x_axis"), dtype=np.float64)
+    y_axis = np.asarray(profile.get("_y_axis"), dtype=np.float64)
 
-    # RAP is a regular Lambert grid. First row/column give the 1-D projected
-    # coordinate axes; use their actual orientation rather than assuming a sign.
-    x_axis = hx[0, :]
-    y_axis = hy[:, 0]
     x_rev = x_axis[0] > x_axis[-1]
     y_rev = y_axis[0] > y_axis[-1]
-    if x_rev:
-        x_sorted = x_axis[::-1]
-    else:
-        x_sorted = x_axis
-    if y_rev:
-        y_sorted = y_axis[::-1]
-    else:
-        y_sorted = y_axis
+    x_sorted = x_axis[::-1] if x_rev else x_axis
+    y_sorted = y_axis[::-1] if y_rev else y_axis
 
     x, y = transformer.transform(lon2, lat2)
     ix_sorted = _nearest_index(x_sorted, x)
@@ -413,13 +468,6 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
         sampled[:, ~valid] = np.nan
         out[key] = sampled
 
-    for key in ("surface_pressure_hpa", "surface_temperature_c", "surface_dewpoint_c", "surface_height_m"):
-        if key in profile:
-            src = np.asarray(profile[key])
-            sampled = src[iy, ix].astype(np.float32, copy=False)
-            sampled[~valid] = np.nan
-            out[key] = sampled
-
     out["pressure_hpa"] = np.asarray(profile["pressure_hpa"], dtype=np.float32)
     out["valid"] = valid
     return out
@@ -429,10 +477,12 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Download and validate a RAP winter-phase profile.")
-    parser.add_argument("--valid-time", required=True, help="ISO UTC valid time, e.g. 2026-09-20T00:42:00+00:00")
+    parser.add_argument("--valid-time", required=True, help="ISO UTC valid time")
     args = parser.parse_args()
     path = download_rap_profile(args.valid_time)
+    profile = load_rap_profile(path)
     print(f"RAP PROFILE READY: {path}")
+    print(f"RAP levels loaded: {len(profile['pressure_hpa'])}")
 
 
 if __name__ == "__main__":
