@@ -5,7 +5,7 @@ from __future__ import annotations
 NOAA/NCEP explicitly recommends RAP for upper-level analysis and short-range
 forecasting because the distributed HRRR product does not provide full 3-D
 upper-level fields. This module uses the NOMADS RAP GRIB filter to request only
-pressure-level TMP/RH/HGT plus 2-m surface fields over the WinterRadar domain.
+pressure-level TMP/RH/HGT over the Northeast phase-analysis domain used by WinterRadar.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -23,8 +23,8 @@ from config import DATA_DIR
 RAP_FILTER_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_rap.pl"
 RAP_PROFILE_FILE = DATA_DIR / "RAP_profile_latest.grib2"
 
-LEFT_LON, RIGHT_LON = -100.0, -65.0
-BOTTOM_LAT, TOP_LAT = 30.0, 52.0
+LEFT_LON, RIGHT_LON = -82.0, -65.0
+BOTTOM_LAT, TOP_LAT = 37.0, 50.0
 PRESSURE_LEVELS = (
     1000, 975, 950, 925, 900, 875, 850, 825, 800, 775,
     750, 725, 700, 675, 650, 625, 600, 575, 550, 525, 500,
@@ -43,13 +43,10 @@ def _url(cycle: datetime, fhr: int) -> str:
         "toplat": str(TOP_LAT),
         "bottomlat": str(BOTTOM_LAT),
         "dir": f"/rap.{date}",
-        # Surface anchors: needed later to avoid treating below-ground 1000/975-mb
-        # levels as part of the surface-based thermal layer in elevated terrain.
-        "lev_surface": "on",
-        "lev_2_m_above_ground": "on",
-        "var_PRES": "on",
+        # Only the pressure-level fields used by the phase engine are requested.
+        # Surface fields and PRES are unnecessary because the sampled pressure
+        # coordinate already comes from the GRIB isobaric levels.
         "var_TMP": "on",
-        "var_DPT": "on",  # 2-m dew point; pressure levels use RH
         "var_RH": "on",
         "var_HGT": "on",
     }
@@ -58,87 +55,88 @@ def _url(cycle: datetime, fhr: int) -> str:
     return RAP_FILTER_URL + "?" + urlencode(params)
 
 
-def _response_is_grib(response: requests.Response) -> bool:
-    first = next(response.iter_content(4096), b"")
-    return first.startswith(b"GRIB")
-
-
 def _candidate_sequence(target: datetime):
     """Yield candidate RAP cycle/fhr pairs ordered from most synchronous to older."""
     target_hour = target.replace(minute=0, second=0, microsecond=0)
-    # First try the analysis at the target hour. If not yet posted, walk back
-    # through prior hourly cycles using the forecast hour needed to hit the same
-    # valid hour. This keeps the profile close to the MRMS valid time.
     for back in range(0, 7):
         cycle = target_hour - timedelta(hours=back)
         fhr = back
         yield cycle, fhr
 
 
-def _find_available(target: datetime) -> tuple[datetime, int, str]:
-    session = requests.Session()
-    headers = {"User-Agent": "WinterRadar/phase-profile (NWS operational decision support)"}
-    for i, (cycle, fhr) in enumerate(_candidate_sequence(target)):
-        url = _url(cycle, fhr)
-        try:
-            with session.get(url, stream=True, timeout=(20, 30), headers=headers) as r:
-                if r.status_code == 200 and _response_is_grib(r):
-                    return cycle, fhr, url
-        except requests.RequestException as exc:
-            print(f"  RAP availability check failed for {cycle:%Y-%m-%d %H}Z F{fhr:02d}: {exc}")
-        if i < 6:
-            # NOMADS requests that clients pause between repeated grib-filter
-            # submissions. Keep this short enough for the five-minute workflow.
-            time.sleep(2.0)
-    raise RuntimeError("No usable RAP pressure-level subset found in the last 7 hours.")
-
-
 def download_rap_profile(valid_time_utc: str) -> Path:
+    """Download one compact RAP pressure-level subset without a duplicate probe request."""
     target = datetime.fromisoformat(valid_time_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
-    cycle, fhr, url = _find_available(target)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     part = RAP_PROFILE_FILE.with_suffix(".part")
     headers = {"User-Agent": "WinterRadar/phase-profile (NWS operational decision support)"}
 
-    print(f"  RAP profile source: {cycle:%Y-%m-%d %H}Z F{fhr:02d} (valid ~{target:%Y-%m-%d %H:%M}Z)")
-    print("  Downloading RAP pressure-level TMP/RH/HGT subset...")
-
     last_error: Exception | None = None
-    for attempt in range(1, 4):
+
+    for attempt_index, (cycle, fhr) in enumerate(_candidate_sequence(target), start=1):
+        url = _url(cycle, fhr)
+        print(
+            f"  RAP profile candidate {attempt_index}/7: "
+            f"{cycle:%Y-%m-%d %H}Z F{fhr:02d} "
+            f"({LEFT_LON:g} to {RIGHT_LON:g}, {BOTTOM_LAT:g} to {TOP_LAT:g})"
+        , flush=True)
+
         try:
             with requests.get(url, stream=True, timeout=(20, 180), headers=headers) as r:
+                if r.status_code == 404:
+                    last_error = RuntimeError(f"RAP candidate unavailable: HTTP 404 for {cycle:%Y-%m-%d %H}Z F{fhr:02d}")
+                    print("  Candidate unavailable (HTTP 404); trying the next cycle.", flush=True)
+                    continue
                 r.raise_for_status()
+
                 content_length = r.headers.get("Content-Length")
+                expected = int(content_length) if content_length else None
+                if expected:
+                    print(f"  RAP response size: {expected / 1024 / 1024:.1f} MiB", flush=True)
+                else:
+                    print("  RAP response size: unknown (chunked transfer)", flush=True)
+
                 with part.open("wb") as fh:
+                    total = 0
+                    first_chunk = True
+                    next_report = 10 * 1024 * 1024
                     for chunk in r.iter_content(1024 * 1024):
-                        if chunk:
-                            fh.write(chunk)
+                        if not chunk:
+                            continue
+                        if first_chunk:
+                            first_chunk = False
+                            if not chunk.startswith(b"GRIB"):
+                                raise RuntimeError("RAP filter response did not begin with a GRIB2 message.")
+                        fh.write(chunk)
+                        total += len(chunk)
+                        if total >= next_report:
+                            if expected:
+                                pct = 100.0 * total / expected
+                                print(f"  RAP download: {total / 1024 / 1024:.1f} MiB ({pct:.0f}%)", flush=True)
+                            else:
+                                print(f"  RAP download: {total / 1024 / 1024:.1f} MiB", flush=True)
+                            next_report += 10 * 1024 * 1024
 
-                if content_length is not None and part.stat().st_size != int(content_length):
-                    raise RuntimeError(
-                        f"RAP download size mismatch: expected {content_length}, got {part.stat().st_size}"
-                    )
+                if total < 4096:
+                    raise RuntimeError(f"RAP subset is unexpectedly small ({total} bytes).")
+                if expected is not None and total != expected:
+                    raise RuntimeError(f"RAP download size mismatch: expected {expected}, got {total}")
 
-            if part.stat().st_size < 4096:
-                raise RuntimeError("RAP subset is unexpectedly small.")
-            if part.read_bytes()[:4] != b"GRIB":
-                raise RuntimeError("Downloaded RAP subset is not a GRIB2 payload.")
-
-            # Do not call cfgrib.open_datasets() here. RAP pressure-level files
-            # contain many heterogeneous GRIB groups; merging the whole file just
-            # to validate the download is expensive and can stall the runner.
-            # The phase engine validates the actual pressure-level fields below
-            # using targeted shortName/typeOfLevel filters.
+            print(f"  RAP subset download complete: {total / 1024 / 1024:.1f} MiB", flush=True)
             part.replace(RAP_PROFILE_FILE)
             return RAP_PROFILE_FILE
+
         except Exception as exc:
             last_error = exc
             part.unlink(missing_ok=True)
-            print(f"  RAP download attempt {attempt}/3 failed: {type(exc).__name__}: {exc}")
-            if attempt < 3:
-                time.sleep(2.0)
+            print(
+                f"  RAP candidate failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            # Avoid hammering NOMADS if the server is already working on a request.
+            time.sleep(10.0)
 
-    raise RuntimeError(f"RAP profile download failed after 3 attempts: {last_error}")
+    raise RuntimeError(f"No usable RAP pressure-level subset found in the last 7 hours: {last_error}")
 
 
 def _open_datasets(path: Path) -> list[xr.Dataset]:
