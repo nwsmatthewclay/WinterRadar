@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Build compact QC products for the HRRR/Modified-Bourgouin phase engine.
+"""Build compact QC products for the RAP/Modified-Bourgouin phase engine.
 
 Inputs are written by src/main.py:
   outputs/phase_probabilities.npz
@@ -151,7 +151,9 @@ def main() -> None:
         "status": "ok",
         "engine": meta.get("phase_diagnostics", {}).get("engine", "unknown"),
         "phase_status": meta.get("phase_status", "unknown"),
-        "hrrr_profile_file": meta.get("phase_diagnostics", {}).get("hrrr_profile_file"),
+        "rap_profile_file": meta.get("phase_diagnostics", {}).get("rap_profile_file"),
+        "rap_valid_time_utc": meta.get("phase_diagnostics", {}).get("rap_valid_time_utc"),
+        "rap_mrms_time_offset_minutes": meta.get("phase_diagnostics", {}).get("rap_mrms_time_offset_minutes"),
         "pressure_levels_hpa": meta.get("phase_diagnostics", {}).get("pressure_levels_hpa", []),
         "diagnostic_grid": {"width": int(data["rain"].shape[1]), "height": int(data["rain"].shape[0])},
         "mean_probability_percent": {},
