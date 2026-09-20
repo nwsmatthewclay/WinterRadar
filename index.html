@@ -985,19 +985,19 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                 </div>
             </div>
 
-            <div class="opacity-control" title="Adjust radar and winter mask opacity">
+            <div class="opacity-control" title="0% = full-strength radar; 100% = fully transparent">
                 <label for="opacitySlider">Opacity</label>
                 <input
                     id="opacitySlider"
                     type="range"
                     min="0"
                     max="100"
-                    value="100"
+                    value="0"
                     step="1"
                     oninput="setOverlayOpacity(Number(this.value))"
-                    aria-label="Overlay opacity"
+                    aria-label="Overlay transparency: 0 percent is full strength and 100 percent is invisible"
                 >
-                <span id="opacityValue" class="opacity-value">100%</span>
+                <span id="opacityValue" class="opacity-value">0%</span>
             </div>
 
             <div class="map-history-control" aria-label="24-hour MRMS history controls">
@@ -2031,7 +2031,10 @@ function applyOverlayOpacity() {
 
 function setOverlayOpacity(percent) {
     const value = Math.max(0, Math.min(100, Number(percent) || 0));
-    overlayOpacity = value / 100;
+
+    // The UI is intentionally inverted to match the requested behavior:
+    // 0% = radar at full visual strength, 100% = completely invisible.
+    overlayOpacity = 1 - (value / 100);
 
     const slider = document.getElementById("opacitySlider");
     const label = document.getElementById("opacityValue");
@@ -2295,6 +2298,24 @@ function cancelPendingHistoryLayers() {
 }
 
 
+function historyAssetUrl(frame, kind) {
+    if (!frame) return null;
+
+    const assetName = kind === "phase"
+        ? frame.phase_asset
+        : frame.radar_asset;
+
+    // Archived frames are copied into the GitHub Pages deployment. Using a
+    // same-origin URL avoids GitHub Release's browser download/attachment
+    // behavior and lets the browser render WebP normally.
+    if (assetName) {
+        return "./history/" + encodeURIComponent(assetName);
+    }
+
+    return kind === "phase" ? frame.phase_url : frame.radar_url;
+}
+
+
 function historyImageProxyUrl(url) {
     if (!url) return url;
 
@@ -2330,11 +2351,20 @@ function loadHistoricalOverlay(options) {
 
         let attempt = 0;
         let overlay = null;
+        const isSameOriginHistoryAsset = String(nativeUrl).startsWith("./history/");
+        const urls = isSameOriginHistoryAsset
+            ? [nativeUrl]
+            : [nativeUrl, historyImageProxyUrl(nativeUrl)];
 
         function tryNextUrl() {
-            const url = attempt === 0
-                ? nativeUrl
-                : historyImageProxyUrl(nativeUrl);
+            if (attempt >= urls.length) {
+                onFailed();
+                reject(new Error("Historical image failed to load."));
+                return;
+            }
+
+            const url = urls[attempt];
+            attempt += 1;
 
             attempt += 1;
 
@@ -2366,7 +2396,7 @@ function loadHistoricalOverlay(options) {
             overlay.on("error", function() {
                 removeMapOverlay(overlay);
 
-                if (attempt < 2) {
+                if (attempt < urls.length) {
                     tryNextUrl();
                 } else {
                     onFailed();
@@ -2507,7 +2537,7 @@ function renderHistoryFrame(index, fitView) {
         setHistoryStatus("Loading history…");
 
         loadHistoricalOverlay({
-            nativeUrl: frame.radar_url,
+            nativeUrl: historyAssetUrl(frame, "radar"),
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 500,
@@ -2531,7 +2561,7 @@ function renderHistoryFrame(index, fitView) {
                 pendingHistoryRadar = null;
                 console.warn(
                     "Historical MRMS radar failed to load:",
-                    frame.radar_url
+                    historyAssetUrl(frame, "radar")
                 );
                 setHistoryStatus("Radar frame unavailable");
             }
@@ -2543,7 +2573,7 @@ function renderHistoryFrame(index, fitView) {
 
     if (document.getElementById("phaseToggle").checked && frame.phase_url) {
         loadHistoricalOverlay({
-            nativeUrl: frame.phase_url,
+            nativeUrl: historyAssetUrl(frame, "phase"),
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 550,
@@ -2567,7 +2597,7 @@ function renderHistoryFrame(index, fitView) {
                 pendingHistoryPhase = null;
                 console.warn(
                     "Historical winter phase mask failed to load:",
-                    frame.phase_url
+                    historyAssetUrl(frame, "phase")
                 );
             }
         }).catch(function() {});
@@ -2944,7 +2974,7 @@ document.addEventListener("keydown", function(event) {
 
 
 // Explicit startup state requested for the overlay opacity control.
-setOverlayOpacity(100);
+setOverlayOpacity(0);
 </script>
 
 </body>
