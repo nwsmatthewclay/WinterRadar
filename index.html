@@ -287,7 +287,7 @@ html, body {
     box-shadow: 0 3px 12px rgba(25,35,45,.17);
 }
 
-/* History controls positioned directly over the map */
+/* History and opacity controls over the map */
 .map-history-control {
     position: absolute;
     left: 12px;
@@ -300,7 +300,7 @@ html, body {
     padding: 8px 9px;
     border: 1px solid rgba(155, 167, 176, .95);
     border-radius: 8px;
-    background: rgba(255,255,255,.94);
+    background: rgba(255,255,255,.95);
     box-shadow: 0 3px 12px rgba(25,35,45,.18);
     backdrop-filter: blur(3px);
 }
@@ -341,12 +341,16 @@ html, body {
 }
 
 .map-history-readout {
-    min-width: 155px;
+    min-width: 175px;
     color: #334650;
     font-size: 9px;
     font-weight: 800;
     white-space: nowrap;
     text-align: center;
+}
+
+.map-history-live {
+    min-width: 42px;
 }
 
 .opacity-control {
@@ -362,6 +366,7 @@ html, body {
     border-radius: 7px;
     background: rgba(255,255,255,.95);
     box-shadow: 0 2px 8px rgba(25,35,45,.15);
+    backdrop-filter: blur(2px);
 }
 
 .opacity-control label {
@@ -1000,6 +1005,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     onclick="historyStep(-1)" title="Previous frame">◀</button>
                 <button id="mapHistoryPlay" class="map-history-btn" type="button"
                     onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
+
                 <div class="map-history-slider-wrap">
                     <input
                         id="mapHistorySlider"
@@ -1013,8 +1019,13 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                         aria-label="MRMS history time"
                     >
                 </div>
+
                 <button id="mapHistoryNext" class="map-history-btn" type="button"
                     onclick="historyStep(1)" title="Next frame">▶</button>
+
+                <button class="map-history-btn map-history-live" type="button"
+                    onclick="showLiveMap()" title="Return to latest MRMS scan">LIVE</button>
+
                 <div id="mapHistoryReadout" class="map-history-readout">LIVE</div>
             </div>
 
@@ -1415,7 +1426,6 @@ function loadRadarLayers(metadata) {
         );
 
         radarOverlay.addTo(map);
-        radarOverlay.setOpacity(overlayOpacity);
     }
 
     if (
@@ -1513,7 +1523,6 @@ function togglePhase(enabled) {
         );
 
         phaseOverlay.addTo(map);
-        phaseOverlay.setOpacity(overlayOpacity);
 
         phaseOverlay.on("error", function() {
             console.warn("Winter phase mask is not available.");
@@ -1997,6 +2006,13 @@ let historyBounds = null;
 let historyRefreshBusy = false;
 let overlayOpacity = 1.0;
 
+// Pending historical layers are intentionally kept separate from the
+// currently displayed layers. This prevents the map from going blank while
+// a new GitHub Release image is still loading.
+let pendingHistoryRadar = null;
+let pendingHistoryPhase = null;
+let historyRenderRequest = 0;
+
 
 function applyOverlayOpacity() {
     if (radarOverlay) {
@@ -2096,8 +2112,14 @@ function updateHistoryControls() {
         mapSlider.value = validIndex ? String(historyIndex) : "0";
     }
 
-    if (mapPrev) mapPrev.disabled = !hasFrames || historyIndex <= 0;
-    if (mapNext) mapNext.disabled = !hasFrames || historyIndex >= historyFrames.length - 1;
+    if (mapPrev) {
+        mapPrev.disabled = !hasFrames || historyIndex <= 0;
+    }
+
+    if (mapNext) {
+        mapNext.disabled =
+            !hasFrames || historyIndex >= historyFrames.length - 1;
+    }
 
     if (mapPlay) {
         mapPlay.disabled = historyFrames.length < 2;
@@ -2137,10 +2159,17 @@ function updateHistoryReadout() {
         "Local: " + formatLocalTime(frame.timestamp_utc) +
         "  •  Phase: " + phaseTime;
 
+    // Keep the main map time badge synchronized with history selection.
+    const historyDisplay = formatLocalTime(frame.timestamp_utc);
+    document.getElementById("radarTime").textContent = historyDisplay;
+    document.getElementById("dataTime").textContent = historyDisplay;
+    document.getElementById("lastUpdate").textContent = historyDisplay;
+
     if (mapReadout) {
         mapReadout.textContent =
-            (historyMode ? formatLocalTime(frame.timestamp_utc) : "LIVE") +
-            "  •  " + (historyIndex + 1) + "/" + historyFrames.length;
+            historyMode
+                ? historyDisplay + "  •  " + (historyIndex + 1) + "/" + historyFrames.length
+                : "LIVE";
     }
 
     if (historyMode && historyPlaying) {
@@ -2258,126 +2287,203 @@ function removeMapOverlay(layerRef) {
 }
 
 
-// Historical frames are stored as GitHub Release assets. Some browsers /
-// hosting combinations will reject a Release download as an embeddable image.
-// Try the native URL first, then fall back to an image proxy only after the
-// browser reports an image-load failure. The archive itself is unchanged.
+function cancelPendingHistoryLayers() {
+    removeMapOverlay(pendingHistoryRadar);
+    removeMapOverlay(pendingHistoryPhase);
+    pendingHistoryRadar = null;
+    pendingHistoryPhase = null;
+}
+
+
 function historyImageProxyUrl(url) {
     if (!url) return url;
-    return 'https://wsrv.nl/?url=' + encodeURIComponent(url) + '&output=webp';
+
+    return "https://wsrv.nl/?url=" +
+        encodeURIComponent(url) +
+        "&output=webp";
 }
 
 
-function addHistoricalRadarOverlay(frame, bounds) {
-    const nativeUrl = frame.radar_url;
+/*
+ * Load a historical image without replacing the currently visible layer
+ * until the new image has actually loaded. Direct GitHub Release delivery
+ * is attempted first; wsrv.nl is used only as a browser-display fallback.
+ */
+function loadHistoricalOverlay(options) {
+    return new Promise(function(resolve, reject) {
+        const {
+            nativeUrl,
+            bounds,
+            opacity,
+            zIndex,
+            requestId,
+            assignPending,
+            removeActive,
+            onLoaded,
+            onFailed
+        } = options;
 
-    const overlay = createImageOverlay(
-        nativeUrl,
-        bounds,
-        overlayOpacity,
-        500,
-        false
-    );
-
-    overlay.on('error', function() {
-        // Prevent repeated fallback loops for the same frame.
-        if (frame.__historyProxyTried) {
-            console.warn('Historical MRMS radar failed to load:', nativeUrl);
-            setHistoryStatus('Frame image unavailable');
+        if (!nativeUrl) {
+            reject(new Error("Historical image URL is missing."));
             return;
         }
 
-        frame.__historyProxyTried = true;
-        const proxyUrl = historyImageProxyUrl(nativeUrl);
+        let attempt = 0;
+        let overlay = null;
 
-        if (radarOverlay === overlay) {
-            removeMapOverlay(overlay);
-            radarOverlay = null;
+        function tryNextUrl() {
+            const url = attempt === 0
+                ? nativeUrl
+                : historyImageProxyUrl(nativeUrl);
+
+            attempt += 1;
+
+            overlay = createImageOverlay(
+                url,
+                bounds,
+                0,
+                zIndex,
+                false
+            );
+
+            assignPending(overlay);
+
+            overlay.on("load", function() {
+                // A newer slider selection superseded this load.
+                if (requestId !== historyRenderRequest || !historyMode) {
+                    removeMapOverlay(overlay);
+                    resolve(null);
+                    return;
+                }
+
+                // Remove the old active layer only after the new image loaded.
+                removeActive();
+                overlay.setOpacity(opacity);
+                onLoaded(overlay);
+                resolve(overlay);
+            });
+
+            overlay.on("error", function() {
+                removeMapOverlay(overlay);
+
+                if (attempt < 2) {
+                    tryNextUrl();
+                } else {
+                    onFailed();
+                    reject(new Error("Historical image failed to load."));
+                }
+            });
+
+            overlay.addTo(map);
+            overlay.setOpacity(0);
         }
 
-        const fallback = createImageOverlay(
-            proxyUrl,
-            bounds,
-            overlayOpacity,
-            500,
-            false
+        tryNextUrl();
+    });
+}
+
+
+function loadLiveOverlay(url, bounds, opacity, zIndex) {
+    const overlay = createImageOverlay(
+        url,
+        bounds,
+        opacity,
+        zIndex,
+        true
+    );
+
+    overlay.addTo(map);
+    overlay.setOpacity(opacity);
+    return overlay;
+}
+
+
+async function refreshHistoryManifest() {
+    if (historyRefreshBusy) return;
+    historyRefreshBusy = true;
+
+    const previouslySelected =
+        historyFrames[historyIndex]
+            ? historyFrames[historyIndex].timestamp_utc
+            : null;
+
+    try {
+        const response = await fetch(
+            "./outputs/mrms_history.json?v=" + Date.now(),
+            { cache: "no-store" }
         );
 
-        fallback.on('load', function() {
-            console.info('Historical MRMS radar loaded through image fallback.');
-            if (historyMode) {
-                setHistoryStatus('History mode');
-            }
-        });
+        if (!response.ok) {
+            throw new Error("History manifest unavailable: " + response.status);
+        }
 
-        fallback.on('error', function() {
-            console.warn('Historical MRMS radar fallback failed:', nativeUrl);
-            setHistoryStatus('Frame image unavailable');
-        });
+        const manifest = await response.json();
+        const frames = Array.isArray(manifest.frames) ? manifest.frames : [];
 
-        fallback.addTo(map);
-        fallback.setOpacity(overlayOpacity);
-        radarOverlay = fallback;
-    });
+        historyFrames = frames
+            .filter(function(frame) {
+                return frame &&
+                    frame.timestamp_utc &&
+                    frame.radar_url;
+            })
+            .sort(function(a, b) {
+                return new Date(a.timestamp_utc) - new Date(b.timestamp_utc);
+            });
 
-    overlay.on('load', function() {
+        historyBounds = Array.isArray(manifest.bounds) && manifest.bounds.length === 4
+            ? [
+                [Number(manifest.bounds[0]), Number(manifest.bounds[1])],
+                [Number(manifest.bounds[2]), Number(manifest.bounds[3])]
+            ]
+            : null;
+
+        if (previouslySelected) {
+            const found = historyFrames.findIndex(function(frame) {
+                return frame.timestamp_utc === previouslySelected;
+            });
+            historyIndex = found >= 0
+                ? found
+                : Math.max(historyFrames.length - 1, 0);
+        } else {
+            historyIndex = Math.max(historyFrames.length - 1, 0);
+        }
+
+        updateHistoryControls();
+        updateHistoryReadout();
+
+        const hours = Number(manifest.history_hours || 24);
+        const phaseCount = Number(manifest.phase_snapshot_count || 0);
+        const note = document.getElementById("historyNote");
+
+        if (note) {
+            note.textContent =
+                historyFrames.length + " archived MRMS frames covering up to " +
+                hours + " hours. " + phaseCount +
+                " phase snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
+        }
+
+        if (!historyFrames.length) {
+            setHistoryStatus("No frames yet");
+            return;
+        }
+
         if (historyMode) {
-            setHistoryStatus(historyPlaying ? 'Playing history' : 'History mode');
-        }
-    });
-
-    overlay.addTo(map);
-    overlay.setOpacity(overlayOpacity);
-    return overlay;
-}
-
-
-function addHistoricalPhaseOverlay(frame, bounds) {
-    if (!frame.phase_url) return null;
-
-    const nativeUrl = frame.phase_url;
-    const overlay = createImageOverlay(
-        nativeUrl,
-        bounds,
-        overlayOpacity,
-        550,
-        false
-    );
-
-    overlay.on('error', function() {
-        if (frame.__phaseProxyTried) {
-            console.warn('Historical winter phase mask failed to load:', nativeUrl);
-            return;
+            renderHistoryFrame(historyIndex, false);
+        } else {
+            setHistoryStatus(historyFrames.length + " frames ready");
         }
 
-        frame.__phaseProxyTried = true;
-        const proxyUrl = historyImageProxyUrl(nativeUrl);
-
-        if (phaseOverlay === overlay) {
-            removeMapOverlay(overlay);
-            phaseOverlay = null;
-        }
-
-        const fallback = createImageOverlay(
-            proxyUrl,
-            bounds,
-            overlayOpacity,
-            550,
-            false
-        );
-
-        fallback.on('error', function() {
-            console.warn('Historical winter phase mask fallback failed:', nativeUrl);
-        });
-
-        fallback.addTo(map);
-        fallback.setOpacity(overlayOpacity);
-        phaseOverlay = fallback;
-    });
-
-    overlay.addTo(map);
-    overlay.setOpacity(overlayOpacity);
-    return overlay;
+    } catch (error) {
+        console.warn("MRMS history update failed:", error);
+        historyFrames = [];
+        historyIndex = -1;
+        historyBounds = null;
+        updateHistoryControls();
+        updateHistoryReadout();
+        setHistoryStatus("Unavailable");
+    } finally {
+        historyRefreshBusy = false;
+    }
 }
 
 
@@ -2391,18 +2497,83 @@ function renderHistoryFrame(index, fitView) {
     const bounds = historyBounds || BTV_BOUNDS;
     currentBounds = bounds;
 
-    removeMapOverlay(radarOverlay);
-    removeMapOverlay(phaseOverlay);
+    const requestId = ++historyRenderRequest;
 
-    radarOverlay = null;
-    phaseOverlay = null;
+    // Stop any in-flight historical image loads, but KEEP the currently
+    // visible radar/phase layer until the replacement succeeds.
+    cancelPendingHistoryLayers();
 
     if (document.getElementById("radarToggle").checked) {
-        radarOverlay = addHistoricalRadarOverlay(frame, bounds);
+        setHistoryStatus("Loading history…");
+
+        loadHistoricalOverlay({
+            nativeUrl: frame.radar_url,
+            bounds: bounds,
+            opacity: overlayOpacity,
+            zIndex: 500,
+            requestId: requestId,
+
+            assignPending: function(layer) {
+                pendingHistoryRadar = layer;
+            },
+
+            removeActive: function() {
+                removeMapOverlay(radarOverlay);
+                radarOverlay = null;
+            },
+
+            onLoaded: function(layer) {
+                pendingHistoryRadar = null;
+                radarOverlay = layer;
+            },
+
+            onFailed: function() {
+                pendingHistoryRadar = null;
+                console.warn(
+                    "Historical MRMS radar failed to load:",
+                    frame.radar_url
+                );
+                setHistoryStatus("Radar frame unavailable");
+            }
+        }).catch(function() {});
+    } else {
+        removeMapOverlay(radarOverlay);
+        radarOverlay = null;
     }
 
     if (document.getElementById("phaseToggle").checked && frame.phase_url) {
-        phaseOverlay = addHistoricalPhaseOverlay(frame, bounds);
+        loadHistoricalOverlay({
+            nativeUrl: frame.phase_url,
+            bounds: bounds,
+            opacity: overlayOpacity,
+            zIndex: 550,
+            requestId: requestId,
+
+            assignPending: function(layer) {
+                pendingHistoryPhase = layer;
+            },
+
+            removeActive: function() {
+                removeMapOverlay(phaseOverlay);
+                phaseOverlay = null;
+            },
+
+            onLoaded: function(layer) {
+                pendingHistoryPhase = null;
+                phaseOverlay = layer;
+            },
+
+            onFailed: function() {
+                pendingHistoryPhase = null;
+                console.warn(
+                    "Historical winter phase mask failed to load:",
+                    frame.phase_url
+                );
+            }
+        }).catch(function() {});
+    } else {
+        removeMapOverlay(phaseOverlay);
+        phaseOverlay = null;
     }
 
     updateHistoryControls();
@@ -2434,8 +2605,13 @@ function showLiveMap() {
     historyMode = false;
     stopHistoryPlayback();
 
+    // Prevent an older historical load from replacing the live image.
+    ++historyRenderRequest;
+    cancelPendingHistoryLayers();
+
     updateHistoryReadout();
     setHistoryStatus("LIVE", "live");
+
     refreshData();
 }
 
@@ -2454,13 +2630,19 @@ function selectHistoryFrame(index, enterMode) {
 
 function historyStep(direction) {
     if (!historyFrames.length) return;
+
     historyMode = true;
+
+    const current =
+        historyIndex >= 0
+            ? historyIndex
+            : historyFrames.length - 1;
 
     const next = Math.max(
         0,
         Math.min(
             historyFrames.length - 1,
-            historyIndex + direction
+            current + direction
         )
     );
 
@@ -2715,8 +2897,8 @@ document.addEventListener(
 );
 
 
-// Left/Right control MRMS history instead of Leaflet map panning.
-// Ignore text-entry and other form controls so normal browser editing remains intact.
+// Left/Right = previous/next MRMS history frame when focus is not in a form field.
+// Capture phase stops Leaflet's built-in arrow-key map panning.
 document.addEventListener("keydown", function(event) {
     const tag = event.target && event.target.tagName
         ? event.target.tagName.toLowerCase()
@@ -2731,7 +2913,6 @@ document.addEventListener("keydown", function(event) {
         event.ctrlKey ||
         event.altKey
     ) {
-        // Arrow keys on a focused slider continue to control the slider normally.
         return;
     }
 
@@ -2762,7 +2943,7 @@ document.addEventListener("keydown", function(event) {
 }, true);
 
 
-// Ensure the requested startup state is exactly 100%.
+// Explicit startup state requested for the overlay opacity control.
 setOverlayOpacity(100);
 </script>
 
