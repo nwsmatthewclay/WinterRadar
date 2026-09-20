@@ -208,29 +208,63 @@ def _find_pressure_variable(path: Path, names: tuple[str, ...]) -> tuple[xr.Data
         except Exception:
             pass
 
-    # Fall back to scanning cfgrib's groups for installations where shortName
-    # is exposed differently.
+    # Fall back to scanning every cfgrib group. RAP/NOMADS files can expose
+    # dewpoint with a different shortName or only through GRIB metadata.
     groups = cfgrib.open_datasets(path, backend_kwargs={"indexpath": ""})
+    wanted = {str(x).lower() for x in names}
+
+    if wanted.intersection({"dpt", "td", "2d"}):
+        terms = ("dew point", "dewpoint", "dew-point")
+    elif wanted.intersection({"t", "tmp"}):
+        terms = ("temperature", "air temperature")
+    elif wanted.intersection({"gh", "hgt", "z"}):
+        terms = ("geopotential height", "geopotential", "height")
+    else:
+        terms = ()
+
+    scan_error = None
     try:
-        wanted = set(names)
         for ds in groups:
-            if "isobaricInhPa" not in ds.coords:
+            level_coord = None
+            for coord in ("isobaricInhPa", "isobaricInPa"):
+                if coord in ds.coords:
+                    level_coord = coord
+                    break
+            if level_coord is None:
                 continue
+
             for var in ds.data_vars:
-                short_name = str(ds[var].attrs.get("GRIB_shortName", ""))
-                if var in wanted or short_name in wanted:
+                attrs = ds[var].attrs
+                candidates = {
+                    str(var).lower(),
+                    str(attrs.get("GRIB_shortName", "")).lower(),
+                    str(attrs.get("GRIB_cfVarName", "")).lower(),
+                    str(attrs.get("GRIB_name", "")).lower(),
+                    str(attrs.get("long_name", "")).lower(),
+                }
+
+                if candidates.intersection(wanted):
                     return ds, var
-    finally:
-        # Do not close the returned Dataset. Its caller owns it. Close only
-        # datasets that were not returned.
-        pass
+
+                if terms and any(
+                    term in candidate
+                    for candidate in candidates
+                    for term in terms
+                ):
+                    return ds, var
+    except Exception as exc:
+        scan_error = exc
 
     for ds in groups:
         try:
             ds.close()
         except Exception:
             pass
-    raise RuntimeError(f"RAP pressure-level variable not found: {names}")
+
+    detail = f"; scan error: {scan_error}" if scan_error else ""
+    raise RuntimeError(
+        f"RAP pressure-level variable not found: {names}{detail}"
+    )
 
 
 def _pressure_projection_from(ds: xr.Dataset) -> dict:
