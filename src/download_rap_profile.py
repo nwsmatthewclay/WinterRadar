@@ -49,7 +49,7 @@ def _url(cycle: datetime, fhr: int) -> str:
         "lev_2_m_above_ground": "on",
         "var_PRES": "on",
         "var_TMP": "on",
-        "var_DPT": "on",  # 2-m DPT; pressure levels use RH instead
+        "var_DPT": "on",  # 2-m dew point; pressure levels use RH
         "var_RH": "on",
         "var_HGT": "on",
     }
@@ -124,17 +124,11 @@ def download_rap_profile(valid_time_utc: str) -> Path:
             if part.read_bytes()[:4] != b"GRIB":
                 raise RuntimeError("Downloaded RAP subset is not a GRIB2 payload.")
 
-            # Force cfgrib/eccodes to open the file before accepting it. This also
-            # prevents a server-side HTML/error body from entering the phase engine.
-            import cfgrib
-            groups = cfgrib.open_datasets(str(part), backend_kwargs={"indexpath": ""})
-            try:
-                if not groups or not any("latitude" in ds.coords and "longitude" in ds.coords for ds in groups):
-                    raise RuntimeError("RAP subset lacks latitude/longitude coordinates.")
-            finally:
-                for ds in groups:
-                    ds.close()
-
+            # Do not call cfgrib.open_datasets() here. RAP pressure-level files
+            # contain many heterogeneous GRIB groups; merging the whole file just
+            # to validate the download is expensive and can stall the runner.
+            # The phase engine validates the actual pressure-level fields below
+            # using targeted shortName/typeOfLevel filters.
             part.replace(RAP_PROFILE_FILE)
             return RAP_PROFILE_FILE
         except Exception as exc:
@@ -185,11 +179,13 @@ def _open_pressure_variable(path: Path, short_names: tuple[str, ...]) -> xr.Data
 
 
 def _find_pressure_variable(path: Path, names: tuple[str, ...]) -> tuple[xr.Dataset, str]:
-    """Find a pressure-level variable by GRIB shortName or xarray variable name."""
-    import cfgrib
+    """Open a RAP pressure-level variable with targeted GRIB filters.
 
-    # First try exact GRIB shortName filters. This is more reliable than relying
-    # on cfgrib.open_datasets() to merge unrelated variables into one Dataset.
+    The RAP awp130 pressure-level product provides TMP, RH, and HGT on
+    isobaric levels. Pressure-level DPT is not part of this product, so callers
+    derive dew point from TMP + RH after loading.
+    """
+    errors: list[str] = []
     for name in names:
         try:
             ds = xr.open_dataset(
@@ -206,32 +202,14 @@ def _find_pressure_variable(path: Path, names: tuple[str, ...]) -> tuple[xr.Data
             if "isobaricInhPa" in ds.coords and ds.data_vars:
                 return ds, next(iter(ds.data_vars))
             ds.close()
-        except Exception:
-            pass
+            errors.append(f"{name}: no pressure-level data variables")
+        except Exception as exc:
+            errors.append(f"{name}: {type(exc).__name__}: {exc}")
 
-    # Fall back to scanning cfgrib's groups for installations where shortName
-    # is exposed differently.
-    groups = cfgrib.open_datasets(path, backend_kwargs={"indexpath": ""})
-    try:
-        wanted = set(names)
-        for ds in groups:
-            if "isobaricInhPa" not in ds.coords:
-                continue
-            for var in ds.data_vars:
-                short_name = str(ds[var].attrs.get("GRIB_shortName", ""))
-                if var in wanted or short_name in wanted:
-                    return ds, var
-    finally:
-        # Do not close the returned Dataset. Its caller owns it. Close only
-        # datasets that were not returned.
-        pass
-
-    for ds in groups:
-        try:
-            ds.close()
-        except Exception:
-            pass
-    raise RuntimeError(f"RAP pressure-level variable not found: {names}")
+    raise RuntimeError(
+        f"RAP pressure-level variable not found for {names}. "
+        f"Targeted cfgrib attempts: {' | '.join(errors)}"
+    )
 
 
 def _pressure_projection_from(ds: xr.Dataset) -> dict:
@@ -290,14 +268,13 @@ def _read_pressure_field(path: Path, names: tuple[str, ...]) -> tuple[np.ndarray
 
 
 def load_rap_profile(path: Path) -> dict:
-    """Load RAP TMP, RH and HGT pressure-level fields and derive dew point."""
+    """Load RAP TMP, RH, and HGT pressure-level fields and derive dew point."""
     if not path.exists():
         raise FileNotFoundError(path)
 
     # RAP awp130 pressure-level files provide temperature (TMP), relative
-    # humidity (RH), and geopotential height (HGT) on isobaric levels. The
-    # pressure-level file does not provide DPT; DPT is available for the 2-m
-    # field. Derive pressure-level dew point from TMP + RH.
+    # humidity (RH), and geopotential height (HGT) on isobaric levels.
+    # Pressure-level dew point is not provided, so derive DPT from TMP + RH.
     temp_k, levels_t, lat, lon, projection, valid_time = _read_pressure_field(path, ("t", "tmp"))
     rh_pct, levels_r, _, _, _, _ = _read_pressure_field(path, ("r", "rh", "relative_humidity"))
     height_m, levels_z, _, _, _, _ = _read_pressure_field(path, ("gh", "hgt", "z"))
@@ -326,6 +303,7 @@ def load_rap_profile(path: Path) -> dict:
     # Compute wet-bulb one pressure level at a time. This avoids relying on
     # MetPy broadcasting behavior across the full 3-D grid and is considerably
     # easier on GitHub Actions memory.
+
     wetbulb_c = np.empty_like(temp_c, dtype=np.float32)
     for i, pressure in enumerate(levels_t):
         wb = wet_bulb_temperature(
@@ -362,7 +340,6 @@ def load_rap_profile(path: Path) -> dict:
         "projection": projection,
         "valid_time_utc": valid_time,
     }
-
 
 def _nearest_index(sorted_values: np.ndarray, values: np.ndarray) -> np.ndarray:
     idx = np.searchsorted(sorted_values, values)
