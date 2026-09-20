@@ -13,14 +13,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from classifier import CLEAR, ClassificationResult, classify_initial, rain_intensity_dbz  # noqa: E402
 from config import DATA_DIR, OUTPUT_DIR, PRODUCTS  # noqa: E402
-from download_hrrr_profile import download_hrrr_profile, load_hrrr_profile, sample_profile_to_mrms  # noqa: E402
+from download_rap_profile import download_rap_profile, load_rap_profile, sample_profile_to_mrms  # noqa: E402
 from download_mrms import download_optional_live_products, download_required_live_products  # noqa: E402
 from phase_profile import classify_from_vertical_profile, probabilities_to_phase  # noqa: E402
 from read_mrms import get_values  # noqa: E402
 from render import reflectivity_to_rgba, result_to_phase_rgba, save_rgba_png, write_metadata  # noqa: E402
 
-MAIN_VERSION = "9.0-profile-phase"
-PROFILE_CHUNK_ROWS = 70
+MAIN_VERSION = "9.1-rap-profile-phase"
+PROFILE_CHUNK_ROWS = 32
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
 
@@ -109,8 +109,20 @@ def validate_core_inputs(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray) ->
 
 
 def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, mrms_time_utc: str) -> tuple[ClassificationResult, dict, dict[str, np.ndarray]]:
-    profile_path = download_hrrr_profile(mrms_time_utc)
-    profile = load_hrrr_profile(profile_path)
+    profile_path = download_rap_profile(mrms_time_utc)
+    profile = load_rap_profile(profile_path)
+
+    # Refuse to use a stale RAP profile. The profile must be close enough to the
+    # MRMS observation time to support a meaningful thermodynamic diagnosis.
+    rap_valid = profile.get("valid_time_utc")
+    if rap_valid:
+        mrms_dt = datetime.fromisoformat(mrms_time_utc.replace("Z", "+00:00"))
+        rap_dt = datetime.fromisoformat(rap_valid.replace("Z", "+00:00"))
+        age_minutes = abs((mrms_dt - rap_dt).total_seconds()) / 60.0
+        if age_minutes > 90.0:
+            raise RuntimeError(f"RAP profile is {age_minutes:.0f} minutes from MRMS valid time; refusing stale profile.")
+    else:
+        age_minutes = None
 
     phase = np.full(ref.shape, CLEAR, dtype=np.uint8)
     confidence = np.zeros(ref.shape, dtype=np.float32)
@@ -179,8 +191,12 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
 
     diagnostics = {
         "engine": "Modified Bourgouin (Birk et al. 2021)",
-        "hrrr_profile_file": str(profile_path.name),
+        "profile_source": "RAP 13-km pressure-level subset",
+        "rap_profile_file": str(profile_path.name),
         "pressure_levels_hpa": [float(x) for x in profile["pressure_hpa"]],
+        "profile_model": "RAP 13-km",
+        "rap_valid_time_utc": profile.get("valid_time_utc"),
+        "rap_mrms_time_offset_minutes": age_minutes,
         "phase_domain": {
             "west": -100.0, "east": -65.0, "south": 30.0, "north": 52.0,
         },
@@ -241,9 +257,9 @@ def main() -> None:
     phase_probability_data = None
     try:
         if not mrms_time_utc:
-            raise RuntimeError("MRMS valid time unavailable; cannot synchronize HRRR profile.")
+            raise RuntimeError("MRMS valid time unavailable; cannot synchronize RAP profile.")
         result, phase_diagnostics, phase_probability_data = _profile_phase_result(ref, lats, lons_norm, mrms_time_utc)
-        phase_status = "modified_bourgouin_hrrr"
+        phase_status = "modified_bourgouin_rap"
     except Exception as exc:
         phase_error = f"{type(exc).__name__}: {exc}"
         print(f"  WARNING: profile phase engine failed; retaining conservative fallback: {phase_error}")
