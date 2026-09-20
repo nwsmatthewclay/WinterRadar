@@ -6,18 +6,18 @@ on:
     - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
 concurrency:
   group: mrms-radar
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -48,24 +48,20 @@ jobs:
             xarray \
             cfgrib \
             matplotlib \
-            pygrib \
-            metpy \
-            pyproj
+            pygrib
 
       - name: Core syntax QC
         run: |
-          set -euo pipefail
           python -m py_compile \
             src/config.py \
             src/download_mrms.py \
             src/read_mrms.py \
             src/classifier.py \
             src/render.py \
-            src/download_rap_profile.py \
-            src/phase_profile.py \
             src/main.py \
             src/project_mrms_webmercator.py \
-            src/build_phase_diagnostics.py
+            src/build_phase_diagnostics.py \
+            src/archive_mrms_history.py
 
       - name: Run core MRMS processing
         working-directory: src
@@ -104,7 +100,26 @@ jobs:
           set -euo pipefail
           python -u src/project_mrms_webmercator.py
 
-      # Existing MRMS diagnostic products remain outside the critical live-radar path.
+      # Archive history after the live Web Mercator products are complete.
+      # History is deliberately non-critical so it can never take the live
+      # radar/Pages product offline. The collector discovers any timestamped
+      # MRMS frames missed while this workflow was queued or running.
+      - name: Archive 24-hour MRMS history
+        continue-on-error: true
+        working-directory: src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u archive_mrms_history.py
+
+      # Diagnostics are deliberately OUTSIDE the critical live-radar path.
+      # They can fail without taking the current MRMS radar offline.
       - name: Download optional diagnostic 2-D fields
         continue-on-error: true
         working-directory: src
@@ -126,14 +141,43 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: python -u build_mrms_diagnostics.py
 
-      # The legacy vertical dual-pol path currently expects the old 3-D directory
-      # layout and is intentionally not allowed to fail noisily while the new
-      # profile/phase pipeline is being validated.  We will build the new 3-D
-      # dual-pol downloader in a separate controlled step.
-      - name: Legacy vertical dual-pol diagnostic status
+      - name: Download vertical dual-pol data
+        continue-on-error: true
+        working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
-          echo "Vertical 3-D dual-pol diagnostic deferred while RAP phase engine is being validated."
-          echo "Current live phase engine uses RAP thermodynamic profiles; MRMS 2-D RHOHV/ZDR remain available for diagnostics."
+          if [ -f download_vertical_dualpol.py ]; then
+            python -u download_vertical_dualpol.py
+          else
+            echo "Vertical dual-pol downloader is not present; skipping."
+          fi
+
+      - name: Build vertical dual-pol diagnostic
+        continue-on-error: true
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          if [ -f build_vertical_dualpol_diagnostic.py ]; then
+            python -u build_vertical_dualpol_diagnostic.py
+          else
+            echo "Vertical dual-pol diagnostic is not present; skipping."
+          fi
+
+      - name: Normalize vertical diagnostic filename
+        continue-on-error: true
+        run: |
+          if [ -s outputs/vertical_dualpol_diagnostic.png ]; then
+            cp outputs/vertical_dualpol_diagnostic.png outputs/mrms_vertical_dualpol.png
+          fi
 
       - name: Build winter precipitation diagnostic
         continue-on-error: true
@@ -172,7 +216,7 @@ jobs:
               img.save(path, optimize=True)
 
           placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
-          placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic deferred")
+          placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
           placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
           placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
@@ -180,7 +224,10 @@ jobs:
           for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json"):
               path = out / name
               if not path.exists() or path.stat().st_size == 0:
-                  path.write_text(json.dumps({"status": "temporarily_unavailable"}, indent=2), encoding="utf-8")
+                  path.write_text(
+                      json.dumps({"status": "temporarily_unavailable"}, indent=2),
+                      encoding="utf-8",
+                  )
           PY
 
       - name: Assemble Pages site
@@ -205,6 +252,12 @@ jobs:
           cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
           cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
           cp outputs/main.log site/outputs/main.log
+
+          if [ -s outputs/mrms_history.json ]; then
+            cp outputs/mrms_history.json site/outputs/mrms_history.json
+          else
+            printf '%s\n' '{"version":"1.0-history","frame_count":0,"phase_snapshot_count":0,"frames":[]}' > site/outputs/mrms_history.json
+          fi
 
           bash ./src/verify_core_outputs.sh site/outputs
 
