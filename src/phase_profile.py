@@ -60,37 +60,59 @@ def _layer_energy(tw0: np.ndarray, tw1: np.ndarray, z0: np.ndarray, z1: np.ndarr
 
 
 def _prob_ice(temp_c: np.ndarray, rh_ice: np.ndarray, height_m: np.ndarray) -> np.ndarray:
-    """Approximate Birk et al. precipitation-generation-layer ProbIce."""
-    lev, ny, nx = temp_c.shape
+    """Compute ProbIce efficiently for contiguous saturated layers.
+
+    The previous implementation examined every possible pair of pressure
+    levels (210 windows for a 21-level profile) and performed a full 2-D
+    reduction for each window. That made the live MRMS job unnecessarily
+    expensive. A qualifying saturated run is handled in one vertical pass;
+    once a run reaches 1 km depth, its coldest temperature yields the same
+    maximum ProbIce contribution as checking every qualifying sub-window.
+    """
+    temp = np.asarray(temp_c, dtype=np.float32)
+    rh = np.asarray(rh_ice, dtype=np.float32)
+    z = np.asarray(height_m, dtype=np.float32)
+    lev, ny, nx = temp.shape
     result = np.zeros((ny, nx), dtype=np.float32)
 
-    # Search contiguous saturated layers from each level upward. A layer must
-    # be at least 1 km deep and have RH_ice >= 75%. The minimum temperature in
-    # the qualifying layer sets ProbIce.
-    for k0 in range(lev - 1):
-        z0 = height_m[k0]
-        for k1 in range(k0 + 1, lev):
-            z1 = height_m[k1]
-            depth = z1 - z0
-            if depth is None:
-                continue
-            mask = (
-                np.isfinite(depth)
-                & (depth >= 1000.0)
-                & np.all(np.isfinite(temp_c[k0:k1 + 1]), axis=0)
-                & np.all(np.isfinite(rh_ice[k0:k1 + 1]), axis=0)
-                & np.all(rh_ice[k0:k1 + 1] >= 75.0, axis=0)
-            )
-            if not np.any(mask):
-                continue
-            min_t = np.nanmin(np.where(mask[None, ...], temp_c[k0:k1 + 1], np.nan), axis=0)
-            p = np.zeros_like(result)
-            cold15 = min_t <= -15.0
-            mid = (min_t > -15.0) & (min_t < -7.0)
+    prev_good = np.zeros((ny, nx), dtype=bool)
+    run_start_z = np.full((ny, nx), np.nan, dtype=np.float32)
+    run_min_t = np.full((ny, nx), np.inf, dtype=np.float32)
+
+    for k in range(lev):
+        good = (
+            np.isfinite(temp[k])
+            & np.isfinite(rh[k])
+            & (rh[k] >= 75.0)
+        )
+        new_run = good & ~prev_good
+        continuing = good & prev_good
+
+        run_start_z = np.where(new_run, z[k], run_start_z)
+        run_min_t = np.where(new_run, temp[k], run_min_t)
+        run_min_t = np.where(continuing, np.minimum(run_min_t, temp[k]), run_min_t)
+
+        # Once the current contiguous saturated layer reaches 1 km depth,
+        # its minimum temperature provides the layer's ProbIce contribution.
+        qualifying = good & np.isfinite(run_start_z) & ((z[k] - run_start_z) >= 1000.0)
+        if np.any(qualifying):
+            cold15 = qualifying & (run_min_t <= -15.0)
+            mid = qualifying & (run_min_t > -15.0) & (run_min_t < -7.0)
+
+            p = np.zeros((ny, nx), dtype=np.float32)
             p[cold15] = 100.0
-            t = min_t[mid]
-            p[mid] = -0.065 * t**4 - 3.1544 * t**3 - 56.414 * t**2 - 449.6 * t - 1308.0
+            t = run_min_t[mid]
+            p[mid] = (
+                -0.065 * t**4
+                - 3.1544 * t**3
+                - 56.414 * t**2
+                - 449.6 * t
+                - 1308.0
+            )
             result = np.maximum(result, _clip(p))
+
+        prev_good = good
+
     return result
 
 
