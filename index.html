@@ -460,6 +460,79 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
     height: auto;
 }
 
+
+.phase-qc {
+    margin: 0 9px 9px;
+    padding: 10px;
+    border: 1px solid #dde3e7;
+    border-radius: 6px;
+    background: #f7f9fa;
+}
+
+.phase-qc-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.phase-qc-title {
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.phase-qc-status {
+    padding: 4px 7px;
+    border-radius: 999px;
+    background: #e8eef2;
+    color: #52606a;
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.phase-qc-status.good { background: #e6f3e9; color: #2f6b3a; }
+.phase-qc-status.warn { background: #fff2df; color: #8a5a16; }
+
+.phase-qc-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.phase-qc-cell {
+    padding: 7px;
+    border: 1px solid #dfe5e9;
+    border-radius: 5px;
+    background: #fff;
+}
+
+.phase-qc-label {
+    color: #6d7982;
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.phase-qc-value {
+    margin-top: 3px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.phase-qc-note {
+    margin-top: 7px;
+    color: #697781;
+    font-size: 9px;
+    line-height: 1.35;
+}
+
+@media (max-width: 900px) {
+    .phase-qc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 .footer {
     margin-top: 12px;
     color: #7a868e;
@@ -690,7 +763,43 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
     <details class="diagnostics">
         <summary>Diagnostics</summary>
 
+
+        <section class="phase-qc">
+            <div class="phase-qc-head">
+                <div>
+                    <div class="phase-qc-title">Winter Phase Engine QC</div>
+                    <div class="diag-desc">Modified Bourgouin probabilities from the synchronized HRRR vertical profile.</div>
+                </div>
+                <div id="phaseQCStatus" class="phase-qc-status">Loading…</div>
+            </div>
+            <div class="phase-qc-grid">
+                <div class="phase-qc-cell"><div class="phase-qc-label">Rain</div><div class="phase-qc-value" id="qcRain">—</div></div>
+                <div class="phase-qc-cell"><div class="phase-qc-label">Snow</div><div class="phase-qc-value" id="qcSnow">—</div></div>
+                <div class="phase-qc-cell"><div class="phase-qc-label">Sleet</div><div class="phase-qc-value" id="qcSleet">—</div></div>
+                <div class="phase-qc-cell"><div class="phase-qc-label">FZRA</div><div class="phase-qc-value" id="qcFzra">—</div></div>
+                <div class="phase-qc-cell"><div class="phase-qc-label">Mean ME</div><div class="phase-qc-value" id="qcME">—</div></div>
+                <div class="phase-qc-cell"><div class="phase-qc-label">Mean RE</div><div class="phase-qc-value" id="qcRE">—</div></div>
+            </div>
+            <div class="phase-qc-note" id="phaseQCNote">Loading phase diagnostics…</div>
+        </section>
+
         <div class="diagnostic-grid">
+
+            <section class="diag-card">
+                <div class="diag-head">
+                    <div class="diag-title">Phase Probability Layer</div>
+                    <div class="diag-desc">Dominant precipitation type shaded by the model probability. Transparency increases with probability.</div>
+                </div>
+                <img src="./outputs/phase_probability.png" alt="Phase probability layer">
+            </section>
+
+            <section class="diag-card">
+                <div class="diag-head">
+                    <div class="diag-title">Phase Probability / Energy QC</div>
+                    <div class="diag-desc">Rain, snow, sleet, freezing-rain probabilities plus melting/refreezing energy.</div>
+                </div>
+                <img src="./outputs/phase_diagnostics.png" alt="Phase probability and energy diagnostics">
+            </section>
 
             <section class="diag-card">
                 <div class="diag-head">
@@ -1544,6 +1653,7 @@ async function refreshData() {
         loadRadarLayers(metadata);
 
         refreshDiagnosticImages();
+        refreshPhaseQC();
 
         document.getElementById(
             "loading"
@@ -1568,6 +1678,40 @@ async function refreshData() {
     }
 }
 
+
+
+async function refreshPhaseQC() {
+    try {
+        const response = await fetch("./outputs/phase_qc.json?v=" + Date.now(), { cache: "no-store" });
+        if (!response.ok) throw new Error("Phase QC unavailable: " + response.status);
+        const qc = await response.json();
+
+        const status = document.getElementById("phaseQCStatus");
+        const phaseStatus = String(qc.phase_status || "unknown");
+        const good = phaseStatus === "modified_bourgouin_hrrr" && qc.status === "ok";
+        status.textContent = good ? "HRRR + Bourgouin" : phaseStatus.replaceAll("_", " ");
+        status.className = "phase-qc-status " + (good ? "good" : "warn");
+
+        const means = qc.mean_probability_percent || {};
+        document.getElementById("qcRain").textContent = means.rain == null ? "—" : Number(means.rain).toFixed(0) + "%";
+        document.getElementById("qcSnow").textContent = means.snow == null ? "—" : Number(means.snow).toFixed(0) + "%";
+        document.getElementById("qcSleet").textContent = means.sleet == null ? "—" : Number(means.sleet).toFixed(0) + "%";
+        document.getElementById("qcFzra").textContent = means.freezing_rain == null ? "—" : Number(means.freezing_rain).toFixed(0) + "%";
+        document.getElementById("qcME").textContent = qc.mean_melting_energy_jkg == null ? "—" : Number(qc.mean_melting_energy_jkg).toFixed(1) + " J/kg";
+        document.getElementById("qcRE").textContent = qc.mean_refreezing_energy_jkg == null ? "—" : Number(qc.mean_refreezing_energy_jkg).toFixed(1) + " J/kg";
+
+        const levels = Array.isArray(qc.pressure_levels_hpa) ? qc.pressure_levels_hpa.join(", ") : "not reported";
+        document.getElementById("phaseQCNote").textContent =
+            "High-confidence definition: dominant probability ≥70% and ≥15 points above the runner-up. " +
+            "Profile levels: " + levels + " hPa.";
+    } catch (error) {
+        console.warn("Phase QC update failed:", error);
+        const status = document.getElementById("phaseQCStatus");
+        status.textContent = "Unavailable";
+        status.className = "phase-qc-status warn";
+        document.getElementById("phaseQCNote").textContent = "Phase QC is temporarily unavailable; the radar and existing winter mask remain available.";
+    }
+}
 
 function refreshDiagnosticImages() {
 
