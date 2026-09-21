@@ -72,6 +72,14 @@ MRMS_FILENAME_RE = re.compile(
 
 RADAR_ASSET_RE = re.compile(r"^radar_(\d{8}-\d{6})\.webp$")
 PHASE_ASSET_RE = re.compile(r"^phase_(\d{8}-\d{4})\.webp$")
+HISTORY_RELEASE_RE = re.compile(r"^mrms-(\d{8})(?:-(\d+))?$")
+
+# GitHub enforces a hard 1,000-asset maximum per release. Keep the active
+# partition below that ceiling so a phase snapshot can never consume the
+# final slot and block radar uploads. The normal 24-hour archive fits in one
+# release, but this also recovers cleanly from older releases that already
+# reached the limit.
+MAX_ASSETS_PER_RELEASE = 950
 
 # The existing viewer's regional map area. History is intentionally stored at
 # this resolution/extent rather than carrying the full CONUS raster for every
@@ -279,21 +287,29 @@ class GitHubReleaseStore:
             )
 
     def list_history_releases(self) -> list[dict]:
-        response = self.session.get(
-            self._url("/releases"),
-            params={"per_page": 100},
-            timeout=REQUEST_TIMEOUT,
-        )
-        if not response.ok:
-            detail = response.text[:500].replace("\n", " ")
-            raise RuntimeError(
-                f"GitHub release listing failed: HTTP {response.status_code}: {detail}"
+        releases: list[dict] = []
+        page = 1
+        while True:
+            response = self.session.get(
+                self._url("/releases"),
+                params={"per_page": 100, "page": page},
+                timeout=REQUEST_TIMEOUT,
             )
-        return [
-            release
-            for release in response.json()
-            if str(release.get("tag_name", "")).startswith("mrms-")
-        ]
+            if not response.ok:
+                detail = response.text[:500].replace("\n", " ")
+                raise RuntimeError(
+                    f"GitHub release listing failed: HTTP {response.status_code}: {detail}"
+                )
+            batch = response.json()
+            releases.extend(
+                release
+                for release in batch
+                if HISTORY_RELEASE_RE.match(str(release.get("tag_name", "")))
+            )
+            if len(batch) < 100:
+                break
+            page += 1
+        return releases
 
 
 def utc_now() -> datetime:
@@ -631,21 +647,70 @@ def existing_radar_timestamps(assets: Iterable[str]) -> set[datetime]:
     return timestamps
 
 
-def gather_release_assets(
-    current: ReleaseInfo,
-    previous: ReleaseInfo | None,
+def history_release_date(tag: str) -> object | None:
+    match = HISTORY_RELEASE_RE.match(str(tag))
+    if not match:
+        return None
+    return datetime.strptime(match.group(1), "%Y%m%d").date()
+
+
+def history_release_sort_key(tag: str) -> tuple[int, int]:
+    match = HISTORY_RELEASE_RE.match(str(tag))
+    if not match:
+        return (0, 0)
+    return (int(match.group(1)), int(match.group(2) or 0))
+
+
+def gather_release_assets_many(
+    releases: Iterable[ReleaseInfo],
 ) -> tuple[dict[str, dict], dict[str, dict]]:
     radar_assets: dict[str, dict] = {}
     phase_assets: dict[str, dict] = {}
-    for release in (previous, current):
-        if release is None:
-            continue
+    for release in releases:
         for name, asset in release.assets.items():
             if RADAR_ASSET_RE.match(name):
                 radar_assets[name] = asset
             elif PHASE_ASSET_RE.match(name):
                 phase_assets[name] = asset
     return radar_assets, phase_assets
+
+
+def release_tag_for_date(date_value, part: int) -> str:
+    base = f"mrms-{date_value:%Y%m%d}"
+    return base if part == 0 else f"{base}-{part:02d}"
+
+
+def ensure_upload_release(
+    store: GitHubReleaseStore,
+    date_value,
+    release_index: dict[object, list[ReleaseInfo]],
+) -> ReleaseInfo:
+    candidates = release_index.setdefault(date_value, [])
+    candidates.sort(key=lambda rel: history_release_sort_key(rel.tag), reverse=True)
+
+    for release in candidates:
+        if len(release.assets) < MAX_ASSETS_PER_RELEASE:
+            return release
+
+    used_parts = []
+    for release in candidates:
+        match = HISTORY_RELEASE_RE.match(release.tag)
+        if match:
+            used_parts.append(int(match.group(2) or 0))
+    next_part = max(used_parts, default=-1) + 1
+
+    tag = release_tag_for_date(date_value, next_part)
+    release = store.get_release(tag)
+    if release is None:
+        release = store.create_release(tag)
+    candidates.append(release)
+    candidates.sort(key=lambda rel: history_release_sort_key(rel.tag), reverse=True)
+
+    print(
+        f"  Using history release partition {release.tag} "
+        f"({len(release.assets)} assets before upload)"
+    )
+    return release
 
 
 def cleanup_old_releases(store: GitHubReleaseStore, today: datetime) -> None:
@@ -656,11 +721,8 @@ def cleanup_old_releases(store: GitHubReleaseStore, today: datetime) -> None:
     releases = store.list_history_releases()
     for release in releases:
         tag = str(release.get("tag_name", ""))
-        try:
-            release_date = datetime.strptime(
-                tag.removeprefix("mrms-"), "%Y%m%d"
-            ).date()
-        except ValueError:
+        release_date = history_release_date(tag)
+        if release_date is None:
             continue
         if release_date in keep_dates:
             continue
@@ -779,20 +841,44 @@ def run_archive() -> None:
         f"{len(recent_observations)}"
     )
 
-    current_tag = f"mrms-{now:%Y%m%d}"
     previous_day = now - timedelta(days=1)
-    previous_tag = f"mrms-{previous_day:%Y%m%d}"
+    history_dates = {now.date(), previous_day.date()}
 
-    current_release = store.ensure_release(current_tag)
-    previous_release = store.get_release(previous_tag) if previous_tag != current_tag else None
+    # Load every MRMS history release partition covering the two dates in the
+    # rolling 24-hour window. A date may have a base release plus one or more
+    # overflow partitions once the 1,000-asset GitHub limit is reached.
+    release_index: dict[object, list[ReleaseInfo]] = {date_value: [] for date_value in history_dates}
+    for meta in store.list_history_releases():
+        tag = str(meta.get("tag_name", ""))
+        release_date = history_release_date(tag)
+        if release_date not in history_dates:
+            continue
+        release = store.get_release(tag)
+        if release is not None:
+            release_index.setdefault(release_date, []).append(release)
 
-    # Refresh current assets after release creation.
-    current_release = store.get_release(current_tag) or current_release
+    # Establish the standard daily release when it does not exist. If it is
+    # already full, ensure_upload_release will automatically create an overflow
+    # partition instead of attempting another upload into a 1,000-asset release.
+    if not release_index[now.date()]:
+        base = store.ensure_release(f"mrms-{now:%Y%m%d}")
+        release_index[now.date()].append(base)
+    if not release_index[previous_day.date()]:
+        base = store.get_release(f"mrms-{previous_day:%Y%m%d}")
+        if base is not None:
+            release_index[previous_day.date()].append(base)
 
-    radar_assets, phase_assets = gather_release_assets(
-        current_release,
-        previous_release,
-    )
+    all_history_releases: list[ReleaseInfo] = []
+    for releases_for_date in release_index.values():
+        all_history_releases.extend(releases_for_date)
+    all_history_releases.sort(key=lambda rel: history_release_sort_key(rel.tag))
+
+    radar_assets, phase_assets = gather_release_assets_many(all_history_releases)
+    print(f"  History release partitions available: {len(all_history_releases)}")
+    for date_value in sorted(release_index):
+        labels = [f"{rel.tag} ({len(rel.assets)})" for rel in sorted(release_index[date_value], key=lambda rel: history_release_sort_key(rel.tag))]
+        if labels:
+            print("  " + ", ".join(labels))
     print(f"  Archived radar assets already present: {len(radar_assets)}")
     print(f"  Archived phase snapshots already present: {len(phase_assets)}")
 
@@ -849,10 +935,16 @@ def run_archive() -> None:
                 crop_bounds,
                 row_map_cache,
             )
-            upload_release = current_release if obs.valid_time.date() == now.date() else (
-                previous_release or current_release
+            upload_release = ensure_upload_release(
+                store,
+                obs.valid_time.date(),
+                release_index,
             )
             asset = store.upload_asset(upload_release, obs.asset_name, data)
+            # Keep the in-memory partition count synchronized so the next
+            # upload in this same run can roll over before reaching GitHub's
+            # 1,000-asset hard limit.
+            upload_release.assets[asset["name"]] = asset
             target = radar_assets
             target[asset["name"]] = asset
             archived_this_run += 1
@@ -885,7 +977,13 @@ def run_archive() -> None:
                 crop_bounds,
                 row_map_cache,
             )
-            asset = store.upload_asset(current_release, phase_asset_name, data)
+            phase_release = ensure_upload_release(
+                store,
+                now.date(),
+                release_index,
+            )
+            asset = store.upload_asset(phase_release, phase_asset_name, data)
+            phase_release.assets[asset["name"]] = asset
             phase_assets[asset["name"]] = asset
             print(
                 f"  Uploaded phase snapshot {asset['name']} "
@@ -896,19 +994,21 @@ def run_archive() -> None:
     else:
         print(f"  Phase snapshot already present: {phase_asset_name}")
 
-    # Re-fetch release assets so the manifest always reflects successful uploads
-    # even when an upload returned data not represented in the local dictionaries.
-    current_release = store.get_release(current_tag) or current_release
-    previous_release = (
-        store.get_release(previous_tag)
-        if previous_tag != current_tag
-        else None
-    )
-    radar_assets, phase_assets = gather_release_assets(current_release, previous_release)
+    # Re-fetch all active release partitions so the manifest reflects every
+    # successful upload, including any overflow partition created above.
+    refreshed_releases: list[ReleaseInfo] = []
+    for date_value in history_dates:
+        refreshed_for_date: list[ReleaseInfo] = []
+        for release in release_index.get(date_value, []):
+            refreshed = store.get_release(release.tag)
+            if refreshed is not None:
+                refreshed_for_date.append(refreshed)
+        release_index[date_value] = refreshed_for_date
+        refreshed_releases.extend(refreshed_for_date)
 
-    release_list = [current_release]
-    if previous_release is not None:
-        release_list.append(previous_release)
+    refreshed_releases.sort(key=lambda rel: history_release_sort_key(rel.tag))
+    radar_assets, phase_assets = gather_release_assets_many(refreshed_releases)
+    release_list = refreshed_releases
 
     manifest = build_manifest(
         observations=observations,
