@@ -11,7 +11,7 @@ GitHub Actions workflow runs it:
 3. Looks at the two daily GitHub Releases used by WinterRadar as persistent
    storage and determines which observations are missing.
 4. Downloads and renders only those missing observations.
-5. Stores compact WebP frames in the appropriate daily release.
+5. Stores native-resolution WebP frames in the appropriate daily release.
 6. Archives one full-CONUS winter-phase mask per 10-minute bucket, keeping the
    history comfortably below GitHub's 1,000-asset-per-release limit.
 7. Builds outputs/mrms_history.json for the Pages viewer.
@@ -465,13 +465,20 @@ def subset_to_webmercator(
 
 def rgba_to_webp_bytes(
     rgba: np.ndarray,
-    quality: int = 88,
-    max_width: int | None = 3500,
+    quality: int = 90,
+    max_width: int | None = None,
 ) -> bytes:
+    """Encode a history frame without spatial downsampling.
+
+    The MRMS source grid is already the native ~1-km product. The previous
+    3500-pixel cap used LANCZOS resampling and made archived radar look soft
+    when enlarged in the browser. History now preserves the native pixel
+    grid; browser CSS handles pixel-preserving enlargement.
+    """
     image = Image.fromarray(np.asarray(rgba, dtype=np.uint8), mode="RGBA")
     if max_width and image.width > max_width:
         new_height = max(1, round(image.height * max_width / image.width))
-        image = image.resize((max_width, new_height), Image.Resampling.LANCZOS)
+        image = image.resize((max_width, new_height), Image.Resampling.NEAREST)
 
     buffer = io.BytesIO()
     image.save(
