@@ -444,6 +444,7 @@ def write_metadata(
     )
 
     metadata = {
+        "grid_shape": [int(result.phase.shape[0]), int(result.phase.shape[1])],
         "counts_by_phase": counts_by_phase,
         "counts_named": named_counts,
         "total_pixels": int(result.phase.size),
