@@ -173,6 +173,15 @@ html, body {
     background: #dce6eb;
 }
 
+/* Keep the MRMS raster visually crisp when Leaflet enlarges it.
+   This does not add information; it prevents browser interpolation from
+   softening the native radar pixels. */
+.leaflet-image-layer.winter-radar-raster {
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+}
+
 .map-legend {
     position: absolute;
     top: 48px;
@@ -1503,6 +1512,17 @@ const referenceLoaded = {
 
 let currentBounds = BTV_BOUNDS.slice();
 
+// High-zoom live radar display. The full-CONUS MRMS raster remains the
+// scientific source of record. At close zoom we use a 2x nearest-neighbor
+// regional presentation so the browser is not forced to enlarge the tiny
+// BTV portion of a 7000-pixel-wide CONUS image.
+const RADAR_CLOSE_ZOOM = 8;
+const RADAR_CLOSE_BOUNDS = [
+    [40.95, -77.50],
+    [46.15, -68.40]
+];
+let radarDisplayMode = null;
+
 const quickPlaces = [
     ["Burlington, VT", 44.4759, -73.2121],
     ["Plattsburgh, NY", 44.6995, -73.4529],
@@ -1537,9 +1557,13 @@ function initializeMap() {
         padding: [10, 10]
     });
 
-    map.on("zoomend", updateLayerScaleHints);
+    map.on("zoomend", function() {
+        updateLayerScaleHints();
+        refreshRadarResolutionOnView();
+    });
 
     map.on("moveend", function() {
+        refreshRadarResolutionOnView();
         ["county", "zone"].forEach(function(name) {
             const checkbox = document.getElementById(
                 name === "county" ? "countyToggle" : "zoneToggle"
@@ -1553,13 +1577,24 @@ function initializeMap() {
 }
 
 
-function createImageOverlay(url, bounds, opacity, zIndex, crossOrigin = true) {
+function createImageOverlay(
+    url,
+    bounds,
+    opacity,
+    zIndex,
+    crossOrigin = true,
+    className = ""
+) {
 
     const options = {
         opacity: opacity,
         interactive: false,
         zIndex: zIndex
     };
+
+    if (className) {
+        options.className = className;
+    }
 
     if (crossOrigin) {
         options.crossOrigin = true;
@@ -1570,6 +1605,99 @@ function createImageOverlay(url, bounds, opacity, zIndex, crossOrigin = true) {
         bounds,
         options
     );
+}
+
+
+function shouldUseRadarCloseup() {
+    if (!map || !currentBounds) {
+        return false;
+    }
+
+    if (Number(map.getZoom()) < RADAR_CLOSE_ZOOM) {
+        return false;
+    }
+
+    const center = map.getCenter();
+    return center.lat >= RADAR_CLOSE_BOUNDS[0][0] &&
+        center.lat <= RADAR_CLOSE_BOUNDS[1][0] &&
+        center.lng >= RADAR_CLOSE_BOUNDS[0][1] &&
+        center.lng <= RADAR_CLOSE_BOUNDS[1][1];
+}
+
+
+function radarDisplaySpec() {
+    if (shouldUseRadarCloseup()) {
+        return {
+            mode: "close",
+            url: "./outputs/mrms_current_regional_web.png?v=" + Date.now(),
+            bounds: RADAR_CLOSE_BOUNDS
+        };
+    }
+
+    return {
+        mode: "full",
+        url: "./outputs/mrms_current_web.png?v=" + Date.now(),
+        bounds: currentBounds
+    };
+}
+
+
+function loadCurrentRadarOverlay(force = false) {
+    if (historyMode || !currentBounds) {
+        return;
+    }
+
+    if (!document.getElementById("radarToggle")?.checked) {
+        removeMapOverlay(radarOverlay);
+        radarOverlay = null;
+        radarDisplayMode = null;
+        return;
+    }
+
+    const spec = radarDisplaySpec();
+
+    if (!force && radarOverlay && radarDisplayMode === spec.mode) {
+        return;
+    }
+
+    removeMapOverlay(radarOverlay);
+    radarOverlay = null;
+    radarDisplayMode = spec.mode;
+
+    radarOverlay = createImageOverlay(
+        spec.url,
+        spec.bounds,
+        overlayOpacity,
+        500,
+        true,
+        "winter-radar-raster"
+    );
+
+    radarOverlay.addTo(map);
+    radarOverlay.setOpacity(overlayOpacity);
+
+    radarOverlay.on("error", function() {
+        // The close-up is an optimization only. If that optional browser
+        // raster is unavailable, immediately fall back to the full-CONUS
+        // radar so the live product never disappears.
+        if (radarDisplayMode === "close") {
+            console.warn("Regional sharp MRMS raster unavailable; using full-CONUS raster.");
+            radarDisplayMode = null;
+            loadCurrentRadarOverlay(true);
+        }
+    });
+}
+
+
+function refreshRadarResolutionOnView() {
+    if (historyMode || !radarOverlay || !document.getElementById("radarToggle")?.checked) {
+        return;
+    }
+
+    const desiredMode = shouldUseRadarCloseup() ? "close" : "full";
+    if (desiredMode !== radarDisplayMode) {
+        loadCurrentRadarOverlay();
+    }
 }
 
 
@@ -1605,18 +1733,7 @@ function loadRadarLayers(metadata) {
         document.getElementById("radarToggle").checked &&
         currentBounds
     ) {
-        if (radarOverlay && map.hasLayer(radarOverlay)) {
-            map.removeLayer(radarOverlay);
-        }
-
-        radarOverlay = createImageOverlay(
-            "./outputs/mrms_current_web.png?v=" + Date.now(),
-            currentBounds,
-            overlayOpacity,
-            500
-        );
-
-        radarOverlay.addTo(map);
+        loadCurrentRadarOverlay();
     }
 
     if (
@@ -1760,30 +1877,11 @@ function toggleRadar(enabled) {
     }
 
     if (enabled) {
-
-        if (!currentBounds) {
-            return;
-        }
-
-        if (radarOverlay && map.hasLayer(radarOverlay)) {
-            map.removeLayer(radarOverlay);
-        }
-
-        radarOverlay = createImageOverlay(
-            "./outputs/mrms_current_web.png?v=" + Date.now(),
-            currentBounds,
-            overlayOpacity,
-            500
-        );
-
-        radarOverlay.addTo(map);
-        radarOverlay.setOpacity(overlayOpacity);
-
+        loadCurrentRadarOverlay(true);
     } else {
-
-        if (radarOverlay && map.hasLayer(radarOverlay)) {
-            map.removeLayer(radarOverlay);
-        }
+        removeMapOverlay(radarOverlay);
+        radarOverlay = null;
+        radarDisplayMode = null;
     }
 }
 
@@ -2679,6 +2777,7 @@ function loadHistoricalOverlay(options) {
             bounds,
             opacity,
             zIndex,
+            className,
             requestId,
             assignPending,
             removeActive,
@@ -2713,7 +2812,8 @@ function loadHistoricalOverlay(options) {
                 bounds,
                 0,
                 zIndex,
-                false
+                false,
+                className || ""
             );
 
             assignPending(overlay);
@@ -2866,6 +2966,7 @@ function renderHistoryFrame(index, fitView) {
     const frame = historyFrames[index];
     const bounds = historyBounds || BTV_BOUNDS;
     currentBounds = bounds;
+    radarDisplayMode = null;
 
     const requestId = ++historyRenderRequest;
 
@@ -2881,6 +2982,7 @@ function renderHistoryFrame(index, fitView) {
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 500,
+            className: "winter-radar-raster",
             requestId: requestId,
 
             assignPending: function(layer) {
