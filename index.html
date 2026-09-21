@@ -2235,7 +2235,10 @@ async function refreshHistoryManifest() {
             ]
             : null;
 
-        if (previouslySelected) {
+        // In LIVE mode the slider should track the newest archived scan as
+        // the manifest updates. Only preserve a specific timestamp when the
+        // user is actively browsing history.
+        if (historyMode && previouslySelected) {
             const found = historyFrames.findIndex(function(frame) {
                 return frame.timestamp_utc === previouslySelected;
             });
@@ -2364,8 +2367,6 @@ function loadHistoricalOverlay(options) {
             }
 
             const url = urls[attempt];
-            attempt += 1;
-
             attempt += 1;
 
             overlay = createImageOverlay(
