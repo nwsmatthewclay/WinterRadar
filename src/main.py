@@ -17,10 +17,16 @@ from download_rap_profile import download_rap_profile, load_rap_profile, sample_
 from download_mrms import download_optional_live_products, download_required_live_products  # noqa: E402
 from phase_profile import classify_from_vertical_profile, probabilities_to_phase  # noqa: E402
 from read_mrms import get_values  # noqa: E402
-from render import reflectivity_to_rgba, result_to_phase_rgba, save_rgba_png, write_metadata  # noqa: E402
+from render import (  # noqa: E402
+    reflectivity_to_rgba,
+    result_to_phase_rgba,
+    result_to_precip_type_rgba,
+    save_rgba_png,
+    write_metadata,
+)
 
 MAIN_VERSION = "9.1-rap-profile-phase"
-PROFILE_CHUNK_ROWS = 50
+PROFILE_CHUNK_ROWS = 32
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
 
@@ -124,40 +130,17 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
     else:
         age_minutes = None
 
-    # The RAP subset is intentionally small. Do not run a 21-level calculation
-    # over the entire 3500x7000 MRMS CONUS grid: outside the RAP domain every
-    # sampled profile point is invalid and all that work is discarded. Restrict
-    # the expensive profile calculation to the actual RAP phase-analysis domain.
-    if np.asarray(lats).ndim != 1 or np.asarray(lons).ndim != 1:
-        raise RuntimeError("Profile-phase optimization expects 1-D MRMS latitude/longitude coordinates.")
-
-    rap_lat = np.asarray(profile["latitude"], dtype=np.float64)
-    rap_lon = np.asarray(profile["longitude"], dtype=np.float64)
-    south = float(np.nanmin(rap_lat))
-    north = float(np.nanmax(rap_lat))
-    west = float(np.nanmin(rap_lon))
-    east = float(np.nanmax(rap_lon))
-
-    lat_mask = (lats >= south) & (lats <= north)
-    lon_mask = (lons >= west) & (lons <= east)
-    y_indices = np.flatnonzero(lat_mask)
-    x_indices = np.flatnonzero(lon_mask)
-    if y_indices.size == 0 or x_indices.size == 0:
-        raise RuntimeError("MRMS grid does not intersect the downloaded RAP phase-analysis domain.")
-
-    y0_domain, y1_domain = int(y_indices[0]), int(y_indices[-1]) + 1
-    x0_domain, x1_domain = int(x_indices[0]), int(x_indices[-1]) + 1
-    ref_domain = ref[y0_domain:y1_domain, x0_domain:x1_domain]
-    lats_domain = lats[y0_domain:y1_domain]
-    lons_domain = lons[x0_domain:x1_domain]
-
     phase = np.full(ref.shape, CLEAR, dtype=np.uint8)
     confidence = np.zeros(ref.shape, dtype=np.float32)
     intensity = np.zeros(ref.shape, dtype=np.uint8)
 
-    work_h, work_w = ref_domain.shape
-    diag_h = (work_h + DIAG_Y_FACTOR - 1) // DIAG_Y_FACTOR
-    diag_w = (work_w + DIAG_X_FACTOR - 1) // DIAG_X_FACTOR
+    max_prob = {k: 0.0 for k in ("rain", "snow", "sleet", "freezing_rain")}
+    mean_me = []
+    mean_re = []
+    mean_ice = []
+
+    diag_h = ref.shape[0] // DIAG_Y_FACTOR
+    diag_w = ref.shape[1] // DIAG_X_FACTOR
     diag = {
         "rain": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
         "snow": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
@@ -168,25 +151,11 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         "prob_ice": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
     }
 
-    max_prob = {k: 0.0 for k in ("rain", "snow", "sleet", "freezing_rain")}
-    mean_me = []
-    mean_re = []
-    mean_ice = []
-
-    print(
-        f"  RAP phase processing domain: rows {y0_domain}:{y1_domain}, "
-        f"cols {x0_domain}:{x1_domain} ({work_h}x{work_w})",
-        flush=True,
-    )
-
-    # Only the RAP-covered portion of MRMS is processed. This cuts the phase
-    # workload by more than an order of magnitude relative to the full CONUS
-    # grid while leaving the final radar/phase image at its original dimensions.
-    for y0 in range(0, work_h, PROFILE_CHUNK_ROWS):
-        y1 = min(y0 + PROFILE_CHUNK_ROWS, work_h)
-        print(f"  RAP phase chunk: {y1}/{work_h} rows", flush=True)
-        lat_chunk = lats_domain[y0:y1]
-        sampled = sample_profile_to_mrms(profile, lat_chunk, lons_domain)
+    for y0 in range(0, ref.shape[0], PROFILE_CHUNK_ROWS):
+        y1 = min(y0 + PROFILE_CHUNK_ROWS, ref.shape[0])
+        lat_chunk = lats[y0:y1] if lats.ndim == 1 else lats[y0:y1, :]
+        lon_chunk = lons if lons.ndim == 1 else lons[y0:y1, :]
+        sampled = sample_profile_to_mrms(profile, lat_chunk, lon_chunk)
 
         probs = classify_from_vertical_profile(
             pressure_hpa=sampled["pressure_hpa"],
@@ -197,36 +166,34 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         )
         ph, conf = probabilities_to_phase(probs)
 
-        precip = np.isfinite(ref_domain[y0:y1]) & (ref_domain[y0:y1] >= 10.0) & sampled["valid"]
+        # Only classify where the radar actually indicates precipitation.
+        precip = np.isfinite(ref[y0:y1]) & (ref[y0:y1] >= 10.0) & sampled["valid"]
         ph[~precip] = CLEAR
         conf[~precip] = 0.0
 
-        phase[y0_domain + y0:y0_domain + y1, x0_domain:x1_domain] = ph
-        confidence[y0_domain + y0:y0_domain + y1, x0_domain:x1_domain] = conf
-        inten = rain_intensity_dbz(ref_domain[y0:y1])
-        inten[~precip] = 0
-        intensity[y0_domain + y0:y0_domain + y1, x0_domain:x1_domain] = inten
+        phase[y0:y1] = ph
+        confidence[y0:y1] = conf
+        intensity[y0:y1] = rain_intensity_dbz(ref[y0:y1])
+        intensity[y0:y1][~precip] = 0
 
-        # Cheap representative 10x10 sampling for the QC artifact. The final
-        # map remains full-resolution; these arrays are diagnostics only.
-        for key in ("rain", "snow", "sleet", "freezing_rain", "melting_energy", "refreezing_energy", "prob_ice"):
-            arr = np.asarray(probs[key], dtype=np.float32).copy()
-            arr[~precip] = np.nan
-            sample = arr[::DIAG_Y_FACTOR, ::DIAG_X_FACTOR]
-            dy0 = (y0 // DIAG_Y_FACTOR)
-            dy1 = min(dy0 + sample.shape[0], diag_h)
-            diag[key][dy0:dy1, :sample.shape[1]] = sample[:dy1 - dy0]
+        # Build a compact 10x-downsampled diagnostic grid. We keep probabilities
+        # separate from the categorical mask so the QC panel can show ambiguity.
+        if (y1 - y0) % DIAG_Y_FACTOR == 0 and ref.shape[1] % DIAG_X_FACTOR == 0:
+            dy0 = y0 // DIAG_Y_FACTOR
+            dy1 = y1 // DIAG_Y_FACTOR
+            for key in ("rain", "snow", "sleet", "freezing_rain", "melting_energy", "refreezing_energy", "prob_ice"):
+                arr = np.asarray(probs[key], dtype=np.float32).copy()
+                arr[~precip] = np.nan
+                h2 = arr.shape[0] // DIAG_Y_FACTOR
+                w2 = arr.shape[1] // DIAG_X_FACTOR
+                block = arr.reshape(h2, DIAG_Y_FACTOR, w2, DIAG_X_FACTOR)
+                diag[key][dy0:dy1] = np.nanmean(block, axis=(1, 3))
 
         for key in max_prob:
-            finite = probs[key][np.isfinite(probs[key])]
-            if finite.size:
-                max_prob[key] = max(max_prob[key], float(np.max(finite)))
-        if np.isfinite(probs["melting_energy"]).any():
-            mean_me.append(float(np.nanmean(probs["melting_energy"])))
-        if np.isfinite(probs["refreezing_energy"]).any():
-            mean_re.append(float(np.nanmean(probs["refreezing_energy"])))
-        if np.isfinite(probs["prob_ice"]).any():
-            mean_ice.append(float(np.nanmean(probs["prob_ice"])))
+            max_prob[key] = max(max_prob[key], float(np.nanmax(probs[key])))
+        mean_me.append(float(np.nanmean(probs["melting_energy"])))
+        mean_re.append(float(np.nanmean(probs["refreezing_energy"])))
+        mean_ice.append(float(np.nanmean(probs["prob_ice"])))
 
     diagnostics = {
         "engine": "Modified Bourgouin (Birk et al. 2021)",
@@ -237,21 +204,17 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         "rap_valid_time_utc": profile.get("valid_time_utc"),
         "rap_mrms_time_offset_minutes": age_minutes,
         "phase_domain": {
-            "west": west, "east": east, "south": south, "north": north,
+            "west": -100.0, "east": -65.0, "south": 30.0, "north": 52.0,
         },
-        "phase_domain_mrms_indices": {
-            "row_start": y0_domain, "row_end": y1_domain,
-            "col_start": x0_domain, "col_end": x1_domain,
-        },
-        "phase_domain_shape": {"height": work_h, "width": work_w},
         "max_probabilities_percent": max_prob,
-        "mean_melting_energy_jkg": float(np.mean(mean_me)) if mean_me else None,
-        "mean_refreezing_energy_jkg": float(np.mean(mean_re)) if mean_re else None,
-        "mean_prob_ice_percent": float(np.mean(mean_ice)) if mean_ice else None,
+        "mean_melting_energy_jkg": float(np.mean(mean_me)),
+        "mean_refreezing_energy_jkg": float(np.mean(mean_re)),
+        "mean_prob_ice_percent": float(np.mean(mean_ice)),
     }
-    diagnostics["precip_pixels"] = int(np.count_nonzero(np.isfinite(ref_domain) & (ref_domain >= 10.0)))
+    diagnostics["precip_pixels"] = int(np.count_nonzero(np.isfinite(ref) & (ref >= 10.0)))
     diagnostics["diagnostic_grid"] = {"width": int(diag_w), "height": int(diag_h), "downsample_factor": 10}
     return ClassificationResult(phase=phase, confidence=confidence, intensity=intensity), diagnostics, diag
+
 
 def main() -> None:
     print("=" * 72)
@@ -329,7 +292,18 @@ def main() -> None:
 
     np.savez_compressed(OUTPUT_DIR / "phase_probabilities.npz", **phase_probability_data)
 
-    save_rgba_png(result_to_phase_rgba(result), OUTPUT_DIR / "winter_phase_mask.png")
+    save_rgba_png(
+        result_to_phase_rgba(result),
+        OUTPUT_DIR / "winter_phase_mask.png",
+    )
+
+    # Screenshot-style all-precipitation display.  This is a visualization
+    # of the existing phase solution, not a new classifier.
+    save_rgba_png(
+        result_to_precip_type_rgba(result, ref),
+        OUTPUT_DIR / "winter_precip_type.png",
+    )
+
     write_metadata(result, metadata_path)
     update_metadata(metadata_path, lats, lons_norm, mrms_time_utc)
 
@@ -354,6 +328,7 @@ def main() -> None:
     expected = [
         OUTPUT_DIR / "mrms_current.png",
         OUTPUT_DIR / "winter_phase_mask.png",
+        OUTPUT_DIR / "winter_precip_type.png",
         OUTPUT_DIR / "mrms_current.json",
     ]
     for path in expected:
