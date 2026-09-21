@@ -236,8 +236,10 @@ jobs:
           placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
           placeholder("phase_radar_fusion.png", "Radar phase evidence fusion temporarily unavailable")
           placeholder("phase_radar_fusion_overlay.png", "Radar phase evidence overlay temporarily unavailable")
+          placeholder("phase_radar_fusion_overlay_web.png", "Radar phase evidence Web Mercator overlay temporarily unavailable")
           placeholder("phase_agreement.png", "Phase agreement diagnostic temporarily unavailable")
           placeholder("phase_agreement_overlay.png", "Phase agreement overlay temporarily unavailable")
+          placeholder("phase_agreement_overlay_web.png", "Phase agreement Web Mercator overlay temporarily unavailable")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
           placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
           placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
@@ -379,9 +381,11 @@ jobs:
           cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
           cp outputs/phase_radar_fusion.png site/outputs/phase_radar_fusion.png
           cp outputs/phase_radar_fusion_overlay.png site/outputs/phase_radar_fusion_overlay.png
+          cp outputs/phase_radar_fusion_overlay_web.png site/outputs/phase_radar_fusion_overlay_web.png
           cp outputs/phase_radar_fusion.json site/outputs/phase_radar_fusion.json
           cp outputs/phase_agreement.png site/outputs/phase_agreement.png
           cp outputs/phase_agreement_overlay.png site/outputs/phase_agreement_overlay.png
+          cp outputs/phase_agreement_overlay_web.png site/outputs/phase_agreement_overlay_web.png
           cp outputs/phase_agreement.json site/outputs/phase_agreement.json
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
           cp outputs/phase_probability.png site/outputs/phase_probability.png
