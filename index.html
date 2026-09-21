@@ -948,6 +948,15 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
                     <label class="layer-row">
                         <input
+                            id="radarFusionToggle"
+                            type="checkbox"
+                            onchange="toggleRadarFusion(this.checked)"
+                        >
+                        <span>Radar Phase Evidence</span>
+                    </label>
+
+                    <label class="layer-row">
+                        <input
                             id="cwaToggle"
                             type="checkbox"
                             onchange="toggleReferenceLayer('cwa', this.checked)"
@@ -1191,6 +1200,14 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
             <section class="diag-card">
                 <div class="diag-head">
+                    <div class="diag-title">Radar Phase Evidence Fusion</div>
+                    <div class="diag-desc">Independent MRMS dual-pol evidence for melting-layer and dry-snow-like signatures; does not replace the RAP phase solution.</div>
+                </div>
+                <img src="./outputs/phase_radar_fusion.png" alt="Radar phase evidence fusion diagnostic">
+            </section>
+
+            <section class="diag-card">
+                <div class="diag-head">
                     <div class="diag-title">Winter Precipitation Diagnostic</div>
                     <div class="diag-desc">Fields used to develop the winter phase mask.</div>
                 </div>
@@ -1295,6 +1312,7 @@ let map = null;
 
 let radarOverlay = null;
 let phaseOverlay = null;
+let radarFusionOverlay = null;
 
 const referenceLayers = {
     cwa: null,
@@ -1454,6 +1472,57 @@ function loadRadarLayers(metadata) {
                 map.removeLayer(phaseOverlay);
             }
         });
+    }
+
+    loadRadarFusionLayer();
+}
+
+
+function loadRadarFusionLayer() {
+
+    if (historyMode) {
+        return;
+    }
+
+    if (!document.getElementById("radarFusionToggle")?.checked || !currentBounds) {
+        removeMapOverlay(radarFusionOverlay);
+        radarFusionOverlay = null;
+        return;
+    }
+
+    removeMapOverlay(radarFusionOverlay);
+
+    radarFusionOverlay = createImageOverlay(
+        "./outputs/phase_radar_fusion_overlay.png?v=" + Date.now(),
+        currentBounds,
+        overlayOpacity,
+        575
+    );
+
+    radarFusionOverlay.addTo(map);
+    radarFusionOverlay.setOpacity(overlayOpacity);
+
+    radarFusionOverlay.on("error", function() {
+        console.warn("Radar phase evidence overlay is not available yet.");
+        document.getElementById("radarFusionToggle").checked = false;
+        removeMapOverlay(radarFusionOverlay);
+        radarFusionOverlay = null;
+    });
+}
+
+
+function toggleRadarFusion(enabled) {
+
+    if (historyMode) {
+        document.getElementById("radarFusionToggle").checked = false;
+        return;
+    }
+
+    if (enabled) {
+        loadRadarFusionLayer();
+    } else {
+        removeMapOverlay(radarFusionOverlay);
+        radarFusionOverlay = null;
     }
 }
 
@@ -2029,6 +2098,12 @@ function applyOverlayOpacity() {
     if (phaseOverlay) {
         phaseOverlay.setOpacity(
             document.getElementById("phaseToggle").checked ? overlayOpacity : 0
+        );
+    }
+
+    if (radarFusionOverlay) {
+        radarFusionOverlay.setOpacity(
+            document.getElementById("radarFusionToggle")?.checked ? overlayOpacity : 0
         );
     }
 }
@@ -2661,6 +2736,10 @@ function enterHistoryMode() {
 
     historyMode = true;
     stopHistoryPlayback();
+
+    // Radar phase evidence is a live-cycle product, not an archived history layer.
+    removeMapOverlay(radarFusionOverlay);
+    radarFusionOverlay = null;
 
     historyIndex = Math.max(historyIndex, 0);
     renderHistoryFrame(historyIndex, true);
