@@ -12,8 +12,8 @@ GitHub Actions workflow runs it:
    storage and determines which observations are missing.
 4. Downloads and renders only those missing observations.
 5. Stores compact WebP frames in the appropriate daily release.
-6. Archives one winter-phase mask per 10-minute bucket, keeping the release
-   comfortably below GitHub's 1,000-asset-per-release limit.
+6. Archives one full-CONUS winter-phase mask per 10-minute bucket, keeping the
+   history comfortably below GitHub's 1,000-asset-per-release limit.
 7. Builds outputs/mrms_history.json for the Pages viewer.
 
 The live radar path is never modified by this script. The workflow should run
@@ -70,29 +70,28 @@ MRMS_FILENAME_RE = re.compile(
     r"MRMS_ReflectivityAtLowestAltitude_00\.50_(\d{8}-\d{6})\.grib2\.gz"
 )
 
-RADAR_ASSET_RE = re.compile(r"^radar_(\d{8}-\d{6})\.webp$")
-PHASE_ASSET_RE = re.compile(r"^phase_(\d{8}-\d{4})\.webp$")
+RADAR_ASSET_RE = re.compile(r"^radar_conus_(\d{8}-\d{6})\.webp$")
+PHASE_ASSET_RE = re.compile(r"^phase_conus_(\d{8}-\d{4})\.webp$")
 HISTORY_RELEASE_RE = re.compile(r"^mrms-(\d{8})(?:-(\d+))?$")
 
 # GitHub enforces a hard 1,000-asset maximum per release. Keep the active
 # partition below that ceiling so a phase snapshot can never consume the
-# final slot and block radar uploads. The normal 24-hour archive fits in one
-# release, but this also recovers cleanly from older releases that already
+# final slot and block radar uploads. The normal 8-hour CONUS archive fits comfortably within the release limit,
+# but partitioning also recovers cleanly from older releases that already
 # reached the limit.
 MAX_ASSETS_PER_RELEASE = 950
 
-# The existing viewer's regional map area. History is intentionally stored at
-# this resolution/extent rather than carrying the full CONUS raster for every
-# frame. It fully contains the existing BTV CWA bounds and the current
-# Regional view.
+# Full-CONUS history extent. Recent radar observations are retained for
+# 8 hours so the viewer has broad national context without the storage
+# cost of a 24-hour full-CONUS archive.
 HISTORY_FALLBACK_BOUNDS = [
-    [40.95, -77.50],
-    [46.15, -68.40],
+    [20.005001, -129.995],
+    [54.995, -60.005002],
 ]
 
-# Archive all observed ~2-minute MRMS frames. Phase masks are bucketed to one
-# per 10 minutes to leave room under GitHub's 1,000-assets-per-release limit.
-HISTORY_HOURS = 24
+# Archive all observed ~2-minute MRMS frames for the most recent 8 hours.
+# Phase masks are bucketed to one per 10 minutes.
+HISTORY_HOURS = 8
 PHASE_BUCKET_MINUTES = 10
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
     os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "40")
@@ -100,7 +99,7 @@ MAX_NEW_RADAR_FRAMES_PER_RUN = int(
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
-USER_AGENT = "WinterRadar/1.1 (MRMS 24-hour history collector)"
+USER_AGENT = "WinterRadar/1.2 (MRMS 8-hour full-CONUS history collector)"
 GITHUB_API_VERSION = "2026-03-10"
 HISTORY_DEBUG = os.environ.get("MRMS_HISTORY_DEBUG", "0") == "1"
 
@@ -117,7 +116,7 @@ class Observation:
 
     @property
     def asset_name(self) -> str:
-        return f"radar_{self.timestamp_key}.webp"
+        return f"radar_conus_{self.timestamp_key}.webp"
 
 
 @dataclass(frozen=True)
@@ -191,9 +190,9 @@ class GitHubReleaseStore:
     def create_release(self, tag: str) -> ReleaseInfo:
         payload = {
             "tag_name": tag,
-            "name": f"WinterRadar MRMS History — {tag.removeprefix('mrms-')}",
+            "name": f"WinterRadar MRMS 8-Hour CONUS History — {tag.removeprefix('mrms-')}",
             "body": (
-                "Automated 24-hour WinterRadar MRMS observation archive. "
+                "Automated 8-hour WinterRadar MRMS CONUS observation archive. "
                 "Radar frames are timestamped observations; phase masks are "
                 "10-minute snapshots used by the time-history viewer."
             ),
@@ -356,15 +355,15 @@ def fetch_mrms_directory(session: requests.Session) -> list[Observation]:
 
 
 def read_history_bounds(metadata_path: Path) -> tuple[float, float, float, float]:
-    """Return (south, west, north, east) for the regional archive crop."""
+    """Return (south, west, north, east) for the full-CONUS history."""
     if metadata_path.exists():
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             live_bounds = metadata.get("bounds")
             if isinstance(live_bounds, list) and len(live_bounds) == 4:
-                # The live full MRMS bounds are intentionally ignored as the
-                # archive uses a smaller regional crop.
-                pass
+                south, west, north, east = (float(value) for value in live_bounds)
+                if south < north and west < east:
+                    return south, west, north, east
         except Exception:
             pass
 
@@ -464,9 +463,18 @@ def subset_to_webmercator(
     return np.asarray(rgba[nearest_rows], dtype=np.uint8)
 
 
-def rgba_to_webp_bytes(rgba: np.ndarray, quality: int = 88) -> bytes:
+def rgba_to_webp_bytes(
+    rgba: np.ndarray,
+    quality: int = 88,
+    max_width: int | None = 3500,
+) -> bytes:
+    image = Image.fromarray(np.asarray(rgba, dtype=np.uint8), mode="RGBA")
+    if max_width and image.width > max_width:
+        new_height = max(1, round(image.height * max_width / image.width))
+        image = image.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
     buffer = io.BytesIO()
-    Image.fromarray(rgba, mode="RGBA").save(
+    image.save(
         buffer,
         format="WEBP",
         quality=quality,
@@ -806,7 +814,7 @@ def build_manifest(
         "version": "1.0-history",
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
-        "frame_interval_note": "MRMS ReflectivityAtLowestAltitude observations are timestamped upstream and may be roughly 2 minutes apart.",
+        "frame_interval_note": "MRMS ReflectivityAtLowestAltitude observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 8 hours at full-CONUS coverage.",
         "bounds": [bounds[0], bounds[1], bounds[2], bounds[3]],
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(frames),
@@ -845,7 +853,7 @@ def run_archive() -> None:
     history_dates = {now.date(), previous_day.date()}
 
     # Load every MRMS history release partition covering the two dates in the
-    # rolling 24-hour window. A date may have a base release plus one or more
+    # rolling 8-hour window. A date may have a base release plus one or more
     # overflow partitions once the 1,000-asset GitHub limit is reached.
     release_index: dict[object, list[ReleaseInfo]] = {date_value: [] for date_value in history_dates}
     for meta in store.list_history_releases():
@@ -902,7 +910,7 @@ def run_archive() -> None:
     missing.sort(key=lambda item: item.valid_time)
 
     if missing:
-        # Keep the history viewer current while also backfilling the 24-hour
+        # Keep the history viewer current while also backfilling the 8-hour
         # archive. A pure oldest-first queue can leave the viewer many hours
         # behind while the initial backlog is being filled. Split each run
         # between the oldest and newest missing observations so the right edge
@@ -968,7 +976,7 @@ def run_archive() -> None:
     # Phase snapshot: one 10-minute bucket per interval.
     # --------------------------------------------------------------
     phase_bucket = phase_bucket_for_timestamp(now)
-    phase_asset_name = f"phase_{phase_bucket:%Y%m%d-%H%M}.webp"
+    phase_asset_name = f"phase_conus_{phase_bucket:%Y%m%d-%H%M}.webp"
     if phase_asset_name not in phase_assets and (OUTPUT_DIR / "winter_phase_mask.png").exists():
         try:
             data = phase_png_to_webp(
@@ -1044,9 +1052,9 @@ def self_test() -> None:
     obs = parse_mrms_directory(html)
     assert len(obs) == 2
     assert obs[0].timestamp_key == "20260920-020241"
-    assert obs[0].asset_name == "radar_20260920-020241.webp"
+    assert obs[0].asset_name == "radar_conus_20260920-020241.webp"
 
-    bounds = (40.95, -77.50, 46.15, -68.40)
+    bounds = (20.005001, -129.995, 54.995, -60.005002)
     lats = np.linspace(54.995, 20.005, 3500)
     lons = np.linspace(-129.995, -60.005, 7000)
     crop = crop_indices(lats, lons, bounds)
