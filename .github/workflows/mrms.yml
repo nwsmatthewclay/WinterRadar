@@ -61,6 +61,7 @@ jobs:
             src/main.py \
             src/project_mrms_webmercator.py \
             src/build_phase_diagnostics.py \
+            src/build_phase_radar_fusion.py \
             src/archive_mrms_history.py
 
       - name: Run core MRMS processing
@@ -104,7 +105,7 @@ jobs:
       # History is deliberately non-critical so it can never take the live
       # radar/Pages product offline. The collector discovers any timestamped
       # MRMS frames missed while this workflow was queued or running.
-      - name: Archive 24-hour MRMS history
+      - name: Archive 8-hour full-CONUS MRMS history
         continue-on-error: true
         working-directory: src
         env:
@@ -179,6 +180,22 @@ jobs:
             cp outputs/vertical_dualpol_diagnostic.png outputs/mrms_vertical_dualpol.png
           fi
 
+      - name: Build radar phase evidence fusion
+        continue-on-error: true
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          if [ -f build_phase_radar_fusion.py ]; then
+            python -u build_phase_radar_fusion.py
+          else
+            echo "Radar phase evidence fusion is not present; skipping."
+          fi
+
       - name: Build winter precipitation diagnostic
         continue-on-error: true
         working-directory: src
@@ -217,11 +234,13 @@ jobs:
 
           placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
           placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
+          placeholder("phase_radar_fusion.png", "Radar phase evidence fusion temporarily unavailable")
+          placeholder("phase_radar_fusion_overlay.png", "Radar phase evidence overlay temporarily unavailable")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
           placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
           placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
 
-          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json"):
+          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json", "phase_radar_fusion.json"):
               path = out / name
               if not path.exists() or path.stat().st_size == 0:
                   path.write_text(
@@ -356,6 +375,9 @@ jobs:
           cp outputs/winter_phase_mask_web.png site/outputs/winter_phase_mask_web.png
           cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
           cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
+          cp outputs/phase_radar_fusion.png site/outputs/phase_radar_fusion.png
+          cp outputs/phase_radar_fusion_overlay.png site/outputs/phase_radar_fusion_overlay.png
+          cp outputs/phase_radar_fusion.json site/outputs/phase_radar_fusion.json
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
           cp outputs/phase_probability.png site/outputs/phase_probability.png
           cp outputs/phase_diagnostics.png site/outputs/phase_diagnostics.png
