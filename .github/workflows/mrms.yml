@@ -382,6 +382,11 @@ jobs:
           cp outputs/mrms_web.json site/outputs/mrms_web.json
           cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
           cp outputs/winter_phase_mask_web.png site/outputs/winter_phase_mask_web.png
+          if [ -s outputs/winter_phase_mask_regional_web.png ]; then
+            cp outputs/winter_phase_mask_regional_web.png site/outputs/winter_phase_mask_regional_web.png
+          else
+            echo "Regional sharp winter mask is unavailable; full-CONUS mask remains available."
+          fi
           cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
           cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
           cp outputs/phase_radar_fusion.png site/outputs/phase_radar_fusion.png
