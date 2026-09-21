@@ -260,6 +260,70 @@ html, body {
     font-weight: 700;
 }
 
+.phase-ramp-row {
+    display: grid;
+    grid-template-columns: 42px 1fr;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    color: #50616c;
+    font-size: 8px;
+    line-height: 1.2;
+}
+
+.phase-ramp {
+    width: 42px;
+    height: 9px;
+    border: 1px solid rgba(70,80,88,.35);
+    border-radius: 2px;
+}
+
+.phase-ramp-rain {
+    background: linear-gradient(90deg,
+        rgb(14,14,90) 0%,
+        rgb(3,79,140) 6%,
+        rgb(7,162,182) 12%,
+        rgb(17,229,31) 18%,
+        rgb(12,169,20) 24%,
+        rgb(6,104,8) 32%,
+        rgb(255,255,0) 35%,
+        rgb(255,194,0) 41%,
+        rgb(255,140,0) 47%,
+        rgb(221,0,0) 53%,
+        rgb(107,0,0) 61%,
+        rgb(255,163,255) 68%,
+        rgb(238,29,244) 74%,
+        rgb(117,0,235) 80%,
+        rgb(0,255,219) 86%,
+        rgb(0,76,74) 93%,
+        rgb(0,0,0) 100%
+    );
+}
+
+.phase-ramp-snow {
+    background: linear-gradient(90deg,
+        rgb(114,191,242),
+        rgb(55,119,222),
+        rgb(29,42,166)
+    );
+}
+
+.phase-ramp-ice {
+    background: linear-gradient(90deg,
+        rgb(238,151,203),
+        rgb(207,77,166),
+        rgb(111,31,112)
+    );
+}
+
+.phase-ramp-mixed {
+    background: linear-gradient(90deg,
+        rgb(201,163,242),
+        rgb(162,103,225),
+        rgb(89,47,160)
+    );
+}
+
 .map-legend-items {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1021,7 +1085,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
         <div class="map-header">
             <div>
-                <span class="map-title">MRMS Reflectivity + Winter Mask + Phase Evidence</span>
+                <span class="map-title">MRMS Reflectivity + Precipitation Type + Phase Evidence</span>
                 <span class="map-subtitle">Interactive map</span>
             </div>
 
@@ -1055,7 +1119,15 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                 </div>
 
                 <div class="map-legend-section">
-                    <div class="map-legend-label">Winter Phase</div>
+                    <div class="map-legend-label">Precipitation Type Composite • shade = MRMS dBZ</div>
+                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-rain"></span><span>Rain — exact BR HiRes</span></div>
+                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
+                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-ice"></span><span>Ice (sleet / FZRA)</span></div>
+                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
+                </div>
+
+                <div class="map-legend-section">
+                    <div class="map-legend-label">Winter Phase Mask</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch snow"></span>Snow</div>
                         <div class="map-legend-item"><span class="map-legend-swatch sleet"></span>Sleet</div>
@@ -1114,12 +1186,21 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
                     <label class="layer-row">
                         <input
-                            id="phaseToggle"
+                            id="precipTypeToggle"
                             type="checkbox"
                             checked
+                            onchange="togglePrecipType(this.checked)"
+                        >
+                        <span>Precipitation Type Composite</span>
+                    </label>
+
+                    <label class="layer-row">
+                        <input
+                            id="phaseToggle"
+                            type="checkbox"
                             onchange="togglePhase(this.checked)"
                         >
-                        <span>Winter Mask</span>
+                        <span>Winter Phase Mask</span>
                     </label>
 
                     <label class="layer-row">
@@ -1258,7 +1339,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
         <div class="info-card">
             <div class="info-label">Overlays at startup</div>
-            <div class="info-value">MRMS radar + winter mask</div>
+            <div class="info-value">MRMS radar + precipitation type composite</div>
         </div>
 
         <div class="info-card">
@@ -1311,7 +1392,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
         </div>
 
         <div class="history-note" id="historyNote">
-            Winter mask playback uses the most recent archived 10-minute phase snapshot at or before each radar observation.
+            Precipitation-type playback uses the most recent archived 10-minute phase/composite snapshot at or before each radar observation.
         </div>
 
     </section>
@@ -1495,6 +1576,7 @@ let map = null;
 
 let radarOverlay = null;
 let phaseOverlay = null;
+let precipTypeOverlay = null;
 let radarFusionOverlay = null;
 let phaseAgreementOverlay = null;
 
@@ -1525,6 +1607,7 @@ const RADAR_CLOSE_BOUNDS = [
 ];
 let radarDisplayMode = null;
 let phaseDisplayMode = null;
+let precipTypeDisplayMode = null;
 
 const quickPlaces = [
     ["Burlington, VT", 44.4759, -73.2121],
@@ -1564,11 +1647,13 @@ function initializeMap() {
         updateLayerScaleHints();
         refreshRadarResolutionOnView();
         refreshPhaseResolutionOnView();
+        refreshPrecipTypeResolutionOnView();
     });
 
     map.on("moveend", function() {
         refreshRadarResolutionOnView();
         refreshPhaseResolutionOnView();
+        refreshPrecipTypeResolutionOnView();
         ["county", "zone"].forEach(function(name) {
             const checkbox = document.getElementById(
                 name === "county" ? "countyToggle" : "zoneToggle"
@@ -1661,6 +1746,84 @@ function phaseDisplaySpec() {
         url: "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
         bounds: currentBounds
     };
+}
+
+
+function precipTypeDisplaySpec() {
+    if (shouldUseRadarCloseup()) {
+        return {
+            mode: "close",
+            url: "./outputs/winter_precip_type_regional_web.png?v=" + Date.now(),
+            bounds: RADAR_CLOSE_BOUNDS
+        };
+    }
+
+    return {
+        mode: "full",
+        url: "./outputs/winter_precip_type_web.png?v=" + Date.now(),
+        bounds: currentBounds
+    };
+}
+
+
+function loadCurrentPrecipTypeOverlay(force = false) {
+    if (historyMode || !currentBounds) {
+        return;
+    }
+
+    if (!document.getElementById("precipTypeToggle")?.checked) {
+        removeMapOverlay(precipTypeOverlay);
+        precipTypeOverlay = null;
+        precipTypeDisplayMode = null;
+        return;
+    }
+
+    const spec = precipTypeDisplaySpec();
+
+    if (!force && precipTypeOverlay && precipTypeDisplayMode === spec.mode) {
+        return;
+    }
+
+    removeMapOverlay(precipTypeOverlay);
+    precipTypeOverlay = null;
+    precipTypeDisplayMode = spec.mode;
+
+    precipTypeOverlay = createImageOverlay(
+        spec.url,
+        spec.bounds,
+        overlayOpacity,
+        540,
+        true,
+        "winter-raster-sharp"
+    );
+
+    precipTypeOverlay.addTo(map);
+    precipTypeOverlay.setOpacity(overlayOpacity);
+
+    precipTypeOverlay.on("error", function() {
+        if (precipTypeDisplayMode === "close") {
+            console.warn("Regional sharp precipitation-type composite unavailable; using full-CONUS composite.");
+            precipTypeDisplayMode = null;
+            loadCurrentPrecipTypeOverlay(true);
+        } else {
+            console.warn("Precipitation-type composite is not available yet.");
+            document.getElementById("precipTypeToggle").checked = false;
+            removeMapOverlay(precipTypeOverlay);
+            precipTypeOverlay = null;
+        }
+    });
+}
+
+
+function refreshPrecipTypeResolutionOnView() {
+    if (historyMode || !precipTypeOverlay || !document.getElementById("precipTypeToggle")?.checked) {
+        return;
+    }
+
+    const desiredMode = shouldUseRadarCloseup() ? "close" : "full";
+    if (desiredMode !== precipTypeDisplayMode) {
+        loadCurrentPrecipTypeOverlay();
+    }
 }
 
 
@@ -1826,6 +1989,13 @@ function loadRadarLayers(metadata) {
         loadCurrentPhaseOverlay(true);
     }
 
+    if (
+        document.getElementById("precipTypeToggle").checked &&
+        currentBounds
+    ) {
+        loadCurrentPrecipTypeOverlay(true);
+    }
+
     loadRadarFusionLayer();
     loadPhaseAgreementLayer();
 }
@@ -1948,6 +2118,25 @@ function toggleRadar(enabled) {
         removeMapOverlay(radarOverlay);
         radarOverlay = null;
         radarDisplayMode = null;
+    }
+}
+
+
+function togglePrecipType(enabled) {
+
+    if (historyMode) {
+        if (historyFrames.length) {
+            renderHistoryFrame(historyIndex, false);
+        }
+        return;
+    }
+
+    if (enabled) {
+        loadCurrentPrecipTypeOverlay(true);
+    } else {
+        removeMapOverlay(precipTypeOverlay);
+        precipTypeOverlay = null;
+        precipTypeDisplayMode = null;
     }
 }
 
@@ -2445,6 +2634,7 @@ let historySliderIsActive = false;
 // a new GitHub Release image is still loading.
 let pendingHistoryRadar = null;
 let pendingHistoryPhase = null;
+let pendingHistoryPrecipType = null;
 let historyRenderRequest = 0;
 
 
@@ -2458,6 +2648,12 @@ function applyOverlayOpacity() {
     if (phaseOverlay) {
         phaseOverlay.setOpacity(
             document.getElementById("phaseToggle").checked ? overlayOpacity : 0
+        );
+    }
+
+    if (precipTypeOverlay) {
+        precipTypeOverlay.setOpacity(
+            document.getElementById("precipTypeToggle")?.checked ? overlayOpacity : 0
         );
     }
 
@@ -2772,8 +2968,10 @@ function removeMapOverlay(layerRef) {
 function cancelPendingHistoryLayers() {
     removeMapOverlay(pendingHistoryRadar);
     removeMapOverlay(pendingHistoryPhase);
+    removeMapOverlay(pendingHistoryPrecipType);
     pendingHistoryRadar = null;
     pendingHistoryPhase = null;
+    pendingHistoryPrecipType = null;
 }
 
 
@@ -3052,6 +3250,44 @@ function renderHistoryFrame(index, fitView) {
         radarOverlay = null;
     }
 
+    if (document.getElementById("precipTypeToggle")?.checked && frame.phase_url) {
+        loadHistoricalOverlay({
+            nativeUrl: historyAssetUrl(frame, "phase"),
+            bounds: bounds,
+            opacity: overlayOpacity,
+            zIndex: 540,
+            className: "winter-radar-raster",
+            requestId: requestId,
+
+            assignPending: function(layer) {
+                pendingHistoryPrecipType = layer;
+            },
+
+            removeActive: function() {
+                removeMapOverlay(precipTypeOverlay);
+                precipTypeOverlay = null;
+            },
+
+            onLoaded: function(layer) {
+                pendingHistoryPrecipType = null;
+                precipTypeOverlay = layer;
+                precipTypeDisplayMode = "history";
+            },
+
+            onFailed: function() {
+                pendingHistoryPrecipType = null;
+                console.warn(
+                    "Historical precipitation-type composite failed to load:",
+                    historyAssetUrl(frame, "phase")
+                );
+            }
+        }).catch(function() {});
+    } else {
+        removeMapOverlay(precipTypeOverlay);
+        precipTypeOverlay = null;
+        precipTypeDisplayMode = null;
+    }
+
     if (document.getElementById("phaseToggle").checked && frame.phase_url) {
         loadHistoricalOverlay({
             nativeUrl: historyAssetUrl(frame, "phase"),
@@ -3110,6 +3346,10 @@ function enterHistoryMode() {
     stopHistoryPlayback();
 
     // Radar evidence and phase agreement are live-cycle products, not archived history layers.
+    removeMapOverlay(precipTypeOverlay);
+    precipTypeOverlay = null;
+    precipTypeDisplayMode = null;
+
     removeMapOverlay(radarFusionOverlay);
     radarFusionOverlay = null;
     removeMapOverlay(phaseAgreementOverlay);
