@@ -176,10 +176,12 @@ html, body {
 /* Keep the MRMS raster visually crisp when Leaflet enlarges it.
    This does not add information; it prevents browser interpolation from
    softening the native radar pixels. */
-.leaflet-image-layer.winter-radar-raster {
-    image-rendering: -moz-crisp-edges;
-    image-rendering: crisp-edges;
-    image-rendering: pixelated;
+.leaflet-image-layer.winter-radar-raster,
+.leaflet-image-layer.winter-raster-sharp {
+    image-rendering: -moz-crisp-edges !important;
+    image-rendering: -webkit-optimize-contrast !important;
+    image-rendering: crisp-edges !important;
+    image-rendering: pixelated !important;
 }
 
 .map-legend {
@@ -1522,6 +1524,7 @@ const RADAR_CLOSE_BOUNDS = [
     [46.15, -68.40]
 ];
 let radarDisplayMode = null;
+let phaseDisplayMode = null;
 
 const quickPlaces = [
     ["Burlington, VT", 44.4759, -73.2121],
@@ -1560,10 +1563,12 @@ function initializeMap() {
     map.on("zoomend", function() {
         updateLayerScaleHints();
         refreshRadarResolutionOnView();
+        refreshPhaseResolutionOnView();
     });
 
     map.on("moveend", function() {
         refreshRadarResolutionOnView();
+        refreshPhaseResolutionOnView();
         ["county", "zone"].forEach(function(name) {
             const checkbox = document.getElementById(
                 name === "county" ? "countyToggle" : "zoneToggle"
@@ -1639,6 +1644,84 @@ function radarDisplaySpec() {
         url: "./outputs/mrms_current_web.png?v=" + Date.now(),
         bounds: currentBounds
     };
+}
+
+
+function phaseDisplaySpec() {
+    if (shouldUseRadarCloseup()) {
+        return {
+            mode: "close",
+            url: "./outputs/winter_phase_mask_regional_web.png?v=" + Date.now(),
+            bounds: RADAR_CLOSE_BOUNDS
+        };
+    }
+
+    return {
+        mode: "full",
+        url: "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
+        bounds: currentBounds
+    };
+}
+
+
+function loadCurrentPhaseOverlay(force = false) {
+    if (historyMode || !currentBounds) {
+        return;
+    }
+
+    if (!document.getElementById("phaseToggle")?.checked) {
+        removeMapOverlay(phaseOverlay);
+        phaseOverlay = null;
+        phaseDisplayMode = null;
+        return;
+    }
+
+    const spec = phaseDisplaySpec();
+
+    if (!force && phaseOverlay && phaseDisplayMode === spec.mode) {
+        return;
+    }
+
+    removeMapOverlay(phaseOverlay);
+    phaseOverlay = null;
+    phaseDisplayMode = spec.mode;
+
+    phaseOverlay = createImageOverlay(
+        spec.url,
+        spec.bounds,
+        overlayOpacity,
+        550,
+        true,
+        "winter-raster-sharp"
+    );
+
+    phaseOverlay.addTo(map);
+    phaseOverlay.setOpacity(overlayOpacity);
+
+    phaseOverlay.on("error", function() {
+        if (phaseDisplayMode === "close") {
+            console.warn("Regional sharp winter mask unavailable; using full-CONUS mask.");
+            phaseDisplayMode = null;
+            loadCurrentPhaseOverlay(true);
+        } else {
+            console.warn("Winter phase mask is not available yet.");
+            document.getElementById("phaseToggle").checked = false;
+            removeMapOverlay(phaseOverlay);
+            phaseOverlay = null;
+        }
+    });
+}
+
+
+function refreshPhaseResolutionOnView() {
+    if (historyMode || !phaseOverlay || !document.getElementById("phaseToggle")?.checked) {
+        return;
+    }
+
+    const desiredMode = shouldUseRadarCloseup() ? "close" : "full";
+    if (desiredMode !== phaseDisplayMode) {
+        loadCurrentPhaseOverlay();
+    }
 }
 
 
@@ -1740,28 +1823,7 @@ function loadRadarLayers(metadata) {
         document.getElementById("phaseToggle").checked &&
         currentBounds
     ) {
-        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
-            map.removeLayer(phaseOverlay);
-        }
-
-        phaseOverlay = createImageOverlay(
-            "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
-            currentBounds,
-            overlayOpacity,
-            550
-        );
-
-        phaseOverlay.addTo(map);
-        phaseOverlay.setOpacity(overlayOpacity);
-
-        phaseOverlay.on("error", function() {
-            console.warn("Winter phase mask is not available yet.");
-            document.getElementById("phaseToggle").checked = false;
-
-            if (phaseOverlay && map.hasLayer(phaseOverlay)) {
-                map.removeLayer(phaseOverlay);
-            }
-        });
+        loadCurrentPhaseOverlay(true);
     }
 
     loadRadarFusionLayer();
@@ -1787,7 +1849,9 @@ function loadRadarFusionLayer() {
         "./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(),
         currentBounds,
         overlayOpacity,
-        575
+        575,
+        true,
+        "winter-raster-sharp"
     );
 
     radarFusionOverlay.addTo(map);
@@ -1820,7 +1884,9 @@ function loadPhaseAgreementLayer() {
         "./outputs/phase_agreement_overlay_web.png?v=" + Date.now(),
         currentBounds,
         overlayOpacity,
-        585
+        585,
+        true,
+        "winter-raster-sharp"
     );
 
     phaseAgreementOverlay.addTo(map);
@@ -1896,38 +1962,11 @@ function togglePhase(enabled) {
     }
 
     if (enabled) {
-
-        if (!currentBounds) {
-            return;
-        }
-
-        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
-            map.removeLayer(phaseOverlay);
-        }
-
-        phaseOverlay = createImageOverlay(
-            "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
-            currentBounds,
-            overlayOpacity,
-            550
-        );
-
-        phaseOverlay.addTo(map);
-
-        phaseOverlay.on("error", function() {
-            console.warn("Winter phase mask is not available.");
-            document.getElementById("phaseToggle").checked = false;
-
-            if (phaseOverlay && map.hasLayer(phaseOverlay)) {
-                map.removeLayer(phaseOverlay);
-            }
-        });
-
+        loadCurrentPhaseOverlay(true);
     } else {
-
-        if (phaseOverlay && map.hasLayer(phaseOverlay)) {
-            map.removeLayer(phaseOverlay);
-        }
+        removeMapOverlay(phaseOverlay);
+        phaseOverlay = null;
+        phaseDisplayMode = null;
     }
 }
 
@@ -3019,6 +3058,7 @@ function renderHistoryFrame(index, fitView) {
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 550,
+            className: "winter-raster-sharp",
             requestId: requestId,
 
             assignPending: function(layer) {
@@ -3046,6 +3086,7 @@ function renderHistoryFrame(index, fitView) {
     } else {
         removeMapOverlay(phaseOverlay);
         phaseOverlay = null;
+        phaseDisplayMode = null;
     }
 
     updateHistoryControls();
