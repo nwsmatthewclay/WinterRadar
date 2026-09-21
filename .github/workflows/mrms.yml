@@ -236,11 +236,13 @@ jobs:
           placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
           placeholder("phase_radar_fusion.png", "Radar phase evidence fusion temporarily unavailable")
           placeholder("phase_radar_fusion_overlay.png", "Radar phase evidence overlay temporarily unavailable")
+          placeholder("phase_agreement.png", "Phase agreement diagnostic temporarily unavailable")
+          placeholder("phase_agreement_overlay.png", "Phase agreement overlay temporarily unavailable")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
           placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
           placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
 
-          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json", "phase_radar_fusion.json"):
+          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json", "phase_radar_fusion.json", "phase_agreement.json"):
               path = out / name
               if not path.exists() or path.stat().st_size == 0:
                   path.write_text(
@@ -378,6 +380,9 @@ jobs:
           cp outputs/phase_radar_fusion.png site/outputs/phase_radar_fusion.png
           cp outputs/phase_radar_fusion_overlay.png site/outputs/phase_radar_fusion_overlay.png
           cp outputs/phase_radar_fusion.json site/outputs/phase_radar_fusion.json
+          cp outputs/phase_agreement.png site/outputs/phase_agreement.png
+          cp outputs/phase_agreement_overlay.png site/outputs/phase_agreement_overlay.png
+          cp outputs/phase_agreement.json site/outputs/phase_agreement.json
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
           cp outputs/phase_probability.png site/outputs/phase_probability.png
           cp outputs/phase_diagnostics.png site/outputs/phase_diagnostics.png
