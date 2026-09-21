@@ -704,11 +704,31 @@ def main() -> None:
 
     reduced_rgba = make_map_overlay(evidence)
     full_rgba = resize_nearest_rgba(reduced_rgba, (reflectivity.shape[1], reflectivity.shape[0]))
-    Image.fromarray(full_rgba, mode="RGBA").save(OUTPUT_DIR / "phase_radar_fusion_overlay.png", optimize=True)
+    native_fusion_path = OUTPUT_DIR / "phase_radar_fusion_overlay.png"
+    Image.fromarray(full_rgba, mode="RGBA").save(native_fusion_path, optimize=True)
 
     agreement_reduced = make_agreement_overlay(evaluation)
     agreement_full = resize_nearest_rgba(agreement_reduced, (reflectivity.shape[1], reflectivity.shape[0]))
-    Image.fromarray(agreement_full, mode="RGBA").save(OUTPUT_DIR / "phase_agreement_overlay.png", optimize=True)
+    native_agreement_path = OUTPUT_DIR / "phase_agreement_overlay.png"
+    Image.fromarray(agreement_full, mode="RGBA").save(native_agreement_path, optimize=True)
+
+    # The main radar and winter-phase browser layers are Web Mercator copies.
+    # Project these evidence overlays with the exact same routine so their
+    # pixel geometry matches the live radar/phase imagery instead of placing a
+    # native latitude/longitude raster over a Web Mercator raster.
+    from project_mrms_webmercator import project_image
+
+    bounds = load_lat_lon_bounds(metadata, reflectivity.shape)
+    project_image(
+        native_fusion_path,
+        OUTPUT_DIR / "phase_radar_fusion_overlay_web.png",
+        bounds,
+    )
+    project_image(
+        native_agreement_path,
+        OUTPUT_DIR / "phase_agreement_overlay_web.png",
+        bounds,
+    )
 
     agreement_payload = {
         "status": "ok",
@@ -724,13 +744,17 @@ def main() -> None:
             "4": "Radar usable, but no decisive phase signature",
         },
         "stats": agreement_stats,
-        "overlay_file": "phase_agreement_overlay.png",
+        "overlay_file": "phase_agreement_overlay_web.png",
+        "native_overlay_file": "phase_agreement_overlay.png",
+        "web_projection": "EPSG:3857",
     }
     (OUTPUT_DIR / "phase_agreement.json").write_text(json.dumps(agreement_payload, indent=2), encoding="utf-8")
 
     summary_path = OUTPUT_DIR / "phase_radar_fusion.json"
     data = json.loads(summary_path.read_text(encoding="utf-8"))
-    data["overlay_file"] = "phase_radar_fusion_overlay.png"
+    data["overlay_file"] = "phase_radar_fusion_overlay_web.png"
+    data["native_overlay_file"] = "phase_radar_fusion_overlay.png"
+    data["web_projection"] = "EPSG:3857"
     data["bounds"] = load_lat_lon_bounds(metadata, reflectivity.shape)
     summary_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -743,8 +767,10 @@ def main() -> None:
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion.png'}")
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion_overlay.png'}")
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion.json'}")
+    print(f"  {OUTPUT_DIR / 'phase_radar_fusion_overlay_web.png'}")
     print(f"  {OUTPUT_DIR / 'phase_agreement.png'}")
     print(f"  {OUTPUT_DIR / 'phase_agreement_overlay.png'}")
+    print(f"  {OUTPUT_DIR / 'phase_agreement_overlay_web.png'}")
     print(f"  {OUTPUT_DIR / 'phase_agreement.json'}")
     print("=" * 72)
 
