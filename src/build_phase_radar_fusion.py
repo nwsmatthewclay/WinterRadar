@@ -1,0 +1,553 @@
+#!/usr/bin/env python3
+"""
+WinterRadar radar/dual-pol phase evidence fusion.
+
+Purpose
+-------
+Create a conservative observational evidence layer that complements the
+existing RAP vertical-profile precipitation-phase engine. This script DOES
+NOT replace or alter the primary phase classification.
+
+Inputs
+------
+- MRMS lowest-altitude reflectivity
+- 3-D MergedRhoHV at 0.50-4.00 km
+- 3-D MergedZdr at 0.50-4.00 km
+- Existing outputs/phase_probabilities.npz produced by main.py
+- Existing outputs/mrms_current.json for the RAP-domain placement
+
+Outputs
+-------
+- outputs/phase_radar_fusion.png
+- outputs/phase_radar_fusion.json
+
+The radar evidence is intentionally conservative:
+- Melting-layer candidate: rhoHV <= 0.95 AND ZDR >= +0.5 dB
+- Dry-snow-like candidate: rhoHV >= 0.99 AND ZDR <= 0.0 dB
+
+These are observational signatures, not stand-alone precipitation-type
+classifications. The existing RAP/Bourgouin result remains the primary phase
+solution.
+"""
+
+from __future__ import annotations
+
+import gc
+import json
+import os
+import sys
+from pathlib import Path
+
+# Keep the GitHub Actions memory footprint predictable.
+for key in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(key, "1")
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+import numpy as np
+import xarray as xr
+from PIL import Image, ImageDraw, ImageFont
+
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+OUTPUT_DIR = ROOT / "outputs"
+DUALPOL_DIR = DATA_DIR / "dualpol"
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+LEVELS_KM = (0.50, 1.00, 1.50, 2.00, 2.50, 3.00, 3.50, 4.00)
+DOWNSAMPLE = 5
+TARGET_SHAPE = (700, 1400)
+PRECIP_DBZ = 10.0
+
+# Conservative evidence thresholds. These are deliberately stricter than the
+# exploratory winter-mask diagnostic that uses a broad rhoHV/ZDR window.
+ML_RHO_MAX = 0.95
+ML_ZDR_MIN = 0.5
+ML_ZDR_MAX = 5.0
+SNOW_RHO_MIN = 0.99
+SNOW_ZDR_MIN = -2.0
+SNOW_ZDR_MAX = 0.0
+
+ML_FRACTION_THRESHOLD = 0.25
+SNOW_FRACTION_THRESHOLD = 0.50
+VALID_FRACTION_THRESHOLD = 0.50
+
+
+# ---------------------------------------------------------------------------
+# File helpers
+# ---------------------------------------------------------------------------
+
+def level_text(level: float) -> str:
+    return f"{float(level):05.2f}"
+
+
+def dualpol_path(product: str, level: float) -> Path:
+    text = level_text(level)
+    return DUALPOL_DIR / f"{text}km" / f"MRMS_{product}_{text}.latest.grib2"
+
+
+def read_2d_grib(path: Path) -> np.ndarray:
+    """Read one 2-D GRIB field with cfgrib/xarray and close it promptly."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    ds = xr.open_dataset(
+        path,
+        engine="cfgrib",
+        backend_kwargs={"indexpath": ""},
+    )
+    try:
+        candidates = []
+        for name, data in ds.data_vars.items():
+            if getattr(data, "ndim", 0) >= 2:
+                candidates.append(name)
+        if not candidates:
+            raise RuntimeError(f"No 2-D variable found in {path}")
+
+        data = np.asarray(ds[candidates[0]].values, dtype=np.float32).copy()
+    finally:
+        ds.close()
+        del ds
+        gc.collect()
+
+    if data.ndim != 2:
+        raise RuntimeError(f"Expected 2-D field in {path}; got {data.shape}")
+
+    data[~np.isfinite(data)] = np.nan
+    data[data <= -90.0] = np.nan
+    return data
+
+
+def block_mean_bool(mask: np.ndarray, factor: int = DOWNSAMPLE) -> np.ndarray:
+    """Block-average a boolean field without retaining extra full-res arrays."""
+    rows, cols = mask.shape
+    h = rows // factor
+    w = cols // factor
+    trimmed = mask[: h * factor, : w * factor]
+    return trimmed.reshape(h, factor, w, factor).mean(axis=(1, 3)).astype(np.float32)
+
+
+def block_max_bool(mask: np.ndarray, factor: int = DOWNSAMPLE) -> np.ndarray:
+    rows, cols = mask.shape
+    h = rows // factor
+    w = cols // factor
+    trimmed = mask[: h * factor, : w * factor]
+    return trimmed.reshape(h, factor, w, factor).max(axis=(1, 3))
+
+
+def block_mean_float(data: np.ndarray, factor: int = DOWNSAMPLE) -> np.ndarray:
+    rows, cols = data.shape
+    h = rows // factor
+    w = cols // factor
+    trimmed = data[: h * factor, : w * factor]
+    return np.nanmean(trimmed.reshape(h, factor, w, factor), axis=(1, 3)).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Existing RAP phase solution placement
+# ---------------------------------------------------------------------------
+
+def load_phase_probabilities() -> tuple[dict[str, np.ndarray], dict]:
+    path = OUTPUT_DIR / "phase_probabilities.npz"
+    meta_path = OUTPUT_DIR / "mrms_current.json"
+
+    if not path.exists():
+        raise FileNotFoundError(path)
+    if not meta_path.exists():
+        raise FileNotFoundError(meta_path)
+
+    with np.load(path) as npz:
+        required = ("rain", "snow", "sleet", "freezing_rain")
+        data = {name: np.asarray(npz[name], dtype=np.float32).copy() for name in required}
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    return data, meta
+
+
+def place_phase_probabilities(
+    phase_data: dict[str, np.ndarray],
+    metadata: dict,
+    full_shape: tuple[int, int],
+    factor: int = DOWNSAMPLE,
+) -> dict[str, np.ndarray]:
+    """
+    Expand the reduced RAP-domain probability arrays into a full-CONUS
+    reduced grid. The arrays generated by the successful RAP engine live on
+    the domain described in phase_diagnostics.phase_domain_mrms_indices.
+    """
+    full_rows, full_cols = full_shape
+    out_rows = full_rows // factor
+    out_cols = full_cols // factor
+    placed = {
+        name: np.full((out_rows, out_cols), np.nan, dtype=np.float32)
+        for name in phase_data
+    }
+
+    diag = metadata.get("phase_diagnostics") or {}
+    idx = diag.get("phase_domain_mrms_indices") or {}
+
+    if all(k in idx for k in ("row_start", "row_end", "col_start", "col_end")):
+        y0 = max(0, int(idx["row_start"]) // factor)
+        x0 = max(0, int(idx["col_start"]) // factor)
+
+        domain_rows = max(0, int(idx["row_end"]) - int(idx["row_start"]))
+        domain_cols = max(0, int(idx["col_end"]) - int(idx["col_start"]))
+        expected_h = max(1, int(np.ceil(domain_rows / factor)))
+        expected_w = max(1, int(np.ceil(domain_cols / factor)))
+    else:
+        # Fallback run: main.py may have created a full-CONUS diagnostic grid.
+        y0 = 0
+        x0 = 0
+        expected_h = out_rows
+        expected_w = out_cols
+
+    for name, arr in phase_data.items():
+        h = min(arr.shape[0], expected_h, out_rows - y0)
+        w = min(arr.shape[1], expected_w, out_cols - x0)
+        if h > 0 and w > 0:
+            placed[name][y0:y0 + h, x0:x0 + w] = arr[:h, :w]
+
+    return placed
+
+
+def dominant_phase(prob: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    names = ("rain", "snow", "sleet", "freezing_rain")
+    stack = np.stack([prob[n] for n in names], axis=0)
+    safe = np.nan_to_num(stack, nan=-1.0)
+    order = np.argsort(safe, axis=0)
+    top_idx = order[-1]
+    second_idx = order[-2]
+    top = np.take_along_axis(safe, top_idx[None, ...], axis=0)[0]
+    second = np.take_along_axis(safe, second_idx[None, ...], axis=0)[0]
+    valid = np.isfinite(stack).any(axis=0)
+
+    # Mirror the phase engine's conservative threshold for a clearly dominant
+    # type. Unclear columns are encoded as -1.
+    dominant = np.where(
+        valid & (top >= 55.0) & ((top - second) >= 10.0),
+        top_idx,
+        -1,
+    ).astype(np.int8)
+    return dominant, top, second
+
+
+# ---------------------------------------------------------------------------
+# Radar evidence
+# ---------------------------------------------------------------------------
+
+def build_radar_evidence(reflectivity: np.ndarray) -> tuple[dict[str, np.ndarray], list[dict]]:
+    """
+    Produce reduced-resolution vertical evidence fields.
+
+    We only retain compact 700x1400 arrays, avoiding a 16-field full-CONUS
+    volume in memory.
+    """
+    precip_full = np.isfinite(reflectivity) & (reflectivity >= PRECIP_DBZ)
+    precip = block_mean_bool(precip_full) >= 0.10
+    del precip_full
+
+    out_shape = precip.shape
+    ml_sum = np.zeros(out_shape, dtype=np.float32)
+    snow_sum = np.zeros(out_shape, dtype=np.float32)
+    valid_sum = np.zeros(out_shape, dtype=np.float32)
+    level_summaries: list[dict] = []
+
+    for level in LEVELS_KM:
+        rho_path = dualpol_path("MergedRhoHV", level)
+        zdr_path = dualpol_path("MergedZdr", level)
+
+        print(f"Loading vertical dual-pol evidence @ {level:.2f} km", flush=True)
+
+        rho = read_2d_grib(rho_path)
+        zdr = read_2d_grib(zdr_path)
+
+        if rho.shape != reflectivity.shape or zdr.shape != reflectivity.shape:
+            raise RuntimeError(
+                f"Dual-pol shape mismatch at {level:.2f} km: "
+                f"rho={rho.shape}, zdr={zdr.shape}, ref={reflectivity.shape}"
+            )
+
+        valid = np.isfinite(rho) & np.isfinite(zdr)
+        ml = (
+            valid
+            & (rho <= ML_RHO_MAX)
+            & (zdr >= ML_ZDR_MIN)
+            & (zdr <= ML_ZDR_MAX)
+        )
+        dry_snow = (
+            valid
+            & (rho >= SNOW_RHO_MIN)
+            & (zdr >= SNOW_ZDR_MIN)
+            & (zdr <= SNOW_ZDR_MAX)
+        )
+
+        valid_d = block_mean_bool(valid)
+        ml_d = block_mean_bool(ml)
+        snow_d = block_mean_bool(dry_snow)
+
+        ml_sum += ml_d
+        snow_sum += snow_d
+        valid_sum += valid_d
+
+        level_summaries.append({
+            "level_km": float(level),
+            "valid_fraction_mean_percent": float(np.mean(valid_d) * 100.0),
+            "melting_layer_candidate_area_percent": float(np.mean((ml_d >= 0.10) & precip) * 100.0),
+            "dry_snow_candidate_area_percent": float(np.mean((snow_d >= 0.10) & precip) * 100.0),
+        })
+
+        del rho, zdr, valid, ml, dry_snow, valid_d, ml_d, snow_d
+        gc.collect()
+
+    ml_fraction = ml_sum / float(len(LEVELS_KM))
+    snow_fraction = snow_sum / float(len(LEVELS_KM))
+    valid_fraction = valid_sum / float(len(LEVELS_KM))
+
+    usable = precip & (valid_fraction >= VALID_FRACTION_THRESHOLD)
+    melting = usable & (ml_fraction >= ML_FRACTION_THRESHOLD)
+    dry_snow = usable & (snow_fraction >= SNOW_FRACTION_THRESHOLD)
+    both = melting & dry_snow
+
+    # Give precedence to the dual-signature category so it can be inspected as
+    # a potentially transitional/complex column instead of hiding one signal.
+    category = np.zeros(out_shape, dtype=np.uint8)
+    category[melting & ~dry_snow] = 1
+    category[dry_snow & ~melting] = 2
+    category[both] = 3
+    category[(precip) & (valid_fraction < VALID_FRACTION_THRESHOLD)] = 4
+
+    return {
+        "precip": precip,
+        "ml_fraction": ml_fraction,
+        "dry_snow_fraction": snow_fraction,
+        "valid_fraction": valid_fraction,
+        "category": category,
+    }, level_summaries
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+def load_lat_lon_bounds(metadata: dict, shape: tuple[int, int]) -> tuple[float, float, float, float]:
+    bounds = metadata.get("bounds")
+    if isinstance(bounds, list) and len(bounds) == 4:
+        south, west, north, east = map(float, bounds)
+        return south, west, north, east
+    # Full-CONUS fallback used by the current MRMS native grid.
+    return 20.005001, -129.995, 54.995, -60.005002
+
+
+def resize_nearest_rgba(arr: np.ndarray, out_size: tuple[int, int]) -> np.ndarray:
+    image = Image.fromarray(arr, mode="RGBA")
+    image = image.resize(out_size, Image.Resampling.NEAREST)
+    return np.asarray(image, dtype=np.uint8)
+
+
+def make_map_overlay(evidence: dict[str, np.ndarray]) -> np.ndarray:
+    """Create a sparse RGBA evidence overlay on the reduced grid."""
+    h, w = evidence["category"].shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    cat = evidence["category"]
+
+    # 1 = melting-layer candidate; 2 = dry-snow-like candidate;
+    # 3 = both; 4 = data limited.
+    rgba[cat == 1] = (230, 70, 180, 170)
+    rgba[cat == 2] = (70, 130, 235, 145)
+    rgba[cat == 3] = (160, 80, 220, 185)
+    rgba[cat == 4] = (130, 130, 130, 85)
+    return rgba
+
+
+def make_qc_image(
+    evidence: dict[str, np.ndarray],
+    dominant: np.ndarray,
+    top: np.ndarray,
+    second: np.ndarray,
+    level_summaries: list[dict],
+    metadata: dict,
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(15, 9), constrained_layout=True)
+
+    panels = [
+        ("Melting-Layer Evidence", evidence["ml_fraction"], 0, 1, "fraction of 8 levels"),
+        ("Dry-Snow-Like Evidence", evidence["dry_snow_fraction"], 0, 1, "fraction of 8 levels"),
+        ("Valid Vertical Dual-Pol", evidence["valid_fraction"], 0, 1, "fraction of 8 levels"),
+        ("Radar Evidence Category", evidence["category"], 0, 4, "category"),
+    ]
+
+    for ax, (title, data, vmin, vmax, label) in zip(axes.flat, panels):
+        im = ax.imshow(data, origin="upper", vmin=vmin, vmax=vmax, interpolation="nearest", aspect="auto")
+        ax.set_title(title)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        fig.colorbar(im, ax=ax, shrink=0.82, label=label)
+
+    rap_valid = (metadata.get("phase_diagnostics") or {}).get("rap_valid_time_utc", "unknown")
+    fig.suptitle(
+        "WinterRadar Radar Phase Evidence Fusion\n"
+        f"RAP solution: {rap_valid} • 3-D MRMS RHOHV/ZDR: {len(level_summaries)} levels",
+        fontsize=15,
+        fontweight="bold",
+    )
+    fig.savefig(OUTPUT_DIR / "phase_radar_fusion.png", dpi=130, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# JSON summary
+# ---------------------------------------------------------------------------
+
+def pct(mask: np.ndarray, denom: np.ndarray | None = None) -> float:
+    if denom is None:
+        finite = np.isfinite(mask)
+        return float(100.0 * np.count_nonzero(mask[finite]) / max(np.count_nonzero(finite), 1))
+    return float(100.0 * np.count_nonzero(mask & denom) / max(np.count_nonzero(denom), 1))
+
+
+def write_summary(
+    evidence: dict[str, np.ndarray],
+    dominant: np.ndarray,
+    top: np.ndarray,
+    second: np.ndarray,
+    level_summaries: list[dict],
+    metadata: dict,
+) -> None:
+    precip = evidence["precip"]
+    usable = precip & (evidence["valid_fraction"] >= VALID_FRACTION_THRESHOLD)
+    category = evidence["category"]
+
+    phase_names = {
+        0: "rain",
+        1: "snow",
+        2: "sleet",
+        3: "freezing_rain",
+    }
+
+    phase_summary = {}
+    for code, name in phase_names.items():
+        phase_area = usable & (dominant == code)
+        support = phase_area & (
+            ((code == 1) & (evidence["dry_snow_fraction"] >= SNOW_FRACTION_THRESHOLD))
+            | ((code in (2, 3)) & (evidence["ml_fraction"] >= ML_FRACTION_THRESHOLD))
+            | ((code == 0) & (evidence["ml_fraction"] < ML_FRACTION_THRESHOLD))
+        )
+        phase_summary[name] = {
+            "dominant_area_percent_of_usable_precip": float(
+                100.0 * np.count_nonzero(phase_area) / max(np.count_nonzero(usable), 1)
+            ),
+            "radar_evidence_consistent_area_percent": float(
+                100.0 * np.count_nonzero(support) / max(np.count_nonzero(phase_area), 1)
+            ),
+            "mean_probability_percent": float(np.nanmean(np.where(phase_area, top, np.nan))) if np.any(phase_area) else None,
+        }
+
+    qc = {
+        "status": "ok",
+        "purpose": "Observational radar/dual-pol evidence layer; primary phase classification is unchanged.",
+        "primary_phase_engine": (metadata.get("phase_diagnostics") or {}).get("engine", metadata.get("phase_status", "unknown")),
+        "mrms_time_utc": metadata.get("mrms_time_utc"),
+        "rap_valid_time_utc": (metadata.get("phase_diagnostics") or {}).get("rap_valid_time_utc"),
+        "radar_evidence_thresholds": {
+            "precip_dbz": PRECIP_DBZ,
+            "melting_layer": {
+                "rhohv_max": ML_RHO_MAX,
+                "zdr_min_db": ML_ZDR_MIN,
+                "zdr_max_db": ML_ZDR_MAX,
+                "vertical_fraction_threshold": ML_FRACTION_THRESHOLD,
+            },
+            "dry_snow_like": {
+                "rhohv_min": SNOW_RHO_MIN,
+                "zdr_min_db": SNOW_ZDR_MIN,
+                "zdr_max_db": SNOW_ZDR_MAX,
+                "vertical_fraction_threshold": SNOW_FRACTION_THRESHOLD,
+            },
+            "minimum_valid_vertical_fraction": VALID_FRACTION_THRESHOLD,
+        },
+        "grid": {
+            "source_shape": [3500, 7000],
+            "diagnostic_shape": list(category.shape),
+            "downsample_factor": DOWNSAMPLE,
+        },
+        "precipitation_area_percent": float(100.0 * np.mean(precip)),
+        "usable_precipitation_area_percent": float(100.0 * np.mean(usable)),
+        "evidence_area_percent_of_usable_precip": {
+            "melting_layer": float(100.0 * np.count_nonzero((category == 1) & usable) / max(np.count_nonzero(usable), 1)),
+            "dry_snow_like": float(100.0 * np.count_nonzero((category == 2) & usable) / max(np.count_nonzero(usable), 1)),
+            "both": float(100.0 * np.count_nonzero((category == 3) & usable) / max(np.count_nonzero(usable), 1)),
+            "data_limited": float(100.0 * np.count_nonzero((category == 4) & precip) / max(np.count_nonzero(precip), 1)),
+        },
+        "phase_context": phase_summary,
+        "mean_dominant_probability_percent": float(np.nanmean(np.where(usable, top, np.nan))) if np.any(usable) else None,
+        "mean_runner_up_probability_percent": float(np.nanmean(np.where(usable, second, np.nan))) if np.any(usable) else None,
+        "vertical_levels": level_summaries,
+        "legend": {
+            "1": "Melting-layer candidate",
+            "2": "Dry-snow-like candidate",
+            "3": "Both signatures present",
+            "4": "Vertical dual-pol data limited",
+        },
+    }
+
+    (OUTPUT_DIR / "phase_radar_fusion.json").write_text(
+        json.dumps(qc, indent=2),
+        encoding="utf-8",
+    )
+
+
+def main() -> None:
+    print("=" * 72)
+    print("WINTER RADAR — RADAR PHASE EVIDENCE FUSION")
+    print("=" * 72)
+
+    # Load reflectivity through the project's canonical reader.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from read_mrms import get_values
+
+    ref_path = DATA_DIR / "MRMS_ReflectivityAtLowestAltitude.latest.grib2"
+    reflectivity, _, _ = get_values(ref_path, product="ReflectivityAtLowestAltitude")
+    if reflectivity.shape != (3500, 7000):
+        print(f"Warning: expected native MRMS (3500,7000), got {reflectivity.shape}")
+
+    phase_data, metadata = load_phase_probabilities()
+    placed_phase = place_phase_probabilities(phase_data, metadata, reflectivity.shape)
+    dominant, top, second = dominant_phase(placed_phase)
+
+    evidence, level_summaries = build_radar_evidence(reflectivity)
+
+    make_qc_image(evidence, dominant, top, second, level_summaries, metadata)
+    write_summary(evidence, dominant, top, second, level_summaries, metadata)
+
+    reduced_rgba = make_map_overlay(evidence)
+    full_rgba = resize_nearest_rgba(reduced_rgba, (reflectivity.shape[1], reflectivity.shape[0]))
+    Image.fromarray(full_rgba, mode="RGBA").save(OUTPUT_DIR / "phase_radar_fusion_overlay.png", optimize=True)
+
+    summary_path = OUTPUT_DIR / "phase_radar_fusion.json"
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    data["overlay_file"] = "phase_radar_fusion_overlay.png"
+    data["bounds"] = load_lat_lon_bounds(metadata, reflectivity.shape)
+    summary_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    del reflectivity, phase_data, placed_phase, dominant, top, second, evidence, reduced_rgba, full_rgba
+    gc.collect()
+
+    print()
+    print("=" * 72)
+    print("RADAR PHASE EVIDENCE FUSION COMPLETE")
+    print(f"  {OUTPUT_DIR / 'phase_radar_fusion.png'}")
+    print(f"  {OUTPUT_DIR / 'phase_radar_fusion_overlay.png'}")
+    print(f"  {OUTPUT_DIR / 'phase_radar_fusion.json'}")
+    print("=" * 72)
+
+
+if __name__ == "__main__":
+    main()
