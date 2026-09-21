@@ -816,15 +816,30 @@ def run_archive() -> None:
     missing.sort(key=lambda item: item.valid_time)
 
     if missing:
+        # Keep the history viewer current while also backfilling the 24-hour
+        # archive. A pure oldest-first queue can leave the viewer many hours
+        # behind while the initial backlog is being filled. Split each run
+        # between the oldest and newest missing observations so the right edge
+        # of the slider stays close to the current MRMS scan.
+        limit = max(1, MAX_NEW_RADAR_FRAMES_PER_RUN)
+        if len(missing) > limit:
+            oldest_count = limit // 2
+            newest_count = limit - oldest_count
+            selected = missing[:oldest_count] + missing[-newest_count:]
+            selected.sort(key=lambda item: item.valid_time)
+        else:
+            selected = missing
+
         print(
             f"  Missing radar frames to archive: {len(missing)} "
-            f"(processing up to {MAX_NEW_RADAR_FRAMES_PER_RUN} this run)"
+            f"(processing {len(selected)} this run; newest frames prioritized)"
         )
     else:
+        selected = []
         print("  No missing radar frames detected.")
 
     archived_this_run = 0
-    for obs in missing[:MAX_NEW_RADAR_FRAMES_PER_RUN]:
+    for obs in selected:
         try:
             data = download_and_render_observation(
                 session,
