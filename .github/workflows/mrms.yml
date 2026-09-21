@@ -373,6 +373,11 @@ jobs:
           cp index.html site/index.html
           cp outputs/mrms_current.png site/outputs/mrms_current.png
           cp outputs/mrms_current_web.png site/outputs/mrms_current_web.png
+          if [ -s outputs/mrms_current_regional_web.png ]; then
+            cp outputs/mrms_current_regional_web.png site/outputs/mrms_current_regional_web.png
+          else
+            echo "Regional sharp MRMS raster is unavailable; full-CONUS raster remains available."
+          fi
           cp outputs/mrms_current.json site/outputs/mrms_current.json
           cp outputs/mrms_web.json site/outputs/mrms_web.json
           cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
