@@ -27,27 +27,30 @@ PHASE_COLORS = {
 
 
 def reflectivity_to_rgba(dbz: np.ndarray) -> np.ndarray:
+    """Convert MRMS reflectivity to RGBA using the supplied BR HiRes palette.
+
+    Palette breakpoints come directly from BR HiRes.pal. Colors are linearly
+    interpolated between breakpoints. Values below 5 dBZ remain transparent
+    so the basemap shows through in non-precipitating areas. Reflectivity
+    pixels are fully opaque so 0% UI transparency is truly full-strength radar.
+    """
     dbz = np.asarray(dbz, dtype=np.float32)
     rgba = np.zeros((*dbz.shape, 4), dtype=np.uint8)
-    valid = np.isfinite(dbz)
+    valid = np.isfinite(dbz) & (dbz >= 5.0)
 
-    bands = [
-        (5, 15, (90, 125, 140, 90)),
-        (15, 20, (80, 180, 110, 115)),
-        (20, 25, (105, 205, 105, 130)),
-        (25, 30, (180, 225, 70, 145)),
-        (30, 35, (242, 220, 60, 160)),
-        (35, 40, (246, 170, 45, 175)),
-        (40, 45, (242, 100, 42, 190)),
-        (45, 50, (228, 48, 45, 205)),
-        (50, 55, (210, 40, 105, 215)),
-    ]
+    if not np.any(valid):
+        return rgba
 
-    for low, high, color in bands:
-        mask = valid & (dbz >= low) & (dbz < high)
-        rgba[mask] = color
+    levels = np.array([0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 34.5, 35.0, 40.0, 45.0, 50.0, 57.5, 62.5, 67.5, 72.5, 77.5, 82.5, 95.0], dtype=np.float32)
+    colors = np.array([(50, 50, 50), (14, 14, 90), (3, 79, 140), (7, 162, 182), (17, 229, 31), (12, 169, 20), (6, 104, 8), (255, 255, 0), (255, 194, 0), (255, 140, 0), (221, 0, 0), (107, 0, 0), (255, 163, 255), (238, 29, 244), (117, 0, 235), (0, 255, 219), (0, 76, 74), (0, 0, 0)], dtype=np.float32)
+    sample = np.clip(dbz[valid], levels[0], levels[-1])
 
-    rgba[valid & (dbz >= 55)] = (180, 45, 180, 225)
+    for channel in range(3):
+        rgba[..., channel][valid] = np.rint(
+            np.interp(sample, levels, colors[:, channel])
+        ).astype(np.uint8)
+
+    rgba[..., 3][valid] = 255
     return rgba
 
 
