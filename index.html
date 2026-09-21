@@ -986,7 +986,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
             </div>
 
             <div class="opacity-control" title="0% = full-strength radar; 100% = fully transparent">
-                <label for="opacitySlider">Opacity</label>
+                <label for="opacitySlider">Radar transparency</label>
                 <input
                     id="opacitySlider"
                     type="range"
@@ -2006,6 +2006,11 @@ let historyBounds = null;
 let historyRefreshBusy = false;
 let overlayOpacity = 1.0;
 
+// History slider state. Do not rewrite a slider while the user is adjusting it.
+// Image loads are throttled so rapid dragging does not create competing requests.
+let historySliderRenderTimer = null;
+let historySliderIsActive = false;
+
 // Pending historical layers are intentionally kept separate from the
 // currently displayed layers. This prevents the map from going blank while
 // a new GitHub Release image is still loading.
@@ -2080,6 +2085,35 @@ function formatLocalTime(value) {
 }
 
 
+function historySliderHasFocus() {
+    return [
+        document.getElementById("historySlider"),
+        document.getElementById("mapHistorySlider")
+    ].some(function(slider) {
+        return slider && document.activeElement === slider;
+    });
+}
+
+
+function syncHistorySliderValues() {
+    if (historySliderIsActive || historySliderHasFocus()) {
+        return;
+    }
+
+    const value = String(
+        historyIndex >= 0 && historyIndex < historyFrames.length
+            ? historyIndex
+            : 0
+    );
+
+    const slider = document.getElementById("historySlider");
+    const mapSlider = document.getElementById("mapHistorySlider");
+
+    if (slider) slider.value = value;
+    if (mapSlider) mapSlider.value = value;
+}
+
+
 function updateHistoryControls() {
     const slider = document.getElementById("historySlider");
     const prev = document.getElementById("historyPrev");
@@ -2088,20 +2122,20 @@ function updateHistoryControls() {
     const speed = document.getElementById("historySpeed");
 
     const hasFrames = historyFrames.length > 0;
-    const validIndex = historyIndex >= 0 && historyIndex < historyFrames.length;
 
     if (slider) {
         slider.disabled = !hasFrames;
         slider.max = String(Math.max(historyFrames.length - 1, 0));
-        slider.value = validIndex ? String(historyIndex) : "0";
     }
 
     if (prev) prev.disabled = !hasFrames || historyIndex <= 0;
     if (next) next.disabled = !hasFrames || historyIndex >= historyFrames.length - 1;
+
     if (play) {
         play.disabled = historyFrames.length < 2;
         play.textContent = historyPlaying ? "❚❚" : "▶";
     }
+
     if (speed) speed.value = String(historySpeed);
 
     const mapSlider = document.getElementById("mapHistorySlider");
@@ -2112,7 +2146,6 @@ function updateHistoryControls() {
     if (mapSlider) {
         mapSlider.disabled = !hasFrames;
         mapSlider.max = String(Math.max(historyFrames.length - 1, 0));
-        mapSlider.value = validIndex ? String(historyIndex) : "0";
     }
 
     if (mapPrev) {
@@ -2128,8 +2161,10 @@ function updateHistoryControls() {
         mapPlay.disabled = historyFrames.length < 2;
         mapPlay.textContent = historyPlaying ? "❚❚" : "▶";
     }
-}
 
+    // Only change the slider thumb when the user is not actively adjusting it.
+    syncHistorySliderValues();
+}
 
 function updateHistoryReadout() {
     const main = document.getElementById("historyTimeMain");
@@ -2636,6 +2671,11 @@ function showLiveMap() {
     historyMode = false;
     stopHistoryPlayback();
 
+    if (historyFrames.length) {
+        historyIndex = historyFrames.length - 1;
+        updateHistoryControls();
+    }
+
     // Prevent an older historical load from replacing the live image.
     ++historyRenderRequest;
     cancelPendingHistoryLayers();
@@ -2655,9 +2695,26 @@ function selectHistoryFrame(index, enterMode) {
     }
 
     stopHistoryPlayback();
-    renderHistoryFrame(index, false);
-}
 
+    historyIndex = Math.max(
+        0,
+        Math.min(Number(index) || 0, historyFrames.length - 1)
+    );
+
+    // The thumb and timestamp move immediately. The image follows after the
+    // user pauses briefly, preventing slider "spazzing" during rapid dragging.
+    updateHistoryReadout();
+    updateHistoryControls();
+
+    if (historySliderRenderTimer !== null) {
+        window.clearTimeout(historySliderRenderTimer);
+    }
+
+    historySliderRenderTimer = window.setTimeout(function() {
+        historySliderRenderTimer = null;
+        renderHistoryFrame(historyIndex, false);
+    }, 80);
+}
 
 function historyStep(direction) {
     if (!historyFrames.length) return;
@@ -2973,6 +3030,30 @@ document.addEventListener("keydown", function(event) {
     historyStep(event.key === "ArrowLeft" ? -1 : 1);
 }, true);
 
+
+["historySlider", "mapHistorySlider"].forEach(function(id) {
+    const slider = document.getElementById(id);
+    if (!slider) return;
+
+    slider.addEventListener("pointerdown", function() {
+        historySliderIsActive = true;
+    });
+
+    slider.addEventListener("pointerup", function() {
+        historySliderIsActive = false;
+        syncHistorySliderValues();
+    });
+
+    slider.addEventListener("blur", function() {
+        historySliderIsActive = false;
+        syncHistorySliderValues();
+    });
+});
+
+document.addEventListener("pointerup", function() {
+    historySliderIsActive = false;
+    syncHistorySliderValues();
+});
 
 // Explicit startup state requested for the overlay opacity control.
 setOverlayOpacity(0);
