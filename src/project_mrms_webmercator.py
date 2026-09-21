@@ -201,6 +201,20 @@ def main() -> None:
         REGIONAL_SCALE,
     )
 
+    precip_type_info = project_image(
+        OUTPUT_DIR / "winter_precip_type.png",
+        OUTPUT_DIR / "winter_precip_type_web.png",
+        bounds,
+    )
+
+    precip_type_regional_info = create_regional_closeup(
+        OUTPUT_DIR / "winter_precip_type_web.png",
+        OUTPUT_DIR / "winter_precip_type_regional_web.png",
+        bounds,
+        REGIONAL_BOUNDS,
+        REGIONAL_SCALE,
+    )
+
     web_metadata = dict(metadata)
     web_metadata.update(
         {
@@ -212,6 +226,8 @@ def main() -> None:
             "web_radar_regional": regional_info,
             "web_phase_size": [phase_info["output_width"], phase_info["output_height"]],
             "web_phase_regional": phase_regional_info,
+            "web_precip_type_size": [precip_type_info["output_width"], precip_type_info["output_height"]],
+            "web_precip_type_regional": precip_type_regional_info,
             "webmercator_y_south": radar_info["webmercator_y_south"],
             "webmercator_y_north": radar_info["webmercator_y_north"],
         }
@@ -225,6 +241,9 @@ def main() -> None:
         "mrms_current_regional_web.png",
         "winter_phase_mask_web.png",
         "winter_phase_mask_regional_web.png",
+        "winter_precip_type.png",
+        "winter_precip_type_web.png",
+        "winter_precip_type_regional_web.png",
         "mrms_web.json",
     ):
         path = OUTPUT_DIR / name
