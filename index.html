@@ -882,7 +882,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
     <div class="heading">
         <h1>Current MRMS</h1>
-        <span>Interactive BTV regional radar / winter phase viewer • Web Mercator</span>
+        <span>Interactive full-CONUS MRMS radar / winter phase viewer • Web Mercator</span>
     </div>
 
     <section class="map-card">
@@ -1000,7 +1000,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                 <span id="opacityValue" class="opacity-value">0%</span>
             </div>
 
-            <div class="map-history-control" aria-label="24-hour MRMS history controls">
+            <div class="map-history-control" aria-label="8-hour CONUS MRMS history controls">
                 <button id="mapHistoryPrev" class="map-history-btn" type="button"
                     onclick="historyStep(-1)" title="Previous frame">◀</button>
                 <button id="mapHistoryPlay" class="map-history-btn" type="button"
@@ -1089,7 +1089,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
         <div class="history-head">
             <div>
-                <div class="history-title">24-Hour MRMS Time History &amp; Loop</div>
+                <div class="history-title">8-Hour CONUS MRMS Time History &amp; Loop</div>
                 <div class="history-subtitle">
                     Timestamped MRMS observations are archived from NOAA's historical feed.
                     Use the slider for individual frames or play the loop.
@@ -2257,7 +2257,7 @@ async function refreshHistoryManifest() {
             .filter(function(frame) {
                 return frame &&
                     frame.timestamp_utc &&
-                    frame.radar_url;
+                    (frame.radar_asset || frame.radar_url);
             })
             .sort(function(a, b) {
                 return new Date(a.timestamp_utc) - new Date(b.timestamp_utc);
@@ -2285,13 +2285,13 @@ async function refreshHistoryManifest() {
         updateHistoryControls();
         updateHistoryReadout();
 
-        const hours = Number(manifest.history_hours || 24);
+        const hours = Number(manifest.history_hours || 8);
         const phaseCount = Number(manifest.phase_snapshot_count || 0);
         const note = document.getElementById("historyNote");
 
         if (note) {
             note.textContent =
-                historyFrames.length + " archived MRMS frames covering up to " +
+                historyFrames.length + " archived full-CONUS MRMS frames covering up to " +
                 hours + " hours. " + phaseCount +
                 " phase snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
         }
@@ -2490,7 +2490,7 @@ async function refreshHistoryManifest() {
             .filter(function(frame) {
                 return frame &&
                     frame.timestamp_utc &&
-                    frame.radar_url;
+                    (frame.radar_asset || frame.radar_url);
             })
             .sort(function(a, b) {
                 return new Date(a.timestamp_utc) - new Date(b.timestamp_utc);
@@ -2517,13 +2517,13 @@ async function refreshHistoryManifest() {
         updateHistoryControls();
         updateHistoryReadout();
 
-        const hours = Number(manifest.history_hours || 24);
+        const hours = Number(manifest.history_hours || 8);
         const phaseCount = Number(manifest.phase_snapshot_count || 0);
         const note = document.getElementById("historyNote");
 
         if (note) {
             note.textContent =
-                historyFrames.length + " archived MRMS frames covering up to " +
+                historyFrames.length + " archived full-CONUS MRMS frames covering up to " +
                 hours + " hours. " + phaseCount +
                 " phase snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
         }
