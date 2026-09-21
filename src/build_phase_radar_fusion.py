@@ -244,6 +244,95 @@ def dominant_phase(prob: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray,
 # Radar evidence
 # ---------------------------------------------------------------------------
 
+AGREEMENT_NONE = 0
+AGREEMENT_CONSISTENT = 1
+AGREEMENT_CONFLICT = 2
+AGREEMENT_RADAR_CONFLICT = 3
+AGREEMENT_NO_DECISIVE_RADAR = 4
+
+
+def build_phase_agreement(
+    evidence: dict[str, np.ndarray],
+    dominant: np.ndarray,
+    top: np.ndarray,
+    second: np.ndarray,
+) -> tuple[dict[str, np.ndarray], dict]:
+    """Compare the primary RAP phase solution with independent radar evidence.
+
+    The comparison deliberately avoids claiming that dual-pol alone can
+    distinguish sleet from freezing rain. It asks whether the radar evidence
+    is consistent with, conflicts with, or cannot meaningfully evaluate the
+    thermodynamic phase solution.
+    """
+    precip = np.asarray(evidence["precip"], dtype=bool)
+    valid_radar = precip & (evidence["valid_fraction"] >= VALID_FRACTION_THRESHOLD)
+    ml = evidence["ml_fraction"] >= ML_FRACTION_THRESHOLD
+    dry = evidence["dry_snow_fraction"] >= SNOW_FRACTION_THRESHOLD
+    radar_both = ml & dry
+
+    model_valid = dominant >= 0
+    model_rain = dominant == 0
+    model_snow = dominant == 1
+    model_ice = np.isin(dominant, [2, 3])
+
+    agreement = np.zeros(dominant.shape, dtype=np.uint8)
+
+    # Conflicting vertical radar signatures get their own category.
+    agreement[valid_radar & radar_both] = AGREEMENT_RADAR_CONFLICT
+
+    available = valid_radar & ~radar_both & model_valid
+
+    consistent = (
+        (available & model_snow & dry)
+        | (available & model_ice & ml)
+        | (available & model_rain & ~ml & ~dry)
+    )
+
+    conflict = (
+        (available & model_snow & ml)
+        | (available & model_ice & dry)
+        | (available & model_rain & (ml | dry))
+    )
+
+    agreement[consistent] = AGREEMENT_CONSISTENT
+    agreement[conflict] = AGREEMENT_CONFLICT
+
+    # A valid dual-pol column with no decisive signature is not a disagreement.
+    agreement[valid_radar & ~radar_both & model_valid & ~consistent & ~conflict] = AGREEMENT_NO_DECISIVE_RADAR
+
+    # Model ambiguity / missing radar information remains unclassified.
+    score = np.zeros_like(dominant, dtype=np.float32)
+    score[consistent] = np.minimum(1.0, np.maximum(
+        evidence["dry_snow_fraction"][consistent],
+        evidence["ml_fraction"][consistent],
+    ))
+    score[conflict] = np.minimum(1.0, np.maximum(
+        evidence["dry_snow_fraction"][conflict],
+        evidence["ml_fraction"][conflict],
+    ))
+    score[agreement == AGREEMENT_NO_DECISIVE_RADAR] = evidence["valid_fraction"][agreement == AGREEMENT_NO_DECISIVE_RADAR]
+    score[agreement == AGREEMENT_RADAR_CONFLICT] = np.minimum(
+        1.0,
+        np.maximum(
+            evidence["ml_fraction"][agreement == AGREEMENT_RADAR_CONFLICT],
+            evidence["dry_snow_fraction"][agreement == AGREEMENT_RADAR_CONFLICT],
+        ),
+    )
+
+    stats = {
+        "usable_precip_area_percent": float(100.0 * np.count_nonzero(valid_radar) / max(np.count_nonzero(precip), 1)),
+        "consistent_area_percent": float(100.0 * np.count_nonzero(agreement == AGREEMENT_CONSISTENT) / max(np.count_nonzero(valid_radar), 1)),
+        "conflict_area_percent": float(100.0 * np.count_nonzero(agreement == AGREEMENT_CONFLICT) / max(np.count_nonzero(valid_radar), 1)),
+        "radar_conflict_area_percent": float(100.0 * np.count_nonzero(agreement == AGREEMENT_RADAR_CONFLICT) / max(np.count_nonzero(valid_radar), 1)),
+        "no_decisive_radar_area_percent": float(100.0 * np.count_nonzero(agreement == AGREEMENT_NO_DECISIVE_RADAR) / max(np.count_nonzero(valid_radar), 1)),
+    }
+
+    return {
+        "agreement": agreement,
+        "strength": score,
+    }, stats
+
+
 def build_radar_evidence(reflectivity: np.ndarray) -> tuple[dict[str, np.ndarray], list[dict]]:
     """
     Produce reduced-resolution vertical evidence fields.
@@ -368,6 +457,85 @@ def make_map_overlay(evidence: dict[str, np.ndarray]) -> np.ndarray:
     return rgba
 
 
+def make_agreement_overlay(evaluation: dict[str, np.ndarray]) -> np.ndarray:
+    category = evaluation["agreement"]
+    strength = np.clip(evaluation["strength"], 0.0, 1.0)
+    rgba = np.zeros((*category.shape, 4), dtype=np.uint8)
+
+    # Green = model/radar consistency; red = disagreement; orange = conflicting
+    # radar signatures; gray = valid but no decisive radar signature.
+    alpha_consistent = np.rint(90 + 110 * strength).astype(np.uint8)
+    alpha_conflict = np.rint(95 + 105 * strength).astype(np.uint8)
+    alpha_both = np.rint(105 + 95 * strength).astype(np.uint8)
+
+    rgba[category == AGREEMENT_CONSISTENT, :3] = (50, 170, 95)
+    rgba[category == AGREEMENT_CONSISTENT, 3] = alpha_consistent[category == AGREEMENT_CONSISTENT]
+
+    rgba[category == AGREEMENT_CONFLICT, :3] = (220, 65, 65)
+    rgba[category == AGREEMENT_CONFLICT, 3] = alpha_conflict[category == AGREEMENT_CONFLICT]
+
+    rgba[category == AGREEMENT_RADAR_CONFLICT, :3] = (225, 145, 35)
+    rgba[category == AGREEMENT_RADAR_CONFLICT, 3] = alpha_both[category == AGREEMENT_RADAR_CONFLICT]
+
+    rgba[category == AGREEMENT_NO_DECISIVE_RADAR] = (125, 135, 145, 70)
+    return rgba
+
+
+def make_agreement_qc_image(
+    evaluation: dict[str, np.ndarray],
+    agreement_stats: dict,
+    metadata: dict,
+) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6.5), constrained_layout=True)
+
+    category = evaluation["agreement"]
+    strength = evaluation["strength"]
+
+    im0 = axes[0].imshow(
+        category,
+        origin="upper",
+        vmin=0,
+        vmax=4,
+        interpolation="nearest",
+        aspect="auto",
+    )
+    axes[0].set_title("Phase Agreement Category")
+    axes[0].set_xticks([])
+    axes[0].set_yticks([])
+    fig.colorbar(im0, ax=axes[0], shrink=0.82, ticks=[0, 1, 2, 3, 4], label="category")
+
+    im1 = axes[1].imshow(
+        strength,
+        origin="upper",
+        vmin=0,
+        vmax=1,
+        interpolation="nearest",
+        aspect="auto",
+    )
+    axes[1].set_title("Agreement / Evidence Strength")
+    axes[1].set_xticks([])
+    axes[1].set_yticks([])
+    fig.colorbar(im1, ax=axes[1], shrink=0.82, label="0–1")
+
+    rap_valid = (metadata.get("phase_diagnostics") or {}).get("rap_valid_time_utc", "unknown")
+    fig.suptitle(
+        "WinterRadar Phase Agreement Diagnostic\n"
+        f"RAP/Bourgouin: {rap_valid} • "
+        f"Consistent {agreement_stats.get('consistent_area_percent', 0.0):.1f}% • "
+        f"Conflicting {agreement_stats.get('conflict_area_percent', 0.0):.1f}% of usable precipitation",
+        fontsize=15,
+        fontweight="bold",
+    )
+
+    fig.savefig(
+        OUTPUT_DIR / "phase_agreement.png",
+        dpi=130,
+        facecolor="white",
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+
+
 def make_qc_image(
     evidence: dict[str, np.ndarray],
     dominant: np.ndarray,
@@ -375,14 +543,17 @@ def make_qc_image(
     second: np.ndarray,
     level_summaries: list[dict],
     metadata: dict,
+    evaluation: dict[str, np.ndarray],
 ) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(15, 9), constrained_layout=True)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 9), constrained_layout=True)
 
     panels = [
         ("Melting-Layer Evidence", evidence["ml_fraction"], 0, 1, "fraction of 8 levels"),
         ("Dry-Snow-Like Evidence", evidence["dry_snow_fraction"], 0, 1, "fraction of 8 levels"),
         ("Valid Vertical Dual-Pol", evidence["valid_fraction"], 0, 1, "fraction of 8 levels"),
         ("Radar Evidence Category", evidence["category"], 0, 4, "category"),
+        ("Phase Agreement", evaluation["agreement"], 0, 4, "category"),
+        ("Agreement Strength", evaluation["strength"], 0, 1, "0–1"),
     ]
 
     for ax, (title, data, vmin, vmax, label) in zip(axes.flat, panels):
@@ -421,6 +592,7 @@ def write_summary(
     second: np.ndarray,
     level_summaries: list[dict],
     metadata: dict,
+    agreement_stats: dict,
 ) -> None:
     precip = evidence["precip"]
     usable = precip & (evidence["valid_fraction"] >= VALID_FRACTION_THRESHOLD)
@@ -487,6 +659,7 @@ def write_summary(
             "data_limited": float(100.0 * np.count_nonzero((category == 4) & precip) / max(np.count_nonzero(precip), 1)),
         },
         "phase_context": phase_summary,
+        "phase_agreement": agreement_stats,
         "mean_dominant_probability_percent": float(np.nanmean(np.where(usable, top, np.nan))) if np.any(usable) else None,
         "mean_runner_up_probability_percent": float(np.nanmean(np.where(usable, second, np.nan))) if np.any(usable) else None,
         "vertical_levels": level_summaries,
@@ -523,13 +696,37 @@ def main() -> None:
     dominant, top, second = dominant_phase(placed_phase)
 
     evidence, level_summaries = build_radar_evidence(reflectivity)
+    evaluation, agreement_stats = build_phase_agreement(evidence, dominant, top, second)
 
-    make_qc_image(evidence, dominant, top, second, level_summaries, metadata)
-    write_summary(evidence, dominant, top, second, level_summaries, metadata)
+    make_qc_image(evidence, dominant, top, second, level_summaries, metadata, evaluation)
+    make_agreement_qc_image(evaluation, agreement_stats, metadata)
+    write_summary(evidence, dominant, top, second, level_summaries, metadata, agreement_stats)
 
     reduced_rgba = make_map_overlay(evidence)
     full_rgba = resize_nearest_rgba(reduced_rgba, (reflectivity.shape[1], reflectivity.shape[0]))
     Image.fromarray(full_rgba, mode="RGBA").save(OUTPUT_DIR / "phase_radar_fusion_overlay.png", optimize=True)
+
+    agreement_reduced = make_agreement_overlay(evaluation)
+    agreement_full = resize_nearest_rgba(agreement_reduced, (reflectivity.shape[1], reflectivity.shape[0]))
+    Image.fromarray(agreement_full, mode="RGBA").save(OUTPUT_DIR / "phase_agreement_overlay.png", optimize=True)
+
+    agreement_payload = {
+        "status": "ok",
+        "purpose": "Compare the primary RAP/Bourgouin phase solution with independent MRMS vertical dual-pol evidence.",
+        "primary_phase_engine": (metadata.get("phase_diagnostics") or {}).get("engine", metadata.get("phase_status", "unknown")),
+        "mrms_time_utc": metadata.get("mrms_time_utc"),
+        "rap_valid_time_utc": (metadata.get("phase_diagnostics") or {}).get("rap_valid_time_utc"),
+        "categories": {
+            "0": "No assessment / insufficient data",
+            "1": "Phase solution consistent with available radar evidence",
+            "2": "Radar evidence conflicts with phase solution",
+            "3": "Conflicting vertical radar signatures",
+            "4": "Radar usable, but no decisive phase signature",
+        },
+        "stats": agreement_stats,
+        "overlay_file": "phase_agreement_overlay.png",
+    }
+    (OUTPUT_DIR / "phase_agreement.json").write_text(json.dumps(agreement_payload, indent=2), encoding="utf-8")
 
     summary_path = OUTPUT_DIR / "phase_radar_fusion.json"
     data = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -537,7 +734,7 @@ def main() -> None:
     data["bounds"] = load_lat_lon_bounds(metadata, reflectivity.shape)
     summary_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    del reflectivity, phase_data, placed_phase, dominant, top, second, evidence, reduced_rgba, full_rgba
+    del reflectivity, phase_data, placed_phase, dominant, top, second, evidence, evaluation, reduced_rgba, full_rgba, agreement_reduced, agreement_full
     gc.collect()
 
     print()
@@ -546,6 +743,9 @@ def main() -> None:
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion.png'}")
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion_overlay.png'}")
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion.json'}")
+    print(f"  {OUTPUT_DIR / 'phase_agreement.png'}")
+    print(f"  {OUTPUT_DIR / 'phase_agreement_overlay.png'}")
+    print(f"  {OUTPUT_DIR / 'phase_agreement.json'}")
     print("=" * 72)
 
 
