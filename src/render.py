@@ -80,10 +80,7 @@ def _ramp_from_anchors(anchors):
 
 TYPE_RAMP_COLORS = {
     # Rain: EXACT BR HiRes palette, sampled at the composite intensity levels.
-    "rain": np.stack([
-        np.interp(TYPE_RAMP_LEVELS, BR_HIRES_LEVELS, BR_HIRES_COLORS[:, c])
-        for c in range(3)
-    ], axis=1),
+    "rain": BR_HIRES_COLORS.copy(),
     # Other types use the same MRMS dBZ intensity scale but their own hue family.
     "snow": _ramp_from_anchors([
         (5, 115, 205, 235), (25, 65, 165, 238), (45, 25, 95, 225),
@@ -157,13 +154,13 @@ def result_to_precip_type_rgba(
     precip = np.isfinite(dbz) & (dbz >= 5.0)
 
     # Liquid rain.
-    _paint_intensity_ramp(
-        rgba,
-        precip & (result.phase == RAIN),
-        dbz,
-        TYPE_RAMP_COLORS["rain"],
-        alpha=alpha,
-    )
+    rain_mask = precip & (result.phase == RAIN)
+    if np.any(rain_mask):
+        sample = np.clip(np.nan_to_num(dbz[rain_mask], nan=BR_HIRES_LEVELS[0]), BR_HIRES_LEVELS[0], BR_HIRES_LEVELS[-1])
+        idx = np.searchsorted(BR_HIRES_LEVELS, sample, side="right") - 1
+        idx = np.clip(idx, 0, len(BR_HIRES_COLORS) - 1)
+        rgba[..., :3][rain_mask] = BR_HIRES_COLORS[idx].astype(np.uint8)
+        rgba[..., 3][rain_mask] = np.uint8(alpha)
 
     # Snow.
     _paint_intensity_ramp(
@@ -207,53 +204,21 @@ def result_to_precip_type_rgba(
 # ----------------------------------------------------------------------
 
 def reflectivity_to_rgba(dbz: np.ndarray) -> np.ndarray:
+    """Convert MRMS reflectivity using the exact BR HiRes palette.
+
+    Native pixels are preserved; this function performs no spatial
+    resampling. Values below 5 dBZ are transparent.
     """
-    Convert MRMS reflectivity to a transparent radar-style RGBA PNG.
-
-    Weak/no echo is transparent so the geographic basemap remains
-    visible underneath the radar.
-    """
-
-    rgba = np.zeros(
-        (*dbz.shape, 4),
-        dtype=np.uint8,
-    )
-
-    valid = np.isfinite(dbz)
-
-    m = valid & (dbz < 5)
-    rgba[m] = (0, 0, 0, 0)
-
-    m = valid & (dbz >= 5) & (dbz < 15)
-    rgba[m] = (90, 125, 140, 90)
-
-    m = valid & (dbz >= 15) & (dbz < 20)
-    rgba[m] = (80, 180, 110, 115)
-
-    m = valid & (dbz >= 20) & (dbz < 25)
-    rgba[m] = (105, 205, 105, 130)
-
-    m = valid & (dbz >= 25) & (dbz < 30)
-    rgba[m] = (180, 225, 70, 145)
-
-    m = valid & (dbz >= 30) & (dbz < 35)
-    rgba[m] = (242, 220, 60, 160)
-
-    m = valid & (dbz >= 35) & (dbz < 40)
-    rgba[m] = (246, 170, 45, 175)
-
-    m = valid & (dbz >= 40) & (dbz < 45)
-    rgba[m] = (242, 100, 42, 190)
-
-    m = valid & (dbz >= 45) & (dbz < 50)
-    rgba[m] = (228, 48, 45, 205)
-
-    m = valid & (dbz >= 50) & (dbz < 55)
-    rgba[m] = (210, 40, 105, 215)
-
-    m = valid & (dbz >= 55)
-    rgba[m] = (180, 45, 180, 225)
-
+    dbz = np.asarray(dbz, dtype=np.float32)
+    rgba = np.zeros((*dbz.shape, 4), dtype=np.uint8)
+    valid = np.isfinite(dbz) & (dbz >= 5.0)
+    if not np.any(valid):
+        return rgba
+    sample = np.clip(dbz[valid], BR_HIRES_LEVELS[0], BR_HIRES_LEVELS[-1])
+    idx = np.searchsorted(BR_HIRES_LEVELS, sample, side="right") - 1
+    idx = np.clip(idx, 0, len(BR_HIRES_COLORS) - 1)
+    rgba[..., :3][valid] = BR_HIRES_COLORS[idx].astype(np.uint8)
+    rgba[..., 3][valid] = 255
     return rgba
 
 
