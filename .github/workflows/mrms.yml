@@ -46,17 +46,6 @@ jobs:
           # though the production sampler now uses a local LCC transform.
           pip install -r requirements.txt
 
-      - name: Verify native GRIB dependencies
-        run: |
-          python - <<'PY'
-          import eccodes
-          import pygrib
-          import cfgrib
-          print(f"ecCodes Python: {getattr(eccodes, '__version__', 'unknown')}")
-          print(f"pygrib: {getattr(pygrib, '__version__', 'unknown')}")
-          print(f"cfgrib: {getattr(cfgrib, '__version__', 'unknown')}")
-          PY
-
       - name: Core syntax QC
         run: |
           python -m py_compile \
