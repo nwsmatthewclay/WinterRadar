@@ -1,4460 +1,533 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WinterRadar • MRMS Winter Precipitation</title>
-<link rel="icon" href="data:,">
-
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-
-<style>
-:root {
-    --bg: #eef2f5;
-    --panel: #ffffff;
-    --panel-soft: #f7f9fa;
-    --line: #c8d0d7;
-    --text: #17212a;
-    --muted: #697781;
-    --accent: #166b9f;
-}
-
-* { box-sizing: border-box; }
-
-html, body {
-    margin: 0;
-    padding: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
-                 Roboto, Helvetica, Arial, sans-serif;
-}
-
-.topbar {
-    position: sticky;
-    top: 0;
-    z-index: 3000;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    min-height: 56px;
-    padding: 8px 14px;
-    background: rgba(255,255,255,.97);
-    border-bottom: 1px solid var(--line);
-    box-shadow: 0 2px 8px rgba(20,35,45,.08);
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.brand-mark {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #2d84bd;
-    box-shadow: 0 0 0 4px rgba(45,132,189,.12);
-}
-
-.brand-title {
-    font-size: 16px;
-    font-weight: 800;
-    line-height: 1.05;
-}
-
-.brand-subtitle {
-    margin-top: 2px;
-    color: var(--muted);
-    font-size: 10px;
-}
-
-.top-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.status {
-    padding: 6px 9px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: var(--panel-soft);
-    color: var(--muted);
-    font-size: 10px;
-}
-
-.button {
-    border: 1px solid #b8c2ca;
-    border-radius: 6px;
-    background: #fff;
-    color: #30404c;
-    padding: 7px 10px;
-    cursor: pointer;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 700;
-}
-
-.button:hover {
-    background: #f4f7f9;
-}
-
-.container {
-    width: min(1600px, calc(100% - 14px));
-    margin: 9px auto 22px;
-}
-
-.heading {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: 10px;
-    margin: 0 2px 7px;
-}
-
-.heading h1 {
-    margin: 0;
-    font-size: 14px;
-    letter-spacing: .06em;
-    text-transform: uppercase;
-}
-
-.heading span {
-    color: var(--muted);
-    font-size: 10px;
-}
-
-.map-card {
-    overflow: hidden;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: #fff;
-    box-shadow: 0 6px 18px rgba(25,35,45,.10);
-}
-
-.map-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 11px;
-    background: #fbfcfd;
-    border-bottom: 1px solid var(--line);
-}
-
-.map-title {
-    font-size: 14px;
-    font-weight: 800;
-}
-
-.map-subtitle {
-    margin-left: 7px;
-    color: var(--muted);
-    font-size: 10px;
-}
-
-.map-meta {
-    color: var(--muted);
-    font-size: 10px;
-    white-space: nowrap;
-}
-
-.map-wrap {
-    position: relative;
-}
-
-#map {
-    width: 100%;
-    height: min(76vh, 800px);
-    min-height: 500px;
-    background: #dce6eb;
-}
-
-/* Keep the MRMS raster visually crisp when Leaflet enlarges it.
-   This does not add information; it prevents browser interpolation from
-   softening the native radar pixels. */
-.leaflet-image-layer.winter-radar-raster,
-.leaflet-image-layer.winter-raster-sharp {
-    image-rendering: -moz-crisp-edges !important;
-    image-rendering: -webkit-optimize-contrast !important;
-    image-rendering: crisp-edges !important;
-    image-rendering: pixelated !important;
-}
-
-.map-legend {
-    position: absolute;
-    top: 48px;
-    left: 9px;
-    z-index: 1260;
-    width: min(295px, calc(100% - 18px));
-    max-height: calc(100% - 125px);
-    overflow-y: auto;
-    padding: 9px 10px;
-    border: 1px solid rgba(174, 184, 192, .95);
-    border-radius: 7px;
-    background: rgba(255,255,255,.95);
-    color: #31424d;
-    box-shadow: 0 2px 9px rgba(25,35,45,.16);
-    backdrop-filter: blur(3px);
-}
-
-.map-legend-title {
-    margin-bottom: 5px;
-    color: #2b3b45;
-    font-size: 10px;
-    font-weight: 900;
-    letter-spacing: .04em;
-    text-transform: uppercase;
-}
-
-.map-legend-section + .map-legend-section {
-    margin-top: 8px;
-    padding-top: 7px;
-    border-top: 1px solid #e0e5e8;
-}
-
-.map-legend-label {
-    margin-bottom: 4px;
-    color: #62717b;
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: .05em;
-    text-transform: uppercase;
-}
-
-.reflectivity-gradient {
-    height: 13px;
-    border: 1px solid rgba(70,80,88,.55);
-    border-radius: 3px;
-    background: linear-gradient(90deg,
-        rgb(14,14,90) 0%,
-        rgb(3,79,140) 5.56%,
-        rgb(7,162,182) 11.11%,
-        rgb(17,229,31) 16.67%,
-        rgb(12,169,20) 22.22%,
-        rgb(6,104,8) 32.78%,
-        rgb(255,255,0) 33.33%,
-        rgb(255,194,0) 38.89%,
-        rgb(255,140,0) 44.44%,
-        rgb(221,0,0) 50%,
-        rgb(107,0,0) 58.33%,
-        rgb(255,163,255) 63.89%,
-        rgb(238,29,244) 69.44%,
-        rgb(117,0,235) 75%,
-        rgb(0,255,219) 80.56%,
-        rgb(0,76,74) 86.11%,
-        rgb(0,0,0) 100%
-    );
-}
-
-.reflectivity-label-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 4px;
-    margin-top: 2px;
-    color: #687781;
-    font-size: 7px;
-    font-weight: 700;
-}
-
-.phase-ramp-row {
-    display: grid;
-    grid-template-columns: 42px 1fr;
-    align-items: center;
-    gap: 6px;
-    margin-top: 4px;
-    color: #50616c;
-    font-size: 8px;
-    line-height: 1.2;
-}
-
-.phase-ramp {
-    width: 42px;
-    height: 9px;
-    border: 1px solid rgba(70,80,88,.35);
-    border-radius: 2px;
-}
-
-
-.phase-ramp-snow {
-    background: linear-gradient(90deg,
-        rgb(114,191,242),
-        rgb(55,119,222),
-        rgb(29,42,166)
-    );
-}
-
-.phase-ramp-ice {
-    background: linear-gradient(90deg,
-        rgb(238,151,203),
-        rgb(207,77,166),
-        rgb(111,31,112)
-    );
-}
-
-.phase-ramp-mixed {
-    background: linear-gradient(90deg,
-        rgb(201,163,242),
-        rgb(162,103,225),
-        rgb(89,47,160)
-    );
-}
-
-.map-legend-items {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px 8px;
-}
-
-.map-legend-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    min-width: 0;
-    color: #50616c;
-    font-size: 8px;
-    line-height: 1.2;
-}
-
-.map-legend-swatch {
-    flex: 0 0 auto;
-    width: 12px;
-    height: 10px;
-    border: 1px solid rgba(70,80,88,.35);
-    border-radius: 2px;
-}
-
-.map-legend-note {
-    margin-top: 6px;
-    color: #74818a;
-    font-size: 7px;
-    line-height: 1.3;
-}
-
-.radar-snow { background: rgb(70,130,235); }
-.radar-melting { background: rgb(230,70,180); }
-.radar-both { background: rgb(160,80,220); }
-.radar-limited { background: rgb(130,130,130); }
-.agree { background: rgb(50,170,95); }
-.conflict { background: rgb(220,65,65); }
-.radar-conflict { background: rgb(225,145,35); }
-.neutral { background: rgb(125,135,145); }
-
-.loading {
-    position: absolute;
-    top: 9px;
-    left: 9px;
-    z-index: 1200;
-    padding: 6px 8px;
-    border: 1px solid #b5c0c8;
-    border-radius: 6px;
-    background: rgba(255,255,255,.94);
-    color: #586771;
-    font-size: 10px;
-    box-shadow: 0 2px 7px rgba(0,0,0,.10);
-}
-
-
-.radar-time {
-    position: absolute;
-    top: 9px;
-    left: 58px;
-    z-index: 1210;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 7px 9px;
-    border: 1px solid #aeb8c0;
-    border-radius: 6px;
-    background: rgba(255,255,255,.96);
-    color: #2d3d48;
-    font-size: 10px;
-    font-weight: 700;
-    box-shadow: 0 2px 8px rgba(25,35,45,.14);
-    pointer-events: none;
-}
-
-.radar-time-label {
-    color: #166b9f;
-    font-size: 9px;
-    font-weight: 900;
-    letter-spacing: .05em;
-    text-transform: uppercase;
-}
-
-.layer-box {
-    position: absolute;
-    top: 9px;
-    right: 9px;
-    z-index: 1300;
-    width: 245px;
-}
-
-.layer-toggle {
-    float: right;
-    border: 1px solid #aeb8c0;
-    border-radius: 7px;
-    background: rgba(255,255,255,.97);
-    color: #26353f;
-    padding: 8px 11px;
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 800;
-    box-shadow: 0 2px 8px rgba(25,35,45,.15);
-}
-
-.layer-panel {
-    display: none;
-    clear: both;
-    margin-top: 7px;
-    padding: 10px;
-    border: 1px solid #aeb8c0;
-    border-radius: 8px;
-    background: rgba(255,255,255,.97);
-    box-shadow: 0 4px 14px rgba(25,35,45,.18);
-}
-
-.layer-panel.open { display: block; }
-
-.layer-menu-note {
-    margin: 0 0 7px;
-    padding: 6px 7px;
-    border-left: 3px solid #2d84bd;
-    background: #f3f7fa;
-    color: #63737d;
-    font-size: 8px;
-    line-height: 1.3;
-}
-
-.layer-title {
-    margin-bottom: 6px;
-    color: #6b7781;
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-}
-
-.layer-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 29px;
-    color: #26353f;
-    cursor: pointer;
-    font-size: 11px;
-}
-
-.layer-row input {
-    margin: 0;
-}
-
-.search-results {
-    position: absolute;
-    left: 9px;
-    bottom: 9px;
-    z-index: 1250;
-    width: min(430px, calc(100% - 18px));
-    max-height: 240px;
-    overflow-y: auto;
-    display: none;
-    border: 1px solid #b4bec6;
-    border-radius: 7px;
-    background: rgba(255,255,255,.97);
-    box-shadow: 0 3px 12px rgba(25,35,45,.17);
-}
-
-/* History and opacity controls over the map */
-.map-history-control {
-    position: absolute;
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-    z-index: 1400;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 9px;
-    border: 1px solid rgba(155, 167, 176, .95);
-    border-radius: 8px;
-    background: rgba(255,255,255,.95);
-    box-shadow: 0 3px 12px rgba(25,35,45,.18);
-    backdrop-filter: blur(3px);
-}
-
-.map-history-btn {
-    min-width: 32px;
-    height: 30px;
-    border: 1px solid #bfc8cf;
-    border-radius: 6px;
-    background: #fff;
-    color: #30404c;
-    padding: 0 8px;
-    cursor: pointer;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.map-history-btn:hover:not(:disabled) {
-    background: #f3f6f8;
-}
-
-.map-history-btn:disabled {
-    opacity: .45;
-    cursor: default;
-}
-
-.map-history-slider-wrap {
-    flex: 1;
-    min-width: 80px;
-}
-
-#mapHistorySlider {
-    display: block;
-    width: 100%;
-    margin: 0;
-    cursor: pointer;
-}
-
-.map-history-readout {
-    min-width: 175px;
-    color: #334650;
-    font-size: 9px;
-    font-weight: 800;
-    white-space: nowrap;
-    text-align: center;
-}
-
-.map-history-live {
-    min-width: 42px;
-}
-
-.opacity-control {
-    position: absolute;
-    right: 9px;
-    bottom: 61px;
-    z-index: 1400;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 7px 9px;
-    border: 1px solid rgba(174, 184, 192, .95);
-    border-radius: 7px;
-    background: rgba(255,255,255,.95);
-    box-shadow: 0 2px 8px rgba(25,35,45,.15);
-    backdrop-filter: blur(2px);
-}
-
-.opacity-control label {
-    color: #41515c;
-    font-size: 9px;
-    font-weight: 800;
-    white-space: nowrap;
-}
-
-#opacitySlider {
-    width: 105px;
-    margin: 0;
-    cursor: pointer;
-}
-
-.opacity-value {
-    min-width: 34px;
-    color: #166b9f;
-    font-size: 9px;
-    font-weight: 900;
-    text-align: right;
-}
-
-@media (max-width: 700px) {
-    .map-legend {
-        width: 260px;
-        max-height: 255px;
-    }
-
-    .map-history-control {
-        left: 8px;
-        right: 8px;
-        bottom: 8px;
-        gap: 5px;
-        padding: 7px;
-    }
-
-    .map-history-readout {
-        display: none;
-    }
-
-    .opacity-control {
-        right: 8px;
-        bottom: 56px;
-    }
-}
-
-.search-results.open { display: block; }
-
-.result-row {
-    padding: 8px 10px;
-    border-bottom: 1px solid #e4e8eb;
-    cursor: pointer;
-    font-size: 10px;
-    line-height: 1.3;
-}
-
-.result-row:last-child { border-bottom: 0; }
-
-.result-row:hover {
-    background: #f2f6f8;
-}
-
-.result-row strong {
-    display: block;
-    font-size: 11px;
-}
-
-.result-row span {
-    color: var(--muted);
-}
-
-.map-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 8px 9px;
-    background: #fbfcfd;
-    border-top: 1px solid var(--line);
-}
-
-.toolbar-group {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-.search-form {
-    display: flex;
-    gap: 6px;
-}
-
-.search-form input {
-    width: min(340px, 52vw);
-    height: 31px;
-    border: 1px solid #bfc7ce;
-    border-radius: 6px;
-    padding: 0 9px;
-    font: inherit;
-    font-size: 11px;
-    color: var(--text);
-    background: #fff;
-}
-
-.info-strip {
-    display: grid;
-    grid-template-columns: 1.15fr 1fr 1fr;
-    gap: 7px;
-    margin-top: 7px;
-}
-
-.info-card {
-    padding: 8px 10px;
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    background: #fff;
-}
-
-.info-label {
-    color: var(--muted);
-    font-size: 8px;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    font-weight: 800;
-}
-
-.info-value {
-    margin-top: 3px;
-    font-size: 10px;
-    font-weight: 700;
-}
-
-.legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    align-items: center;
-}
-
-.legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 6px;
-    border: 1px solid #d3d9de;
-    border-radius: 5px;
-    background: #fff;
-    color: #52606a;
-    font-size: 9px;
-}
-
-.swatch {
-    width: 9px;
-    height: 9px;
-    border-radius: 2px;
-}
-
-.snow { background: rgb(55,145,255); }
-.sleet { background: rgb(185,80,220); }
-.fzra { background: rgb(225,55,70); }
-.mixed { background: rgb(220,95,195); }
-.unknown { background: rgb(145,150,155); }
-
-
-/* ------------------------------------------------------------
-   24-HOUR MRMS HISTORY / LOOP
------------------------------------------------------------- */
-.history-panel {
-    margin-top: 9px;
-    padding: 11px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: #fff;
-    box-shadow: 0 3px 12px rgba(25,35,45,.06);
-}
-
-.history-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 9px;
-}
-
-.history-title {
-    font-size: 12px;
-    font-weight: 850;
-    letter-spacing: .02em;
-}
-
-.history-subtitle {
-    margin-top: 2px;
-    color: var(--muted);
-    font-size: 9px;
-}
-
-.history-status {
-    padding: 4px 7px;
-    border: 1px solid #d0d8de;
-    border-radius: 999px;
-    background: #f5f8fa;
-    color: #65737d;
-    font-size: 9px;
-    font-weight: 800;
-    white-space: nowrap;
-}
-
-.history-status.live {
-    background: #edf7ee;
-    color: #3e7046;
-}
-
-.history-status.playing {
-    background: #eaf3fb;
-    color: #2f678f;
-}
-
-.history-controls {
-    display: grid;
-    grid-template-columns: auto auto auto minmax(160px, 1fr) auto auto auto;
-    align-items: center;
-    gap: 7px;
-}
-
-.history-control-btn {
-    min-width: 34px;
-    height: 31px;
-    border: 1px solid #bfc8cf;
-    border-radius: 6px;
-    background: #fff;
-    color: #30404c;
-    padding: 0 9px;
-    cursor: pointer;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.history-control-btn:hover:not(:disabled) {
-    background: #f3f6f8;
-}
-
-.history-control-btn:disabled {
-    opacity: .45;
-    cursor: default;
-}
-
-.history-slider-wrap {
-    min-width: 0;
-}
-
-#historySlider {
-    width: 100%;
-    margin: 0;
-}
-
-.history-speed {
-    height: 31px;
-    border: 1px solid #bfc8cf;
-    border-radius: 6px;
-    background: #fff;
-    color: #30404c;
-    padding: 0 7px;
-    font: inherit;
-    font-size: 10px;
-    font-weight: 700;
-}
-
-.history-time-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-top: 7px;
-    color: #55646e;
-    font-size: 10px;
-}
-
-.history-time-main {
-    font-weight: 800;
-    color: #293b47;
-}
-
-.history-time-meta {
-    color: #74818a;
-    text-align: right;
-}
-
-.history-note {
-    margin-top: 7px;
-    color: #75818a;
-    font-size: 9px;
-    line-height: 1.35;
-}
-
-@media (max-width: 900px) {
-    .history-controls {
-        grid-template-columns: auto auto auto 1fr;
-    }
-
-    .history-speed,
-    .history-live-btn {
-        width: 100%;
-    }
-}
-
-@media (max-width: 600px) {
-    .history-controls {
-        grid-template-columns: repeat(3, auto) 1fr;
-    }
-
-    .history-time-row {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .history-time-meta {
-        text-align: left;
-    }
-}
-
-details.diagnostics {
-    margin-top: 12px;
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    background: #fff;
-}
-
-details.diagnostics summary {
-    padding: 10px 11px;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 800;
-    list-style: none;
-}
-
-details.diagnostics summary::-webkit-details-marker { display: none; }
-
-.diagnostic-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 0 9px 9px;
-}
-
-.diag-card {
-    overflow: hidden;
-    border: 1px solid #dde3e7;
-    border-radius: 6px;
-    background: #f7f9fa;
-}
-
-.diag-head {
-    padding: 7px 8px;
-    background: #fff;
-    border-bottom: 1px solid #dde3e7;
-}
-
-.diag-title {
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.diag-desc {
-    margin-top: 2px;
-    color: var(--muted);
-    font-size: 9px;
-}
-
-.diag-card img {
-    display: block;
-    width: 100%;
-    height: auto;
-    min-height: 120px;
-    object-fit: contain;
-    background: #fff;
-}
-
-.diag-card img.diag-load-failed {
-    min-height: 120px;
-    padding: 28px;
-    box-sizing: border-box;
-    color: #7a2f2f;
-    background: #fff5f5;
-}
-
-
-.phase-qc {
-    margin: 0 9px 9px;
-    padding: 10px;
-    border: 1px solid #dde3e7;
-    border-radius: 6px;
-    background: #f7f9fa;
-}
-
-.phase-qc-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 8px;
-}
-
-.phase-qc-title {
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.phase-qc-status {
-    padding: 4px 7px;
-    border-radius: 999px;
-    background: #e8eef2;
-    color: #52606a;
-    font-size: 9px;
-    font-weight: 800;
-    text-transform: uppercase;
-}
-
-.phase-qc-status.good { background: #e6f3e9; color: #2f6b3a; }
-.phase-qc-status.warn { background: #fff2df; color: #8a5a16; }
-
-.phase-qc-grid {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 6px;
-}
-
-.phase-qc-cell {
-    padding: 7px;
-    border: 1px solid #dfe5e9;
-    border-radius: 5px;
-    background: #fff;
-}
-
-.phase-qc-label {
-    color: #6d7982;
-    font-size: 8px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: .04em;
-}
-
-.phase-qc-value {
-    margin-top: 3px;
-    font-size: 12px;
-    font-weight: 800;
-}
-
-.phase-qc-note {
-    margin-top: 7px;
-    color: #697781;
-    font-size: 9px;
-    line-height: 1.35;
-}
-
-@media (max-width: 900px) {
-    .phase-qc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-.footer {
-    margin-top: 12px;
-    color: #7a868e;
-    font-size: 9px;
-    text-align: center;
-}
-
-@media (max-width: 900px) {
-    #map {
-        height: 68vh;
-        min-height: 440px;
-    }
-
-    .info-strip {
-        grid-template-columns: 1fr;
-    }
-
-    .diagnostic-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .brand-subtitle,
-    .status {
-        display: none;
-    }
-}
-
-/* MAP EXPORT UI */
-.export-button { background:#173b52; color:#fff; border-color:#173b52; }
-.export-modal-backdrop { position:fixed; inset:0; z-index:5000; display:none; background:rgba(8,17,24,.58); backdrop-filter:blur(2px); }
-.export-modal-backdrop.open { display:block; }
-.export-modal { position:absolute; top:18px; right:18px; width:360px; max-width:calc(100vw - 36px); max-height:calc(100vh - 36px); overflow-y:auto; background:#fff; border:1px solid #cbd4da; border-radius:10px; box-shadow:0 16px 50px rgba(0,0,0,.28); padding:15px; }
-.export-modal h2 { margin:0; font-size:17px; color:#17232b; }
-.export-modal .export-help { margin:5px 0 13px; color:#65737c; font-size:11px; line-height:1.4; }
-.export-modal .export-section { margin-top:12px; padding-top:11px; border-top:1px solid #e3e8eb; }
-.export-modal .export-section-title { margin-bottom:7px; color:#4f5e67; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
-.export-layer-row { display:flex; align-items:center; gap:8px; padding:5px 0; font-size:12px; }
-.export-layer-row input { accent-color:#173b52; }
-.export-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.export-field label { display:block; margin-bottom:4px; color:#596771; font-size:10px; font-weight:700; }
-.export-field select,.export-field input { width:100%; box-sizing:border-box; padding:7px 8px; border:1px solid #cbd4da; border-radius:5px; background:#fff; font-size:12px; }
-.export-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
-.export-actions button { padding:9px 10px; border-radius:6px; border:1px solid #b8c4cb; font-size:12px; font-weight:800; cursor:pointer; }
-.export-actions .primary { background:#173b52; color:#fff; border-color:#173b52; }
-.export-actions .secondary { background:#f4f6f7; color:#30414c; }
-.export-close { position:absolute; top:10px; right:10px; width:28px; height:28px; border:0; background:transparent; color:#65737c; font-size:20px; cursor:pointer; }
-.export-status { min-height:18px; margin-top:10px; color:#53636d; font-size:10px; line-height:1.4; }
-.export-status.error { color:#9b2f2f; }
-#map.export-capture-mode .leaflet-control-container,#map.export-capture-mode .layer-box,#map.export-capture-mode #loading,#map.export-capture-mode .radar-time { display:none !important; }
-#map.export-capture-mode .map-legend { display:none !important; }
-.export-mode-note { margin-top:8px; padding:7px 8px; border-radius:5px; background:#eef4f7; color:#41545f; font-size:10px; line-height:1.35; }
-
-/* Exported map styling is intentionally larger than the on-screen UI. */
-.export-render-note { color:#687781; font-size:9px; }
-@media (max-width:600px) { .export-modal { top:8px; right:8px; width:calc(100vw - 16px); max-width:none; max-height:calc(100vh - 16px); } }
-
-@media (max-width: 600px) {
-    .container { width: calc(100% - 8px); }
-
-    #map {
-        height: 62vh;
-        min-height: 390px;
-    }
-
-    .layer-box { width: 225px; }
-
-    .search-form {
-        width: 100%;
-    }
-
-    .search-form input {
-        width: 100%;
-    }
-}
-</style>
-</head>
-
-<body>
-
-<header class="topbar">
-    <div class="brand">
-        <div class="brand-mark"></div>
-        <div>
-            <div class="brand-title">WinterRadar</div>
-            <div class="brand-subtitle">MRMS Winter Precipitation Research & Diagnostics</div>
-        </div>
-    </div>
-
-    <div class="top-actions">
-        <div class="status">Auto-refresh every 5 min</div>
-        <button class="button export-button" type="button" onclick="openExportModal()">Export</button>
-        <button class="button" type="button" onclick="refreshData()">Refresh</button>
-    </div>
-</header>
-
-<main class="container">
-
-    <div class="heading">
-        <h1>Current MRMS</h1>
-        <span>Interactive full-CONUS MRMS radar / winter phase viewer • Web Mercator</span>
-    </div>
-
-    <section class="map-card">
-
-        <div class="map-header">
-            <div>
-                <span class="map-title">MRMS Reflectivity + Precipitation Type + Phase Evidence</span>
-                <span class="map-subtitle">Interactive map</span>
-            </div>
-
-            <div class="map-meta">
-                Data: <span id="dataTime">Loading…</span>
-            </div>
-        </div>
-
-        <div class="map-wrap">
-
-            <div id="map"></div>
-
-            <div id="loading" class="loading">
-                Loading MRMS…
-            </div>
-
-            <div id="radarTimeBadge" class="radar-time" title="Valid time of the MRMS reflectivity image">
-                <span class="radar-time-label">MRMS</span>
-                <span id="radarTime">Loading…</span>
-            </div>
-
-            <div class="map-legend" aria-label="WinterRadar map legend">
-                <div class="map-legend-title">Map Legend</div>
-
-                <div id="legendRadar" class="map-legend-section">
-                    <div class="map-legend-label">MRMS Reflectivity (dBZ)</div>
-                    <div class="reflectivity-gradient" aria-label="MRMS reflectivity color scale from 5 to 95 plus dBZ"></div>
-                    <div class="reflectivity-label-row">
-                        <span>5</span><span>15</span><span>25</span><span>35</span><span>45</span><span>50</span><span>60</span><span>70</span><span>80</span><span>95+</span>
-                    </div>
-                </div>
-
-                <div id="legendPrecipType" class="map-legend-section" hidden>
-                    <div class="map-legend-label">National Precipitation Type Composite</div>
-                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
-                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-ice"></span><span>Ice (sleet / FZRA)</span></div>
-                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
-                    <div class="map-legend-note">National mosaic: rain uses the MRMS reflectivity palette; winter precipitation uses phase-specific colors and reflectivity-based intensity.</div>
-                </div>
-
-                <div id="legendPhase" class="map-legend-section" hidden>
-                    <div class="map-legend-label">Winter Phase Mask</div>
-                    <div class="map-legend-items">
-                        <div class="map-legend-item"><span class="map-legend-swatch snow"></span>Snow</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch sleet"></span>Sleet</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch fzra"></span>Freezing rain</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch mixed"></span>Mixed</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch unknown"></span>Uncertain</div>
-                    </div>
-                </div>
-
-                <div id="legendRadarFusion" class="map-legend-section" hidden>
-                    <div class="map-legend-label">Radar Phase Evidence</div>
-                    <div class="map-legend-items">
-                        <div class="map-legend-item"><span class="map-legend-swatch radar-melting"></span>Melting-layer evidence</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch radar-snow"></span>Dry-snow-like evidence</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch radar-both"></span>Both signatures</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch radar-limited"></span>Data limited</div>
-                    </div>
-                </div>
-
-                <div id="legendAgreement" class="map-legend-section" hidden>
-                    <div class="map-legend-label">Phase Agreement</div>
-                    <div class="map-legend-items">
-                        <div class="map-legend-item"><span class="map-legend-swatch agree"></span>Consistent</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch conflict"></span>Conflicting</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch radar-conflict"></span>Radar signatures conflict</div>
-                        <div class="map-legend-item"><span class="map-legend-swatch neutral"></span>No decisive radar signature</div>
-                    </div>
-                    <div class="map-legend-note">The agreement layer compares the RAP/Bourgouin solution with independent MRMS vertical dual-pol evidence.</div>
-                </div>
-            </div>
-
-            <div class="layer-box">
-
-                <button
-                    id="layerToggle"
-                    class="layer-toggle"
-                    type="button"
-                    onclick="toggleLayerPanel()"
-                >
-                    ☰ Layers
-                </button>
-
-                <div id="layerPanel" class="layer-panel">
-
-                    <div class="layer-title">Map layers</div>
-                    <div class="layer-menu-note">Scientific raster products use the full-CONUS national MRMS mosaic.</div>
-
-                    <label class="layer-row">
-                        <input
-                            id="radarToggle"
-                            type="checkbox"
-                            checked
-                            onchange="toggleRadar(this.checked)"
-                        >
-                        <span>MRMS Radar Data</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="precipTypeToggle"
-                            type="checkbox"
-                            onchange="togglePrecipType(this.checked)"
-                        >
-                        <span>Precipitation Type Composite</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="phaseToggle"
-                            type="checkbox"
-                            onchange="togglePhase(this.checked)"
-                        >
-                        <span>Winter Phase Mask</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="radarFusionToggle"
-                            type="checkbox"
-                            onchange="toggleRadarFusion(this.checked)"
-                        >
-                        <span>Radar Phase Evidence</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="phaseAgreementToggle"
-                            type="checkbox"
-                            onchange="togglePhaseAgreement(this.checked)"
-                        >
-                        <span>Phase Agreement</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="cwaToggle"
-                            type="checkbox"
-                            onchange="toggleReferenceLayer('cwa', this.checked)"
-                        >
-                        <span>CWA Borders</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="countyToggle"
-                            type="checkbox"
-                            onchange="toggleReferenceLayer('county', this.checked)"
-                        >
-                        <span>County Boundaries</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="zoneToggle"
-                            type="checkbox"
-                            onchange="toggleReferenceLayer('zone', this.checked)"
-                        >
-                        <span>NWS Forecast Zones</span>
-                    </label>
-
-                    <label class="layer-row">
-                        <input
-                            id="stateToggle"
-                            type="checkbox"
-                            onchange="toggleReferenceLayer('state', this.checked)"
-                        >
-                        <span>State Borders</span>
-                    </label>
-
-                </div>
-            </div>
-
-            <div class="opacity-control" title="0% = full-strength radar; 100% = fully transparent">
-                <label for="opacitySlider">Radar transparency</label>
-                <input
-                    id="opacitySlider"
-                    type="range"
-                    min="0"
-                    max="100"
-                    value="0"
-                    step="1"
-                    oninput="setOverlayOpacity(Number(this.value))"
-                    aria-label="Overlay transparency: 0 percent is full strength and 100 percent is invisible"
-                >
-                <span id="opacityValue" class="opacity-value">0%</span>
-            </div>
-
-            <div class="map-history-control" aria-label="8-hour CONUS MRMS history controls">
-                <button id="mapHistoryPrev" class="map-history-btn" type="button"
-                    onclick="historyStep(-1)" title="Previous frame">◀</button>
-                <button id="mapHistoryPlay" class="map-history-btn" type="button"
-                    onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
-
-                <div class="map-history-slider-wrap">
-                    <input
-                        id="mapHistorySlider"
-                        type="range"
-                        min="0"
-                        max="0"
-                        value="0"
-                        step="1"
-                        disabled
-                        oninput="selectHistoryFrame(Number(this.value), true)"
-                        aria-label="MRMS history time"
-                    >
-                </div>
-
-                <button id="mapHistoryNext" class="map-history-btn" type="button"
-                    onclick="historyStep(1)" title="Next frame">▶</button>
-
-                <button class="map-history-btn map-history-live" type="button"
-                    onclick="showLiveMap()" title="Return to latest MRMS scan">LIVE</button>
-
-                <div id="mapHistoryReadout" class="map-history-readout">LIVE</div>
-            </div>
-
-            <div id="searchResults" class="search-results"></div>
-        </div>
-
-        <div class="map-toolbar">
-
-            <div class="toolbar-group">
-                <form class="search-form" onsubmit="searchPlace(event)">
-                    <input
-                        id="placeSearch"
-                        autocomplete="off"
-                        placeholder="Search a city or town…"
-                    >
-                    <button class="button" type="submit">Search</button>
-                </form>
-            </div>
-
-            <div class="toolbar-group">
-                <button class="button" type="button" onclick="zoomToBTV()">BTV CWA</button>
-                <button class="button" type="button" onclick="zoomToVermont()">Vermont</button>
-                <button class="button" type="button" onclick="zoomRegional()">Regional</button>
-            </div>
-
-        </div>
-
-    </section>
-
-    <div class="info-strip">
-
-        <div class="info-card">
-            <div class="info-label">MRMS image time</div>
-            <div class="info-value" id="lastUpdate">Loading…</div>
-        </div>
-
-        <div class="info-card">
-            <div class="info-label">Overlays at startup</div>
-            <div class="info-value">MRMS radar + precipitation type composite</div>
-        </div>
-
-        <div class="info-card">
-            <div class="info-label">Reference boundaries</div>
-            <div class="info-value">Off until selected in Layers</div>
-        </div>
-
-    </div>
-
-
-    <section class="history-panel">
-
-        <div class="history-head">
-            <div>
-                <div class="history-title">8-Hour CONUS MRMS Time History &amp; Loop</div>
-                <div class="history-subtitle">
-                    Timestamped MRMS observations are archived from NOAA's historical feed.
-                    Use the slider for individual frames or play the loop.
-                </div>
-            </div>
-            <div id="historyStatus" class="history-status">Loading history…</div>
-        </div>
-
-        <div class="history-controls">
-            <button id="historyPrev" class="history-control-btn" type="button" onclick="historyStep(-1)" title="Previous frame">◀</button>
-            <button id="historyPlay" class="history-control-btn" type="button" onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
-            <button id="historyNext" class="history-control-btn" type="button" onclick="historyStep(1)" title="Next frame">▶</button>
-
-            <div class="history-slider-wrap">
-                <input id="historySlider" type="range" min="0" max="0" value="0" step="1" disabled oninput="selectHistoryFrame(Number(this.value), true)">
-            </div>
-
-            <select id="historySpeed" class="history-speed" aria-label="Loop speed" onchange="setHistorySpeed(this.value)">
-                <option value="0.5">0.5×</option>
-                <option value="1" selected>1×</option>
-                <option value="2">2×</option>
-                <option value="4">4×</option>
-            </select>
-
-            <button class="history-control-btn history-live-btn" type="button" onclick="showLiveMap()" title="Return to live radar">LIVE</button>
-            <button class="history-control-btn" type="button" onclick="refreshHistoryManifest()" title="Refresh archived frame list">↻</button>
-        </div>
-
-        <div class="history-time-row">
-            <div>
-                <span class="history-time-main" id="historyTimeMain">History unavailable</span>
-                <span id="historyTimeCount"></span>
-            </div>
-            <div class="history-time-meta" id="historyTimeMeta">—</div>
-        </div>
-
-        <div class="history-note" id="historyNote">
-            Precipitation-type playback uses the most recent archived 10-minute phase/composite snapshot at or before each radar observation.
-        </div>
-
-    </section>
-
-    <details class="diagnostics" ontoggle="if(this.open) refreshDiagnosticImages()">
-        <summary>Diagnostics</summary>
-
-
-        <section class="phase-qc">
-            <div class="phase-qc-head">
-                <div>
-                    <div class="phase-qc-title">Winter Phase Engine QC</div>
-                    <div class="diag-desc">Modified Bourgouin probabilities from the synchronized RAP vertical profile.</div>
-                </div>
-                <div id="phaseQCStatus" class="phase-qc-status">Loading…</div>
-            </div>
-            <div class="phase-qc-grid">
-                <div class="phase-qc-cell"><div class="phase-qc-label">Rain</div><div class="phase-qc-value" id="qcRain">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Snow</div><div class="phase-qc-value" id="qcSnow">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Sleet</div><div class="phase-qc-value" id="qcSleet">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">FZRA</div><div class="phase-qc-value" id="qcFzra">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Mean ME</div><div class="phase-qc-value" id="qcME">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Mean RE</div><div class="phase-qc-value" id="qcRE">—</div></div>
-            </div>
-            <div class="phase-qc-note" id="phaseQCNote">Loading phase diagnostics…</div>
-        </section>
-
-        <div class="diagnostic-grid">
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Phase Probability Layer</div>
-                    <div class="diag-desc">Dominant precipitation type shaded by the model probability. Transparency increases with probability.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_probability.png" alt="Phase probability layer">
-                <div class="diag-open"><a href="./outputs/phase_probability.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Phase Probability / Energy QC</div>
-                    <div class="diag-desc">Rain, snow, sleet, freezing-rain probabilities plus melting/refreezing energy.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_diagnostics.png" alt="Phase probability and energy diagnostics">
-                <div class="diag-open"><a href="./outputs/phase_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">MRMS Diagnostics</div>
-                    <div class="diag-desc">Core MRMS fields and precipitation diagnostics.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/mrms_diagnostics.png" alt="MRMS diagnostics">
-                <div class="diag-open"><a href="./outputs/mrms_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Vertical Dual-Pol</div>
-                    <div class="diag-desc">Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/mrms_vertical_dualpol.png" alt="Vertical dual-pol diagnostic">
-                <div class="diag-open"><a href="./outputs/mrms_vertical_dualpol.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Radar Phase Evidence Fusion</div>
-                    <div class="diag-desc">Independent MRMS dual-pol evidence for melting-layer and dry-snow-like signatures; does not replace the RAP phase solution.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_radar_fusion.png" alt="Radar phase evidence fusion diagnostic">
-                <div class="diag-open"><a href="./outputs/phase_radar_fusion.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Winter Precipitation Diagnostic</div>
-                    <div class="diag-desc">Fields used to develop the winter phase mask.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/winter_mask_diagnostics.png" alt="Winter precipitation diagnostic">
-                <div class="diag-open"><a href="./outputs/winter_mask_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Phase Agreement</div>
-                    <div class="diag-desc">Agreement between the primary RAP/Bourgouin phase solution and independent MRMS vertical dual-pol evidence.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_agreement.png" alt="Phase agreement diagnostic">
-                <div class="diag-open"><a href="./outputs/phase_agreement.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-        </div>
-    </details>
-
-    <div class="footer">
-        WinterRadar • MRMS Winter Precipitation Research & Diagnostics
-    </div>
-
-</main>
-
-<div id="exportModalBackdrop" class="export-modal-backdrop" aria-hidden="true">
-<div id="exportModal" class="export-modal" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
-<button class="export-close" type="button" onclick="closeExportModal()" aria-label="Close export">×</button>
-<h2 id="exportModalTitle">Export Map</h2>
-<div class="export-help">Pan and zoom the map behind this panel to set the exact data frame. The export contains only the map and embedded legend.</div>
-<div class="export-section"><div class="export-section-title">Format</div><div class="export-grid">
-<div class="export-field"><label for="exportFormat">Output</label><select id="exportFormat" onchange="updateExportFormatUI()"><option value="png">PNG — current frame</option><option value="gif">GIF — history loop</option></select></div>
-<div class="export-field"><label for="exportScale">Resolution</label><select id="exportScale"><option value="1">1× — map size</option><option value="1.5">1.5×</option><option value="2">2×</option></select></div></div></div>
-<div class="export-section"><div class="export-section-title">Data layers</div>
-<label class="export-layer-row"><input id="exportRadar" type="checkbox" checked><span>MRMS Radar Data</span></label>
-<label class="export-layer-row"><input id="exportPrecipType" type="checkbox" checked><span>Precipitation Type Composite</span></label>
-<label class="export-layer-row"><input id="exportPhase" type="checkbox"><span>Winter Phase Mask</span></label>
-<label class="export-layer-row"><input id="exportRadarFusion" type="checkbox"><span>Radar Phase Evidence</span></label>
-<label class="export-layer-row"><input id="exportAgreement" type="checkbox"><span>Phase Agreement</span></label>
-<div class="export-mode-note">Basemap and NWS boundary layers remain part of the map view. Dashboard headers, controls, history controls, and other page content are not exported.</div></div>
-<div id="exportGifOptions" class="export-section" style="display:none;"><div class="export-section-title">GIF loop</div><div class="export-grid">
-<div class="export-field"><label for="exportFrameCount">Frames (max 20)</label><input id="exportFrameCount" type="number" min="2" max="20" value="10"></div>
-<div class="export-field"><label for="exportDelay">Loop speed</label><select id="exportDelay"><option value="100">0.10 s</option><option value="200">0.20 s</option><option value="350" selected>0.35 s</option><option value="500">0.50 s</option><option value="750">0.75 s</option><option value="1000">1.00 s</option></select></div></div>
-<div id="exportHistoryInfo" class="export-mode-note">GIF uses archived MRMS history and preserves the current map extent.</div></div>
-<div class="export-actions"><button class="secondary" type="button" onclick="closeExportModal()">Cancel</button><button id="exportStartButton" class="primary" type="button" onclick="startMapExport()">Export PNG</button></div>
-<div id="exportStatus" class="export-status" aria-live="polite"></div>
-</div></div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
-
-<script>
-const AUTO_REFRESH_MS = 5 * 60 * 1000;
-
-const BTV_BOUNDS = [
-    [42.55, -75.30],
-    [45.20, -70.75]
-];
-
-const VERMONT_BOUNDS = [
-    [42.70, -73.45],
-    [45.10, -71.35]
-];
-
-const REGIONAL_BOUNDS = [
-    [40.95, -77.50],
-    [46.15, -68.40]
-];
-
-const NWS_FEATURE_BASE =
-    "https://mapservices.weather.noaa.gov/static/rest/services/" +
-    "nws_reference_maps/nws_reference_map/FeatureServer";
-
-const NWS_LAYER_CONFIG = {
-    cwa: {
-        id: 1,
-        fields: "cwa,wfo,city,state,st"
-    },
-    county: {
-        id: 2,
-        fields: "state,cwa,countyname,fips"
-    },
-    zone: {
-        id: 8,
-        fields: "state,zone,cwa,name,state_zone,shortname"
-    },
-    state: {
-        id: 3,
-        fields: "state,name"
-    }
-};
-
-// CWA and state boundaries are small enough to load in full.
-// Counties and public forecast zones are loaded for the current map extent
-// so the map remains responsive while still showing every applicable
-// boundary in view.
-const NWS_DYNAMIC_LAYERS = {
-    county: true,
-    zone: true
-};
-
-
-const NWS_STYLES = {
-    cwa: {
-        color: "#0e5d8b",
-        weight: 3.0,
-        opacity: 0.95,
-        fill: false
-    },
-
-    county: {
-        color: "#66737d",
-        weight: 1.0,
-        opacity: 0.75,
-        dashArray: "4 4",
-        fill: false
-    },
-
-    zone: {
-        color: "#7a5d2a",
-        weight: 1.0,
-        opacity: 0.85,
-        dashArray: "2 3",
-        fill: false
-    },
-
-    state: {
-        color: "#303b43",
-        weight: 2.2,
-        opacity: 0.90,
-        fill: false
-    }
-};
-
-let map = null;
-
-let radarOverlay = null;
-let phaseOverlay = null;
-let precipTypeOverlay = null;
-let radarFusionOverlay = null;
-let phaseAgreementOverlay = null;
-
-const referenceLayers = {
-    cwa: null,
-    county: null,
-    zone: null,
-    state: null
-};
-
-const referenceLoaded = {
-    cwa: false,
-    county: false,
-    zone: false,
-    state: false
-};
-
-let currentBounds = BTV_BOUNDS.slice();
-
-// Dynamic NWS boundary requests can overlap while the user pans/zooms.
-// Keep only the newest request eligible to install, and debounce moveend so
-// a quick map gesture does not generate a burst of redundant API calls.
-const referenceRequestSerial = { county: 0, zone: 0 };
-let dynamicReferenceRefreshTimer = null;
-
-// All scientific live raster layers use the same full-CONUS MRMS mosaic.
-// Regional presentation copies are intentionally not used because their sparse
-// coverage can make a national layer look partially populated when zoomed in.
-const MRMS_NATIONAL_BOUNDS = [
-    [20.005001, -129.995],
-    [54.995, -60.005002]
-];
-let radarDisplayMode = null;
-let phaseDisplayMode = null;
-let precipTypeDisplayMode = null;
-
-const quickPlaces = [
-    ["Burlington, VT", 44.4759, -73.2121],
-    ["Plattsburgh, NY", 44.6995, -73.4529],
-    ["Montpelier, VT", 44.2601, -72.5754],
-    ["Rutland, VT", 43.6106, -72.9726],
-    ["St. Johnsbury, VT", 44.4198, -72.0151],
-    ["Saranac Lake, NY", 44.3295, -74.1313],
-    ["Massena, NY", 44.9281, -74.8919],
-    ["Middlebury, VT", 43.9770, -73.1680],
-    ["Newport, VT", 44.9364, -72.2051]
-];
-
-
-function initializeMap() {
-
-    // Start clean: only the MRMS reflectivity layer is enabled on page load.
-    // Keep the legend synchronized immediately so the other legend sections
-    // never flash on screen while the live data are loading.
-    const startupLayerDefaults = [
-        ["radarToggle", true],
-        ["precipTypeToggle", false],
-        ["phaseToggle", false],
-        ["radarFusionToggle", false],
-        ["phaseAgreementToggle", false]
-    ];
-
-    startupLayerDefaults.forEach(function(pair) {
-        const checkbox = document.getElementById(pair[0]);
-        if (checkbox) checkbox.checked = pair[1];
-    });
-
-    updateDynamicMapLegend();
-
-    map = L.map("map", {
-        zoomControl: true,
-        preferCanvas: true
-    });
-
-    L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/" +
-        "World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-        {
-            maxZoom: 19,
-            attribution:
-                "Tiles © Esri — Esri, DeLorme, NAVTEQ, TomTom"
-        }
-    ).addTo(map);
-
-    map.fitBounds(BTV_BOUNDS, {
-        padding: [10, 10]
-    });
-
-    map.on("zoomend", function() {
-        updateLayerScaleHints();
-        refreshRadarResolutionOnView();
-        refreshPhaseResolutionOnView();
-        refreshPrecipTypeResolutionOnView();
-    });
-
-    map.on("moveend", function() {
-        refreshRadarResolutionOnView();
-        refreshPhaseResolutionOnView();
-        refreshPrecipTypeResolutionOnView();
-
-        if (dynamicReferenceRefreshTimer) {
-            clearTimeout(dynamicReferenceRefreshTimer);
-        }
-
-        dynamicReferenceRefreshTimer = setTimeout(function() {
-            ["county", "zone"].forEach(function(name) {
-                const checkbox = document.getElementById(
-                    name === "county" ? "countyToggle" : "zoneToggle"
-                );
-
-                if (checkbox && checkbox.checked) {
-                    refreshDynamicReferenceLayer(name);
-                }
-            });
-        }, 250);
-    });
-}
-
-
-function createImageOverlay(
-    url,
-    bounds,
-    opacity,
-    zIndex,
-    crossOrigin = true,
-    className = ""
-) {
-
-    const options = {
-        opacity: opacity,
-        interactive: false,
-        zIndex: zIndex
-    };
-
-    if (className) {
-        options.className = className;
-    }
-
-    if (crossOrigin) {
-        options.crossOrigin = true;
-    }
-
-    return L.imageOverlay(
-        url,
-        bounds,
-        options
-    );
-}
-
-
-function radarDisplaySpec() {
-    return {
-        mode: "national",
-        url: "./outputs/mrms_current_web.png?v=" + Date.now(),
-        bounds: MRMS_NATIONAL_BOUNDS
-    };
-}
-
-
-function phaseDisplaySpec() {
-    return {
-        mode: "national",
-        url: "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
-        bounds: MRMS_NATIONAL_BOUNDS
-    };
-}
-
-
-function precipTypeDisplaySpec() {
-    return {
-        mode: "national",
-        url: "./outputs/winter_precip_type_web.png?v=" + Date.now(),
-        bounds: MRMS_NATIONAL_BOUNDS
-    };
-}
-
-
-function loadCurrentPrecipTypeOverlay(force = false) {
-    if (historyMode || !currentBounds) {
-        return;
-    }
-
-    if (!document.getElementById("precipTypeToggle")?.checked) {
-        removeMapOverlay(precipTypeOverlay);
-        precipTypeOverlay = null;
-        precipTypeDisplayMode = null;
-        return;
-    }
-
-    const spec = precipTypeDisplaySpec();
-
-    if (!force && precipTypeOverlay && precipTypeDisplayMode === spec.mode) {
-        return;
-    }
-
-    removeMapOverlay(precipTypeOverlay);
-    precipTypeOverlay = null;
-    precipTypeDisplayMode = spec.mode;
-
-    precipTypeOverlay = createImageOverlay(
-        spec.url,
-        spec.bounds,
-        overlayOpacity,
-        540,
-        true,
-        "winter-raster-sharp"
-    );
-
-    precipTypeOverlay.addTo(map);
-    precipTypeOverlay.setOpacity(overlayOpacity);
-
-    precipTypeOverlay.on("error", function() {
-        console.warn("Full-CONUS precipitation-type composite is not available yet.");
-        document.getElementById("precipTypeToggle").checked = false;
-        removeMapOverlay(precipTypeOverlay);
-        precipTypeOverlay = null;
-        precipTypeDisplayMode = null;
-        updateDynamicMapLegend();
-    });
-}
-
-
-function refreshPrecipTypeResolutionOnView() {
-    // The live composite is always the full national MRMS mosaic.
-    return;
-}
-
-
-function loadCurrentPhaseOverlay(force = false) {
-    if (historyMode || !currentBounds) {
-        return;
-    }
-
-    if (!document.getElementById("phaseToggle")?.checked) {
-        removeMapOverlay(phaseOverlay);
-        phaseOverlay = null;
-        phaseDisplayMode = null;
-        return;
-    }
-
-    const spec = phaseDisplaySpec();
-
-    if (!force && phaseOverlay && phaseDisplayMode === spec.mode) {
-        return;
-    }
-
-    removeMapOverlay(phaseOverlay);
-    phaseOverlay = null;
-    phaseDisplayMode = spec.mode;
-
-    phaseOverlay = createImageOverlay(
-        spec.url,
-        spec.bounds,
-        overlayOpacity,
-        550,
-        true,
-        "winter-raster-sharp"
-    );
-
-    phaseOverlay.addTo(map);
-    phaseOverlay.setOpacity(overlayOpacity);
-
-    phaseOverlay.on("error", function() {
-        if (phaseDisplayMode === "close") {
-            console.warn("Regional sharp winter mask unavailable; using full-CONUS mask.");
-            phaseDisplayMode = null;
-            loadCurrentPhaseOverlay(true);
-        } else {
-            console.warn("Full-CONUS winter phase mask is not available yet.");
-            document.getElementById("phaseToggle").checked = false;
-            removeMapOverlay(phaseOverlay);
-            phaseOverlay = null;
-            phaseDisplayMode = null;
-            updateDynamicMapLegend();
-        }
-    });
-}
-
-
-function refreshPhaseResolutionOnView() {
-    // The live phase mask is always the full national MRMS mosaic.
-    return;
-}
-
-
-function loadCurrentRadarOverlay(force = false) {
-    if (historyMode || !currentBounds) {
-        return;
-    }
-
-    if (!document.getElementById("radarToggle")?.checked) {
-        removeMapOverlay(radarOverlay);
-        radarOverlay = null;
-        radarDisplayMode = null;
-        return;
-    }
-
-    const spec = radarDisplaySpec();
-
-    if (!force && radarOverlay && radarDisplayMode === spec.mode) {
-        return;
-    }
-
-    removeMapOverlay(radarOverlay);
-    radarOverlay = null;
-    radarDisplayMode = spec.mode;
-
-    radarOverlay = createImageOverlay(
-        spec.url,
-        spec.bounds,
-        overlayOpacity,
-        500,
-        true,
-        "winter-radar-raster"
-    );
-
-    radarOverlay.addTo(map);
-    radarOverlay.setOpacity(overlayOpacity);
-
-    radarOverlay.on("error", function() {
-        console.warn("Full-CONUS MRMS raster is not available yet.");
-        document.getElementById("radarToggle").checked = false;
-        removeMapOverlay(radarOverlay);
-        radarOverlay = null;
-        radarDisplayMode = null;
-        updateDynamicMapLegend();
-    });
-}
-
-
-function refreshRadarResolutionOnView() {
-    // The live MRMS reflectivity layer is always the full national mosaic.
-    return;
-}
-
-
-function loadRadarLayers(metadata) {
-
-    if (
-        metadata &&
-        Array.isArray(metadata.bounds) &&
-        metadata.bounds.length === 4
-    ) {
-
-        const south = Number(metadata.bounds[0]);
-        const west = Number(metadata.bounds[1]);
-        const north = Number(metadata.bounds[2]);
-        const east = Number(metadata.bounds[3]);
-
-        if (
-            Number.isFinite(south) &&
-            Number.isFinite(west) &&
-            Number.isFinite(north) &&
-            Number.isFinite(east) &&
-            south < north &&
-            west < east
-        ) {
-            currentBounds = [
-                [south, west],
-                [north, east]
-            ];
-        }
-    }
-
-    if (
-        document.getElementById("radarToggle").checked &&
-        currentBounds
-    ) {
-        loadCurrentRadarOverlay();
-    }
-
-    if (
-        document.getElementById("phaseToggle").checked &&
-        currentBounds
-    ) {
-        loadCurrentPhaseOverlay(true);
-    }
-
-    if (
-        document.getElementById("precipTypeToggle").checked &&
-        currentBounds
-    ) {
-        loadCurrentPrecipTypeOverlay(true);
-    }
-
-    loadRadarFusionLayer();
-    loadPhaseAgreementLayer();
-}
-
-
-function loadRadarFusionLayer() {
-
-    if (historyMode) {
-        return;
-    }
-
-    if (!document.getElementById("radarFusionToggle")?.checked || !currentBounds) {
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = null;
-        return;
-    }
-
-    removeMapOverlay(radarFusionOverlay);
-
-    radarFusionOverlay = createImageOverlay(
-        "./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(),
-        MRMS_NATIONAL_BOUNDS,
-        overlayOpacity,
-        575,
-        true,
-        "winter-raster-sharp"
-    );
-
-    radarFusionOverlay.addTo(map);
-    radarFusionOverlay.setOpacity(overlayOpacity);
-
-    let radarFusionRetried = false;
-    radarFusionOverlay.on("error", function() {
-        if (!radarFusionRetried) {
-            radarFusionRetried = true;
-            console.warn("Radar phase evidence PNG did not decode; retrying once without cache.");
-            removeMapOverlay(radarFusionOverlay);
-            radarFusionOverlay = createImageOverlay(
-                "./outputs/phase_radar_fusion_overlay_web.png?retry=" + Date.now(),
-                MRMS_NATIONAL_BOUNDS,
-                overlayOpacity,
-                575,
-                true,
-                "winter-raster-sharp"
-            );
-            radarFusionOverlay.addTo(map);
-            radarFusionOverlay.setOpacity(overlayOpacity);
-            radarFusionOverlay.on("error", function() {
-                console.warn("Full-CONUS radar phase evidence overlay could not be decoded or loaded.");
-                document.getElementById("radarFusionToggle").checked = false;
-                removeMapOverlay(radarFusionOverlay);
-                radarFusionOverlay = null;
-                updateDynamicMapLegend();
-            });
-            return;
-        }
-
-        console.warn("Full-CONUS radar phase evidence overlay could not be decoded or loaded.");
-        document.getElementById("radarFusionToggle").checked = false;
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = null;
-        updateDynamicMapLegend();
-    });
-}
-
-
-function loadPhaseAgreementLayer() {
-
-    if (historyMode) {
-        return;
-    }
-
-    if (!document.getElementById("phaseAgreementToggle")?.checked || !currentBounds) {
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = null;
-        return;
-    }
-
-    removeMapOverlay(phaseAgreementOverlay);
-
-    phaseAgreementOverlay = createImageOverlay(
-        "./outputs/phase_agreement_overlay_web.png?v=" + Date.now(),
-        MRMS_NATIONAL_BOUNDS,
-        overlayOpacity,
-        585,
-        true,
-        "winter-raster-sharp"
-    );
-
-    phaseAgreementOverlay.addTo(map);
-    phaseAgreementOverlay.setOpacity(overlayOpacity);
-
-    let phaseAgreementRetried = false;
-    phaseAgreementOverlay.on("error", function() {
-        if (!phaseAgreementRetried) {
-            phaseAgreementRetried = true;
-            console.warn("Phase agreement PNG did not decode; retrying once without cache.");
-            removeMapOverlay(phaseAgreementOverlay);
-            phaseAgreementOverlay = createImageOverlay(
-                "./outputs/phase_agreement_overlay_web.png?retry=" + Date.now(),
-                MRMS_NATIONAL_BOUNDS,
-                overlayOpacity,
-                585,
-                true,
-                "winter-raster-sharp"
-            );
-            phaseAgreementOverlay.addTo(map);
-            phaseAgreementOverlay.setOpacity(overlayOpacity);
-            phaseAgreementOverlay.on("error", function() {
-                console.warn("Full-CONUS phase agreement overlay could not be decoded or loaded.");
-                document.getElementById("phaseAgreementToggle").checked = false;
-                removeMapOverlay(phaseAgreementOverlay);
-                phaseAgreementOverlay = null;
-                updateDynamicMapLegend();
-            });
-            return;
-        }
-
-        console.warn("Full-CONUS phase agreement overlay could not be decoded or loaded.");
-        document.getElementById("phaseAgreementToggle").checked = false;
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = null;
-        updateDynamicMapLegend();
-    });
-}
-
-
-function togglePhaseAgreement(enabled) {
-
-    updateDynamicMapLegend();
-
-    if (historyMode) {
-        document.getElementById("phaseAgreementToggle").checked = false;
-        return;
-    }
-
-    if (enabled) {
-        loadPhaseAgreementLayer();
-    } else {
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = null;
-    }
-}
-
-
-function toggleRadarFusion(enabled) {
-
-    updateDynamicMapLegend();
-
-    if (historyMode) {
-        document.getElementById("radarFusionToggle").checked = false;
-        return;
-    }
-
-    if (enabled) {
-        loadRadarFusionLayer();
-    } else {
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = null;
-    }
-}
-
-
-function updateDynamicMapLegend() {
-    // The map legend is a direct reflection of the current Layers menu.
-    // Do not leave legend entries visible simply because their products exist
-    // on the server; only show an entry when that layer is actually enabled.
-    const mapping = [
-        ["legendRadar", "radarToggle"],
-        ["legendPrecipType", "precipTypeToggle"],
-        ["legendPhase", "phaseToggle"],
-        ["legendRadarFusion", "radarFusionToggle"],
-        ["legendAgreement", "phaseAgreementToggle"]
-    ];
-
-    let visible = 0;
-    mapping.forEach(function(pair) {
-        const section = document.getElementById(pair[0]);
-        const checkbox = document.getElementById(pair[1]);
-        if (!section) return;
-
-        const show = !!(checkbox && checkbox.checked);
-        section.hidden = !show;
-        section.style.display = show ? "" : "none";
-        if (show) visible += 1;
-    });
-
-    const legend = document.querySelector(".map-legend");
-    if (legend) {
-        legend.hidden = visible === 0;
-        legend.classList.toggle("map-legend-empty", visible === 0);
-    }
-}
-
-
-function toggleRadar(enabled) {
-
-    updateDynamicMapLegend();
-
-    if (historyMode) {
-        if (historyFrames.length) {
-            renderHistoryFrame(historyIndex, false);
-        }
-        return;
-    }
-
-    if (enabled) {
-        loadCurrentRadarOverlay(true);
-    } else {
-        removeMapOverlay(radarOverlay);
-        radarOverlay = null;
-        radarDisplayMode = null;
-    }
-}
-
-
-function togglePrecipType(enabled) {
-
-    updateDynamicMapLegend();
-
-    if (historyMode) {
-        if (historyFrames.length) {
-            renderHistoryFrame(historyIndex, false);
-        }
-        return;
-    }
-
-    if (enabled) {
-        loadCurrentPrecipTypeOverlay(true);
-    } else {
-        removeMapOverlay(precipTypeOverlay);
-        precipTypeOverlay = null;
-        precipTypeDisplayMode = null;
-    }
-}
-
-
-function togglePhase(enabled) {
-
-    updateDynamicMapLegend();
-
-    if (historyMode) {
-        if (historyFrames.length) {
-            renderHistoryFrame(historyIndex, false);
-        }
-        return;
-    }
-
-    if (enabled) {
-        loadCurrentPhaseOverlay(true);
-    } else {
-        removeMapOverlay(phaseOverlay);
-        phaseOverlay = null;
-        phaseDisplayMode = null;
-    }
-}
-
-
-async function toggleReferenceLayer(name, enabled) {
-
-    if (!enabled) {
-
-        if (NWS_DYNAMIC_LAYERS[name]) {
-            referenceRequestSerial[name] += 1;
-        }
-
-        if (
-            referenceLayers[name] &&
-            map.hasLayer(referenceLayers[name])
-        ) {
-            map.removeLayer(referenceLayers[name]);
-        }
-
-        return;
-    }
-
-    try {
-        if (!referenceLoaded[name]) {
-            await loadReferenceLayer(name);
-        } else if (NWS_DYNAMIC_LAYERS[name]) {
-            await refreshDynamicReferenceLayer(name);
-        }
-
-        const layer = referenceLayers[name];
-
-        if (layer && !map.hasLayer(layer)) {
-            layer.addTo(map);
-        }
-
-    } catch (error) {
-        console.error("Unable to enable NWS " + name + " layer:", error);
-
-        const checkbox = document.getElementById(
-            name === "county"
-                ? "countyToggle"
-                : name === "zone"
-                    ? "zoneToggle"
-                    : name === "state"
-                        ? "stateToggle"
-                        : "cwaToggle"
-        );
-
-        if (checkbox) {
-            checkbox.checked = false;
-        }
-    }
-}
-
-
-function getMapExtent4326() {
-
-    const bounds = map.getBounds();
-
-    return {
-        west: bounds.getWest(),
-        south: bounds.getSouth(),
-        east: bounds.getEast(),
-        north: bounds.getNorth()
-    };
-}
-
-
-async function fetchNWSGeoJSON(name, extent) {
-
-    const config = NWS_LAYER_CONFIG[name];
-
-    if (!config) {
-        throw new Error("Unknown NWS layer: " + name);
-    }
-
-    const url =
-        NWS_FEATURE_BASE +
-        "/" + config.id + "/query";
-
-    const baseParams = new URLSearchParams();
-
-    baseParams.set("where", "1=1");
-    baseParams.set("outFields", config.fields);
-    baseParams.set("returnGeometry", "true");
-    baseParams.set("outSR", "4326");
-    baseParams.set("f", "geojson");
-    baseParams.set("returnExceededLimitFeatures", "true");
-    // Stay below the service's common max-record limit and explicitly page
-    // through larger county/zone responses so boundaries are not silently
-    // truncated when the current extent contains many features.
-    baseParams.set("resultRecordCount", "1000");
-
-    if (extent) {
-        baseParams.set(
-            "geometry",
-            [
-                extent.west,
-                extent.south,
-                extent.east,
-                extent.north
-            ].join(",")
-        );
-        baseParams.set("geometryType", "esriGeometryEnvelope");
-        baseParams.set("inSR", "4326");
-        baseParams.set("spatialRel", "esriSpatialRelIntersects");
-    }
-
-    const allFeatures = [];
-    let offset = 0;
-    let page = 0;
-
-    while (true) {
-        const params = new URLSearchParams(baseParams);
-        params.set("resultOffset", String(offset));
-
-        const response = await fetch(
-            url + "?" + params.toString(),
-            { cache: "no-store" }
-        );
-
-        if (!response.ok) {
-            throw new Error(
-                "NWS layer " + name + " request failed: " + response.status
-            );
-        }
-
-        const geojson = await response.json();
-
-        if (geojson.error) {
-            throw new Error(
-                "NWS layer " + name + " returned an error: " +
-                JSON.stringify(geojson.error)
-            );
-        }
-
-        const features = Array.isArray(geojson.features)
-            ? geojson.features
-            : [];
-
-        allFeatures.push(...features);
-        page += 1;
-
-        const exceeded = Boolean(geojson.exceededTransferLimit);
-        if (!exceeded || features.length === 0) {
-            break;
-        }
-
-        offset += features.length;
-
-        // Safety valve against a misbehaving service returning the same page.
-        if (page >= 50) {
-            console.warn(
-                "NWS " + name + " pagination reached 50 pages; stopping."
-            );
-            break;
-        }
-    }
-
-    return {
-        type: "FeatureCollection",
-        features: allFeatures
-    };
-}
-
-
-function installReferenceGeoJSON(name, geojson) {
-
-    if (
-        referenceLayers[name] &&
-        map.hasLayer(referenceLayers[name])
-    ) {
-        map.removeLayer(referenceLayers[name]);
-    }
-
-    referenceLayers[name] = L.geoJSON(
-        geojson,
-        {
-            style: NWS_STYLES[name],
-            interactive: false
-        }
-    );
-
-    if (referenceLayers[name]) {
-        referenceLayers[name].addTo(map);
-    }
-}
-
-
-async function loadReferenceLayer(name) {
-
-    if (referenceLoaded[name]) {
-        return;
-    }
-
-    // Counties and public forecast zones are loaded for the current map
-    // extent. CWA and state layers load all features.
-    const extent = NWS_DYNAMIC_LAYERS[name]
-        ? getMapExtent4326()
-        : null;
-
-    const geojson = await fetchNWSGeoJSON(name, extent);
-
-    installReferenceGeoJSON(name, geojson);
-
-    referenceLoaded[name] = true;
-
-    console.info(
-        "Loaded NWS " + name + " layer: " +
-        ((geojson.features || []).length) + " features"
-    );
-}
-
-
-async function refreshDynamicReferenceLayer(name) {
-
-    if (!NWS_DYNAMIC_LAYERS[name]) {
-        return;
-    }
-
-    const checkbox = document.getElementById(
-        name === "county" ? "countyToggle" : "zoneToggle"
-    );
-
-    if (!checkbox || !checkbox.checked) {
-        return;
-    }
-
-    const requestId = ++referenceRequestSerial[name];
-    const extent = getMapExtent4326();
-
-    try {
-        const geojson = await fetchNWSGeoJSON(name, extent);
-
-        // A newer pan/zoom request may have completed while this request was
-        // in flight. Never replace the newest map with an older response.
-        if (requestId !== referenceRequestSerial[name]) {
-            return;
-        }
-
-        const currentCheckbox = document.getElementById(
-            name === "county" ? "countyToggle" : "zoneToggle"
-        );
-        if (!currentCheckbox || !currentCheckbox.checked) {
-            return;
-        }
-
-        installReferenceGeoJSON(name, geojson);
-        referenceLoaded[name] = true;
-
-        console.info(
-            "Refreshed NWS " + name + " layer for current map extent: " +
-            ((geojson.features || []).length) + " features"
-        );
-    } catch (error) {
-        if (requestId === referenceRequestSerial[name]) {
-            console.error(
-                "Unable to refresh NWS " + name + " layer:",
-                error
-            );
-        }
-    }
-}
-
-
-function updateLayerScaleHints() {
-
-    /*
-     * All reference layers are boundary-only.
-     * No NWS server-side labels are used, so zone numbers cannot
-     * unexpectedly appear at any zoom level.
-     *
-     * The visibility stays entirely under the user's control.
-     */
-}
-
-
-function toggleLayerPanel() {
-
-    const panel = document.getElementById("layerPanel");
-
-    panel.classList.toggle("open");
-}
-
-
-function zoomToBTV() {
-
-    map.fitBounds(
-        BTV_BOUNDS,
-        {
-            padding: [12, 12]
-        }
-    );
-}
-
-
-function zoomToVermont() {
-
-    map.fitBounds(
-        VERMONT_BOUNDS,
-        {
-            padding: [12, 12]
-        }
-    );
-}
-
-
-function zoomRegional() {
-
-    map.fitBounds(
-        REGIONAL_BOUNDS,
-        {
-            padding: [12, 12]
-        }
-    );
-}
-
-
-function addQuickResults() {
-
-    const container =
-        document.getElementById("searchResults");
-
-    container.innerHTML = "";
-
-    const heading =
-        document.createElement("div");
-
-    heading.className = "result-row";
-
-    heading.innerHTML =
-        "<strong>Quick locations</strong>" +
-        "<span>Click to zoom</span>";
-
-    container.appendChild(heading);
-
-    quickPlaces.forEach(function(place) {
-
-        const row =
-            document.createElement("div");
-
-        row.className = "result-row";
-
-        const strong =
-            document.createElement("strong");
-
-        strong.textContent = place[0];
-
-        const span =
-            document.createElement("span");
-
-        span.textContent = "Regional quick zoom";
-
-        row.appendChild(strong);
-        row.appendChild(span);
-
-        row.onclick = function() {
-
-            map.setView(
-                [place[1], place[2]],
-                11
-            );
-
-            closeSearchResults();
-        };
-
-        container.appendChild(row);
-    });
-
-    container.classList.add("open");
-}
-
-
-function closeSearchResults() {
-
-    const container =
-        document.getElementById("searchResults");
-
-    container.classList.remove("open");
-}
-
-
-async function searchPlace(event) {
-
-    event.preventDefault();
-
-    const input =
-        document.getElementById("placeSearch");
-
-    const query =
-        (input.value || "").trim();
-
-    if (!query) {
-        addQuickResults();
-        return;
-    }
-
-    const container =
-        document.getElementById("searchResults");
-
-    container.innerHTML =
-        "<div class='result-row'>" +
-        "<strong>Searching…</strong>" +
-        "<span>" +
-        escapeHtml(query) +
-        "</span></div>";
-
-    container.classList.add("open");
-
-    try {
-
-        const url =
-            "https://nominatim.openstreetmap.org/search" +
-            "?format=jsonv2" +
-            "&limit=6" +
-            "&addressdetails=1" +
-            "&countrycodes=us,ca" +
-            "&q=" +
-            encodeURIComponent(query);
-
-        const response =
-            await fetch(url);
-
-        if (!response.ok) {
-            throw new Error("Geocoder failed");
-        }
-
-        const results =
-            await response.json();
-
-        container.innerHTML = "";
-
-        if (!results.length) {
-
-            container.innerHTML =
-                "<div class='result-row'>" +
-                "<strong>No results</strong>" +
-                "<span>Try a town or city name.</span>" +
-                "</div>";
-
-            return;
-        }
-
-        results.forEach(function(result) {
-
-            const row =
-                document.createElement("div");
-
-            row.className = "result-row";
-
-            const title =
-                document.createElement("strong");
-
-            title.textContent =
-                result.display_name.split(",")[0];
-
-            const detail =
-                document.createElement("span");
-
-            detail.textContent =
-                result.display_name;
-
-            row.appendChild(title);
-            row.appendChild(detail);
-
-            row.onclick = function() {
-
-                const lat =
-                    Number(result.lat);
-
-                const lon =
-                    Number(result.lon);
-
-                if (
-                    Number.isFinite(lat) &&
-                    Number.isFinite(lon)
-                ) {
-
-                    map.setView(
-                        [lat, lon],
-                        11
-                    );
-
-                    closeSearchResults();
-                }
-            };
-
-            container.appendChild(row);
-        });
-
-    } catch (error) {
-
-        console.error(error);
-
-        container.innerHTML =
-            "<div class='result-row'>" +
-            "<strong>Search unavailable</strong>" +
-            "<span>Use the quick locations or zoom manually.</span>" +
-            "</div>";
-    }
-}
-
-
-function escapeHtml(value) {
-
-    return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-}
-
-
-
-/* ------------------------------------------------------------
-   24-HOUR MRMS HISTORY / LOOP
------------------------------------------------------------- */
-let historyFrames = [];
-let historyPhases = [];
-let historyIndex = -1;
-let historyMode = false;
-let historyPlaying = false;
-let historyTimer = null;
-let historySpeed = 1;
-let historyBounds = null;
-let historyRefreshBusy = false;
-let overlayOpacity = 1.0;
-
-// History slider state. Do not rewrite a slider while the user is adjusting it.
-// Image loads are throttled so rapid dragging does not create competing requests.
-let historySliderRenderTimer = null;
-let historySliderIsActive = false;
-
-// Pending historical layers are intentionally kept separate from the
-// currently displayed layers. This prevents the map from going blank while
-// a new GitHub Release image is still loading.
-let pendingHistoryRadar = null;
-let pendingHistoryPhase = null;
-let pendingHistoryPrecipType = null;
-let historyRenderRequest = 0;
-
-
-function applyOverlayOpacity() {
-    if (radarOverlay) {
-        radarOverlay.setOpacity(
-            document.getElementById("radarToggle").checked ? overlayOpacity : 0
-        );
-    }
-
-    if (phaseOverlay) {
-        phaseOverlay.setOpacity(
-            document.getElementById("phaseToggle").checked ? overlayOpacity : 0
-        );
-    }
-
-    if (precipTypeOverlay) {
-        precipTypeOverlay.setOpacity(
-            document.getElementById("precipTypeToggle")?.checked ? overlayOpacity : 0
-        );
-    }
-
-    if (radarFusionOverlay) {
-        radarFusionOverlay.setOpacity(
-            document.getElementById("radarFusionToggle")?.checked ? overlayOpacity : 0
-        );
-    }
-
-    if (phaseAgreementOverlay) {
-        phaseAgreementOverlay.setOpacity(
-            document.getElementById("phaseAgreementToggle")?.checked ? overlayOpacity : 0
-        );
-    }
-}
-
-
-function setOverlayOpacity(percent) {
-    const value = Math.max(0, Math.min(100, Number(percent) || 0));
-
-    // The UI is intentionally inverted to match the requested behavior:
-    // 0% = radar at full visual strength, 100% = completely invisible.
-    overlayOpacity = 1 - (value / 100);
-
-    const slider = document.getElementById("opacitySlider");
-    const label = document.getElementById("opacityValue");
-
-    if (slider) slider.value = String(value);
-    if (label) label.textContent = value + "%";
-
-    applyOverlayOpacity();
-}
-
-
-function formatUtcTime(value) {
-    const dt = new Date(value);
-    if (!Number.isFinite(dt.getTime())) return "Invalid time";
-
-    return new Intl.DateTimeFormat("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-        timeZone: "UTC",
-        timeZoneName: "short"
-    }).format(dt);
-}
-
-
-function formatLocalTime(value) {
-    const dt = new Date(value);
-    if (!Number.isFinite(dt.getTime())) return "Invalid time";
-
-    return new Intl.DateTimeFormat(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        second: "2-digit",
-        timeZoneName: "short"
-    }).format(dt);
-}
-
-
-function historySliderHasFocus() {
-    return [
-        document.getElementById("historySlider"),
-        document.getElementById("mapHistorySlider")
-    ].some(function(slider) {
-        return slider && document.activeElement === slider;
-    });
-}
-
-
-function syncHistorySliderValues() {
-    if (historySliderIsActive || historySliderHasFocus()) {
-        return;
-    }
-
-    const value = String(
-        historyIndex >= 0 && historyIndex < historyFrames.length
-            ? historyIndex
-            : 0
-    );
-
-    const slider = document.getElementById("historySlider");
-    const mapSlider = document.getElementById("mapHistorySlider");
-
-    if (slider) slider.value = value;
-    if (mapSlider) mapSlider.value = value;
-}
-
-
-function updateHistoryControls() {
-    const slider = document.getElementById("historySlider");
-    const prev = document.getElementById("historyPrev");
-    const next = document.getElementById("historyNext");
-    const play = document.getElementById("historyPlay");
-    const speed = document.getElementById("historySpeed");
-
-    const hasFrames = historyFrames.length > 0;
-
-    if (slider) {
-        slider.disabled = !hasFrames;
-        slider.max = String(Math.max(historyFrames.length - 1, 0));
-    }
-
-    if (prev) prev.disabled = !hasFrames || historyIndex <= 0;
-    if (next) next.disabled = !hasFrames || historyIndex >= historyFrames.length - 1;
-
-    if (play) {
-        play.disabled = historyFrames.length < 2;
-        play.textContent = historyPlaying ? "❚❚" : "▶";
-    }
-
-    if (speed) speed.value = String(historySpeed);
-
-    const mapSlider = document.getElementById("mapHistorySlider");
-    const mapPrev = document.getElementById("mapHistoryPrev");
-    const mapNext = document.getElementById("mapHistoryNext");
-    const mapPlay = document.getElementById("mapHistoryPlay");
-
-    if (mapSlider) {
-        mapSlider.disabled = !hasFrames;
-        mapSlider.max = String(Math.max(historyFrames.length - 1, 0));
-    }
-
-    if (mapPrev) {
-        mapPrev.disabled = !hasFrames || historyIndex <= 0;
-    }
-
-    if (mapNext) {
-        mapNext.disabled =
-            !hasFrames || historyIndex >= historyFrames.length - 1;
-    }
-
-    if (mapPlay) {
-        mapPlay.disabled = historyFrames.length < 2;
-        mapPlay.textContent = historyPlaying ? "❚❚" : "▶";
-    }
-
-    // Only change the slider thumb when the user is not actively adjusting it.
-    syncHistorySliderValues();
-}
-
-function updateHistoryReadout() {
-    const main = document.getElementById("historyTimeMain");
-    const count = document.getElementById("historyTimeCount");
-    const meta = document.getElementById("historyTimeMeta");
-    const status = document.getElementById("historyStatus");
-    const mapReadout = document.getElementById("mapHistoryReadout");
-
-    if (!main || !count || !meta || !status) return;
-
-    if (!historyFrames.length || historyIndex < 0 || historyIndex >= historyFrames.length) {
-        main.textContent = "History unavailable";
-        count.textContent = "";
-        meta.textContent = "—";
-        status.textContent = "Unavailable";
-        status.className = "history-status";
-        if (mapReadout) mapReadout.textContent = "History unavailable";
-        return;
-    }
-
-    const frame = historyFrames[historyIndex];
-    main.textContent = formatUtcTime(frame.timestamp_utc);
-    count.textContent = "  •  Frame " + (historyIndex + 1) + " of " + historyFrames.length;
-
-    const phaseTime = frame.phase_timestamp_utc
-        ? formatUtcTime(frame.phase_timestamp_utc)
-        : "No archived phase snapshot";
-
-    meta.textContent =
-        "Local: " + formatLocalTime(frame.timestamp_utc) +
-        "  •  Phase: " + phaseTime;
-
-    // Keep the main map time badge synchronized with history selection.
-    const historyDisplay = formatLocalTime(frame.timestamp_utc);
-    document.getElementById("radarTime").textContent = historyDisplay;
-    document.getElementById("dataTime").textContent = historyDisplay;
-    document.getElementById("lastUpdate").textContent = historyDisplay;
-
-    if (mapReadout) {
-        mapReadout.textContent =
-            historyMode
-                ? historyDisplay + "  •  " + (historyIndex + 1) + "/" + historyFrames.length
-                : "LIVE";
-    }
-
-    if (historyMode && historyPlaying) {
-        status.textContent = "Playing history";
-        status.className = "history-status playing";
-    } else if (historyMode) {
-        status.textContent = "History mode";
-        status.className = "history-status";
-    } else {
-        status.textContent = "LIVE";
-        status.className = "history-status live";
-    }
-}
-
-
-function setHistoryStatus(textValue, className) {
-    const status = document.getElementById("historyStatus");
-    if (!status) return;
-    status.textContent = textValue;
-    status.className = "history-status" + (className ? " " + className : "");
-}
-
-
-async function refreshHistoryManifest() {
-    if (historyRefreshBusy) return;
-    historyRefreshBusy = true;
-
-    const previouslySelected =
-        historyFrames[historyIndex]
-            ? historyFrames[historyIndex].timestamp_utc
-            : null;
-
-    try {
-        const response = await fetch(
-            "./outputs/mrms_history.json?v=" + Date.now(),
-            { cache: "no-store" }
-        );
-
-        if (!response.ok) {
-            throw new Error("History manifest unavailable: " + response.status);
-        }
-
-        const manifest = await response.json();
-        const frames = Array.isArray(manifest.frames) ? manifest.frames : [];
-
-        historyFrames = frames
-            .filter(function(frame) {
-                return frame &&
-                    frame.timestamp_utc &&
-                    (frame.radar_asset || frame.radar_url);
-            })
-            .sort(function(a, b) {
-                return new Date(a.timestamp_utc) - new Date(b.timestamp_utc);
-            });
-
-        historyBounds = Array.isArray(manifest.bounds) && manifest.bounds.length === 4
-            ? [
-                [Number(manifest.bounds[0]), Number(manifest.bounds[1])],
-                [Number(manifest.bounds[2]), Number(manifest.bounds[3])]
-            ]
-            : null;
-
-        // In LIVE mode the slider should track the newest archived scan as
-        // the manifest updates. Only preserve a specific timestamp when the
-        // user is actively browsing history.
-        if (historyMode && previouslySelected) {
-            const found = historyFrames.findIndex(function(frame) {
-                return frame.timestamp_utc === previouslySelected;
-            });
-            historyIndex = found >= 0 ? found : Math.max(historyFrames.length - 1, 0);
-        } else {
-            historyIndex = Math.max(historyFrames.length - 1, 0);
-        }
-
-        updateHistoryControls();
-        updateHistoryReadout();
-
-        const hours = Number(manifest.history_hours || 8);
-        const phaseCount = Number(manifest.phase_snapshot_count || 0);
-        const precipTypeCount = Number(manifest.precip_type_snapshot_count || 0);
-        const note = document.getElementById("historyNote");
-
-        if (note) {
-            note.textContent =
-                historyFrames.length + " archived full-CONUS MRMS frames covering up to " +
-                hours + " hours. " + phaseCount +
-                " phase snapshots and " + precipTypeCount +
-                " precipitation-type snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
-        }
-
-        if (!historyFrames.length) {
-            setHistoryStatus("No frames yet");
-            return;
-        }
-
-        if (historyMode) {
-            renderHistoryFrame(historyIndex, false);
-        } else {
-            setHistoryStatus(historyFrames.length + " frames ready");
-        }
-
-    } catch (error) {
-        console.warn("MRMS history update failed:", error);
-        historyFrames = [];
-        historyIndex = -1;
-        historyBounds = null;
-        updateHistoryControls();
-        updateHistoryReadout();
-        setHistoryStatus("Unavailable");
-    } finally {
-        historyRefreshBusy = false;
-    }
-}
-
-
-function removeMapOverlay(layerRef) {
-    if (layerRef && map && map.hasLayer(layerRef)) {
-        map.removeLayer(layerRef);
-    }
-}
-
-
-function cancelPendingHistoryLayers() {
-    removeMapOverlay(pendingHistoryRadar);
-    removeMapOverlay(pendingHistoryPhase);
-    removeMapOverlay(pendingHistoryPrecipType);
-    pendingHistoryRadar = null;
-    pendingHistoryPhase = null;
-    pendingHistoryPrecipType = null;
-}
-
-
-function historyAssetUrl(frame, kind) {
-    if (!frame) return null;
-
-    let assetName = null;
-    let directUrl = null;
-
-    if (kind === "phase") {
-        assetName = frame.phase_asset;
-        directUrl = frame.phase_url;
-    } else if (kind === "precipType") {
-        // New manifests archive the composite separately. For older manifests,
-        // fall back to the legacy phase asset so existing history remains viewable.
-        assetName = frame.precip_type_asset || frame.phase_asset;
-        directUrl = frame.precip_type_url || frame.phase_url;
-    } else {
-        assetName = frame.radar_asset;
-        directUrl = frame.radar_url;
-    }
-
-    // Archived frames are copied into the GitHub Pages deployment. Using a
-    // same-origin URL lets the browser render WebP normally.
-    if (assetName) {
-        return "./history/" + encodeURIComponent(assetName);
-    }
-
-    return directUrl;
-}
-
-
-function historyImageProxyUrl(url) {
-    if (!url) return url;
-
-    return "https://wsrv.nl/?url=" +
-        encodeURIComponent(url) +
-        "&output=webp";
-}
-
-
-/*
- * Load a historical image without replacing the currently visible layer
- * until the new image has actually loaded. Direct GitHub Release delivery
- * is attempted first; wsrv.nl is used only as a browser-display fallback.
- */
-function loadHistoricalOverlay(options) {
-    return new Promise(function(resolve, reject) {
-        const {
-            nativeUrl,
-            bounds,
-            opacity,
-            zIndex,
-            className,
-            requestId,
-            assignPending,
-            removeActive,
-            onLoaded,
-            onFailed
-        } = options;
-
-        if (!nativeUrl) {
-            reject(new Error("Historical image URL is missing."));
-            return;
-        }
-
-        let attempt = 0;
-        let overlay = null;
-        const isSameOriginHistoryAsset = String(nativeUrl).startsWith("./history/");
-        const urls = isSameOriginHistoryAsset
-            ? [nativeUrl]
-            : [nativeUrl, historyImageProxyUrl(nativeUrl)];
-
-        function tryNextUrl() {
-            if (attempt >= urls.length) {
-                onFailed();
-                reject(new Error("Historical image failed to load."));
-                return;
-            }
-
-            const url = urls[attempt];
-            attempt += 1;
-
-            overlay = createImageOverlay(
-                url,
-                bounds,
-                0,
-                zIndex,
-                false,
-                className || ""
-            );
-
-            assignPending(overlay);
-
-            overlay.on("load", function() {
-                // A newer slider selection superseded this load.
-                if (requestId !== historyRenderRequest || !historyMode) {
-                    removeMapOverlay(overlay);
-                    resolve(null);
-                    return;
-                }
-
-                // Remove the old active layer only after the new image loaded.
-                removeActive();
-                overlay.setOpacity(opacity);
-                onLoaded(overlay);
-                resolve(overlay);
-            });
-
-            overlay.on("error", function() {
-                removeMapOverlay(overlay);
-
-                if (attempt < urls.length) {
-                    tryNextUrl();
-                } else {
-                    onFailed();
-                    reject(new Error("Historical image failed to load."));
-                }
-            });
-
-            overlay.addTo(map);
-            overlay.setOpacity(0);
-        }
-
-        tryNextUrl();
-    });
-}
-
-
-function loadLiveOverlay(url, bounds, opacity, zIndex) {
-    const overlay = createImageOverlay(
-        url,
-        bounds,
-        opacity,
-        zIndex,
-        true
-    );
-
-    overlay.addTo(map);
-    overlay.setOpacity(opacity);
-    return overlay;
-}
-
-
-async function refreshHistoryManifest() {
-    if (historyRefreshBusy) return;
-    historyRefreshBusy = true;
-
-    const previouslySelected =
-        historyFrames[historyIndex]
-            ? historyFrames[historyIndex].timestamp_utc
-            : null;
-
-    try {
-        const response = await fetch(
-            "./outputs/mrms_history.json?v=" + Date.now(),
-            { cache: "no-store" }
-        );
-
-        if (!response.ok) {
-            throw new Error("History manifest unavailable: " + response.status);
-        }
-
-        const manifest = await response.json();
-        const frames = Array.isArray(manifest.frames) ? manifest.frames : [];
-
-        historyFrames = frames
-            .filter(function(frame) {
-                return frame &&
-                    frame.timestamp_utc &&
-                    (frame.radar_asset || frame.radar_url);
-            })
-            .sort(function(a, b) {
-                return new Date(a.timestamp_utc) - new Date(b.timestamp_utc);
-            });
-
-        historyBounds = Array.isArray(manifest.bounds) && manifest.bounds.length === 4
-            ? [
-                [Number(manifest.bounds[0]), Number(manifest.bounds[1])],
-                [Number(manifest.bounds[2]), Number(manifest.bounds[3])]
-            ]
-            : null;
-
-        if (previouslySelected) {
-            const found = historyFrames.findIndex(function(frame) {
-                return frame.timestamp_utc === previouslySelected;
-            });
-            historyIndex = found >= 0
-                ? found
-                : Math.max(historyFrames.length - 1, 0);
-        } else {
-            historyIndex = Math.max(historyFrames.length - 1, 0);
-        }
-
-        updateHistoryControls();
-        updateHistoryReadout();
-
-        const hours = Number(manifest.history_hours || 8);
-        const phaseCount = Number(manifest.phase_snapshot_count || 0);
-        const precipTypeCount = Number(manifest.precip_type_snapshot_count || 0);
-        const note = document.getElementById("historyNote");
-
-        if (note) {
-            note.textContent =
-                historyFrames.length + " archived full-CONUS MRMS frames covering up to " +
-                hours + " hours. " + phaseCount +
-                " phase snapshots and " + precipTypeCount +
-                " precipitation-type snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
-        }
-
-        if (!historyFrames.length) {
-            setHistoryStatus("No frames yet");
-            return;
-        }
-
-        if (historyMode) {
-            renderHistoryFrame(historyIndex, false);
-        } else {
-            setHistoryStatus(historyFrames.length + " frames ready");
-        }
-
-    } catch (error) {
-        console.warn("MRMS history update failed:", error);
-        historyFrames = [];
-        historyIndex = -1;
-        historyBounds = null;
-        updateHistoryControls();
-        updateHistoryReadout();
-        setHistoryStatus("Unavailable");
-    } finally {
-        historyRefreshBusy = false;
-    }
-}
-
-
-function renderHistoryFrame(index, fitView) {
-    if (!map || !historyFrames.length) return;
-
-    index = Math.max(0, Math.min(index, historyFrames.length - 1));
-    historyIndex = index;
-
-    const frame = historyFrames[index];
-    const bounds = historyBounds || BTV_BOUNDS;
-    currentBounds = bounds;
-    radarDisplayMode = null;
-
-    const requestId = ++historyRenderRequest;
-
-    // Stop any in-flight historical image loads, but KEEP the currently
-    // visible radar/phase layer until the replacement succeeds.
-    cancelPendingHistoryLayers();
-
-    if (document.getElementById("radarToggle").checked) {
-        setHistoryStatus("Loading history…");
-
-        loadHistoricalOverlay({
-            nativeUrl: historyAssetUrl(frame, "radar"),
-            bounds: bounds,
-            opacity: overlayOpacity,
-            zIndex: 500,
-            className: "winter-radar-raster",
-            requestId: requestId,
-
-            assignPending: function(layer) {
-                pendingHistoryRadar = layer;
-            },
-
-            removeActive: function() {
-                removeMapOverlay(radarOverlay);
-                radarOverlay = null;
-            },
-
-            onLoaded: function(layer) {
-                pendingHistoryRadar = null;
-                radarOverlay = layer;
-            },
-
-            onFailed: function() {
-                pendingHistoryRadar = null;
-                console.warn(
-                    "Historical MRMS radar failed to load:",
-                    historyAssetUrl(frame, "radar")
-                );
-                setHistoryStatus("Radar frame unavailable");
-            }
-        }).catch(function() {});
-    } else {
-        removeMapOverlay(radarOverlay);
-        radarOverlay = null;
-    }
-
-    if (
-        document.getElementById("precipTypeToggle")?.checked &&
-        (frame.precip_type_url || frame.precip_type_asset || frame.phase_url || frame.phase_asset)
-    ) {
-        loadHistoricalOverlay({
-            nativeUrl: historyAssetUrl(frame, "precipType"),
-            bounds: bounds,
-            opacity: overlayOpacity,
-            zIndex: 540,
-            className: "winter-radar-raster",
-            requestId: requestId,
-
-            assignPending: function(layer) {
-                pendingHistoryPrecipType = layer;
-            },
-
-            removeActive: function() {
-                removeMapOverlay(precipTypeOverlay);
-                precipTypeOverlay = null;
-            },
-
-            onLoaded: function(layer) {
-                pendingHistoryPrecipType = null;
-                precipTypeOverlay = layer;
-                precipTypeDisplayMode = "history";
-            },
-
-            onFailed: function() {
-                pendingHistoryPrecipType = null;
-                console.warn(
-                    "Historical precipitation-type composite failed to load:",
-                    historyAssetUrl(frame, "precipType")
-                );
-            }
-        }).catch(function() {});
-    } else {
-        removeMapOverlay(precipTypeOverlay);
-        precipTypeOverlay = null;
-        precipTypeDisplayMode = null;
-    }
-
-    if (
-        document.getElementById("phaseToggle").checked &&
-        (frame.phase_url || frame.phase_asset)
-    ) {
-        loadHistoricalOverlay({
-            nativeUrl: historyAssetUrl(frame, "phase"),
-            bounds: bounds,
-            opacity: overlayOpacity,
-            zIndex: 550,
-            className: "winter-raster-sharp",
-            requestId: requestId,
-
-            assignPending: function(layer) {
-                pendingHistoryPhase = layer;
-            },
-
-            removeActive: function() {
-                removeMapOverlay(phaseOverlay);
-                phaseOverlay = null;
-            },
-
-            onLoaded: function(layer) {
-                pendingHistoryPhase = null;
-                phaseOverlay = layer;
-            },
-
-            onFailed: function() {
-                pendingHistoryPhase = null;
-                console.warn(
-                    "Historical winter phase mask failed to load:",
-                    historyAssetUrl(frame, "phase")
-                );
-            }
-        }).catch(function() {});
-    } else {
-        removeMapOverlay(phaseOverlay);
-        phaseOverlay = null;
-        phaseDisplayMode = null;
-    }
-
-    updateHistoryControls();
-    updateHistoryReadout();
-
-    if (fitView) {
-        map.fitBounds(bounds, {
-            padding: [10, 10]
-        });
-    }
-}
-
-
-function enterHistoryMode() {
-    if (!historyFrames.length) {
-        refreshHistoryManifest();
-        return;
-    }
-
-    historyMode = true;
-    stopHistoryPlayback();
-
-    // Radar evidence and phase agreement are live-cycle products, not archived history layers.
-    removeMapOverlay(precipTypeOverlay);
-    precipTypeOverlay = null;
-    precipTypeDisplayMode = null;
-
-    removeMapOverlay(radarFusionOverlay);
-    radarFusionOverlay = null;
-    removeMapOverlay(phaseAgreementOverlay);
-    phaseAgreementOverlay = null;
-
-    historyIndex = Math.max(historyIndex, 0);
-    renderHistoryFrame(historyIndex, true);
-}
-
-
-function showLiveMap() {
-    historyMode = false;
-    stopHistoryPlayback();
-
-    if (historyFrames.length) {
-        historyIndex = historyFrames.length - 1;
-        updateHistoryControls();
-    }
-
-    // Prevent an older historical load from replacing the live image.
-    ++historyRenderRequest;
-    cancelPendingHistoryLayers();
-
-    updateHistoryReadout();
-    setHistoryStatus("LIVE", "live");
-    updateDynamicMapLegend();
-
-    refreshData();
-}
-
-
-function selectHistoryFrame(index, enterMode) {
-    if (!historyFrames.length) return;
-
-    if (enterMode) {
-        historyMode = true;
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = null;
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = null;
-    }
-
-    stopHistoryPlayback();
-
-    historyIndex = Math.max(
-        0,
-        Math.min(Number(index) || 0, historyFrames.length - 1)
-    );
-
-    // The thumb and timestamp move immediately. The image follows after the
-    // user pauses briefly, preventing slider "spazzing" during rapid dragging.
-    updateHistoryReadout();
-    updateHistoryControls();
-
-    if (historySliderRenderTimer !== null) {
-        window.clearTimeout(historySliderRenderTimer);
-    }
-
-    historySliderRenderTimer = window.setTimeout(function() {
-        historySliderRenderTimer = null;
-        renderHistoryFrame(historyIndex, false);
-    }, 80);
-}
-
-function historyStep(direction) {
-    if (!historyFrames.length) return;
-
-    historyMode = true;
-    removeMapOverlay(radarFusionOverlay);
-    radarFusionOverlay = null;
-    removeMapOverlay(phaseAgreementOverlay);
-    phaseAgreementOverlay = null;
-
-    const current =
-        historyIndex >= 0
-            ? historyIndex
-            : historyFrames.length - 1;
-
-    const next = Math.max(
-        0,
-        Math.min(
-            historyFrames.length - 1,
-            current + direction
-        )
-    );
-
-    renderHistoryFrame(next, false);
-}
-
-
-function setHistorySpeed(value) {
-    const parsed = Number(value);
-    historySpeed = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-
-    if (historyPlaying) {
-        startHistoryPlayback();
-    }
-}
-
-
-function startHistoryPlayback() {
-    stopHistoryPlayback();
-
-    if (historyFrames.length < 2) return;
-
-    historyMode = true;
-    historyPlaying = true;
-    updateHistoryControls();
-    updateHistoryReadout();
-
-    const interval = Math.max(35, Math.round(150 / historySpeed));
-
-    historyTimer = window.setInterval(function() {
-        if (!historyFrames.length) {
-            stopHistoryPlayback();
-            return;
-        }
-
-        let next = historyIndex + 1;
-        if (next >= historyFrames.length) {
-            next = 0;
-        }
-
-        renderHistoryFrame(next, false);
-    }, interval);
-}
-
-
-function stopHistoryPlayback() {
-    if (historyTimer !== null) {
-        window.clearInterval(historyTimer);
-        historyTimer = null;
-    }
-
-    historyPlaying = false;
-    updateHistoryControls();
-    updateHistoryReadout();
-}
-
-
-function toggleHistoryPlayback() {
-    if (!historyFrames.length) {
-        refreshHistoryManifest();
-        return;
-    }
-
-    if (historyPlaying) {
-        stopHistoryPlayback();
-    } else {
-        historyMode = true;
-        startHistoryPlayback();
-    }
-}
-
-
-async function refreshData() {
-
-    try {
-
-        const response =
-            await fetch(
-                "./outputs/mrms_current.json?v=" +
-                Date.now(),
-                {
-                    cache: "no-store"
-                }
-            );
-
-        if (!response.ok) {
-            throw new Error(
-                "MRMS metadata unavailable: " +
-                response.status
-            );
-        }
-
-        const metadata =
-            await response.json();
-
-        const mrmsTime =
-            metadata.mrms_time_utc
-                ? new Date(metadata.mrms_time_utc)
-                : (metadata.generated_at_utc
-                    ? new Date(metadata.generated_at_utc)
-                    : new Date());
-
-        window.currentMRMSTimeUtc = metadata.mrms_time_utc || metadata.generated_at_utc || new Date().toISOString();
-
-        const display =
-            new Intl.DateTimeFormat(undefined, {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-                timeZoneName: "short"
-            }).format(mrmsTime);
-
-        document.getElementById(
-            "lastUpdate"
-        ).textContent = display;
-
-        document.getElementById(
-            "dataTime"
-        ).textContent = display;
-
-        document.getElementById(
-            "radarTime"
-        ).textContent = display;
-
-        if (!historyMode) {
-            loadRadarLayers(metadata);
-        }
-
-        updateDynamicMapLegend();
-        refreshDiagnosticImages();
-        refreshPhaseQC();
-        refreshHistoryManifest();
-
-        document.getElementById(
-            "loading"
-        ).style.display = "none";
-
-    } catch (error) {
-
-        console.error(
-            "MRMS update failed:",
-            error
-        );
-
-        /*
-         * Keep the map usable even when a single cycle is missing.
-         * Do not remove a previously displayed radar image.
-         */
-        document.getElementById(
-            "loading"
-        ).textContent =
-            "MRMS update unavailable — showing last map";
-
-    }
-}
-
-
-
-async function refreshPhaseQC() {
-    try {
-        const response = await fetch("./outputs/phase_qc.json?v=" + Date.now(), { cache: "no-store" });
-        if (!response.ok) throw new Error("Phase QC unavailable: " + response.status);
-        const qc = await response.json();
-
-        const status = document.getElementById("phaseQCStatus");
-        const phaseStatus = String(qc.phase_status || "unknown");
-        const good = qc.status === "ok" && (phaseStatus === "modified_bourgouin_rap" || phaseStatus === "modified_bourgouin_hrrr");
-        status.textContent = good ? "RAP + Bourgouin" : phaseStatus.replaceAll("_", " ");
-        status.className = "phase-qc-status " + (good ? "good" : "warn");
-
-        const means = qc.mean_probability_percent || {};
-        document.getElementById("qcRain").textContent = means.rain == null ? "—" : Number(means.rain).toFixed(0) + "%";
-        document.getElementById("qcSnow").textContent = means.snow == null ? "—" : Number(means.snow).toFixed(0) + "%";
-        document.getElementById("qcSleet").textContent = means.sleet == null ? "—" : Number(means.sleet).toFixed(0) + "%";
-        document.getElementById("qcFzra").textContent = means.freezing_rain == null ? "—" : Number(means.freezing_rain).toFixed(0) + "%";
-        document.getElementById("qcME").textContent = qc.mean_melting_energy_jkg == null ? "—" : Number(qc.mean_melting_energy_jkg).toFixed(1) + " J/kg";
-        document.getElementById("qcRE").textContent = qc.mean_refreezing_energy_jkg == null ? "—" : Number(qc.mean_refreezing_energy_jkg).toFixed(1) + " J/kg";
-
-        const levels = Array.isArray(qc.pressure_levels_hpa) ? qc.pressure_levels_hpa.join(", ") : "not reported";
-        document.getElementById("phaseQCNote").textContent =
-            "High-confidence definition: dominant probability ≥70% and ≥15 points above the runner-up. " +
-            "Profile levels: " + levels + " hPa.";
-    } catch (error) {
-        console.warn("Phase QC update failed:", error);
-        const status = document.getElementById("phaseQCStatus");
-        status.textContent = "Unavailable";
-        status.className = "phase-qc-status warn";
-        document.getElementById("phaseQCNote").textContent = "Phase QC is temporarily unavailable; the radar and existing winter mask remain available.";
-    }
-}
-
-function refreshDiagnosticImages() {
-    const stamp = Date.now();
-
-    document.querySelectorAll(".diag-card img").forEach(function(img) {
-        const original = img.getAttribute("src");
-        if (!original) return;
-
-        img.classList.remove("diag-load-failed");
-        img.removeAttribute("title");
-
-        const clean = original.split("?")[0];
-        const next = clean + "?v=" + stamp;
-
-        img.onload = function() {
-            img.classList.remove("diag-load-failed");
-            img.removeAttribute("title");
-            try { img.decode?.(); } catch (e) {}
-        };
-
-        img.onerror = function() {
-            img.classList.add("diag-load-failed");
-            img.title = "Diagnostic image unavailable: " + clean;
-            console.warn("Diagnostic image failed to load:", clean);
-        };
-
-        // Force a real browser request rather than relying on the stale
-        // image object left by the previous five-minute refresh.
-        img.src = next;
-    });
-}
-
-
-function closeLayerPanelWhenClickingOutside(event) {
-
-    const panel =
-        document.getElementById("layerPanel");
-
-    const toggle =
-        document.getElementById("layerToggle");
-
-    if (
-        !panel.classList.contains("open")
-    ) {
-        return;
-    }
-
-    if (
-        !panel.contains(event.target) &&
-        !toggle.contains(event.target)
-    ) {
-        panel.classList.remove("open");
-    }
-}
-
-
-/* MAP / GIF EXPORT */
-let exportModalOpen=false;
-let exportBusy=false;
-function setExportStatus(message,error=false){const el=document.getElementById("exportStatus");if(el){el.textContent=message||"";el.classList.toggle("error",!!error);}}
-function openExportModal(){if(exportBusy)return;exportModalOpen=true;const b=document.getElementById("exportModalBackdrop");b.classList.add("open");b.setAttribute("aria-hidden","false");[["exportRadar","radarToggle"],["exportPrecipType","precipTypeToggle"],["exportPhase","phaseToggle"],["exportRadarFusion","radarFusionToggle"],["exportAgreement","phaseAgreementToggle"]].forEach(([a,b])=>{document.getElementById(a).checked=!!document.getElementById(b)?.checked;});updateExportFormatUI();setExportStatus("Pan and zoom the map behind this panel to set the export frame.");}
-function closeExportModal(){if(exportBusy)return;exportModalOpen=false;const b=document.getElementById("exportModalBackdrop");b.classList.remove("open");b.setAttribute("aria-hidden","true");document.getElementById("map")?.classList.remove("export-capture-mode");}
-function updateExportFormatUI(){const gif=document.getElementById("exportFormat")?.value==="gif", opts=document.getElementById("exportGifOptions"), btn=document.getElementById("exportStartButton"), f=document.getElementById("exportRadarFusion"), a=document.getElementById("exportAgreement");if(opts)opts.style.display=gif?"block":"none";if(btn)btn.textContent=gif?"Export GIF":"Export PNG";if(f){f.disabled=gif;if(gif)f.checked=false;}if(a){a.disabled=gif;if(gif)a.checked=false;}const info=document.getElementById("exportHistoryInfo");if(info&&gif)info.textContent=historyFrames.length?historyFrames.length+" archived frames available. Up to 20 frames ending at the current history frame will be used.":"History frames are not loaded yet. Open History first.";}
-function exportSelectedLayers(){return{radar:!!document.getElementById("exportRadar")?.checked,precipType:!!document.getElementById("exportPrecipType")?.checked,phase:!!document.getElementById("exportPhase")?.checked,radarFusion:!!document.getElementById("exportRadarFusion")?.checked,agreement:!!document.getElementById("exportAgreement")?.checked};}
-function snapshotLayerCheckboxes(){return{radar:!!document.getElementById("radarToggle")?.checked,precipType:!!document.getElementById("precipTypeToggle")?.checked,phase:!!document.getElementById("phaseToggle")?.checked,radarFusion:!!document.getElementById("radarFusionToggle")?.checked,agreement:!!document.getElementById("phaseAgreementToggle")?.checked};}
-function restoreLayerCheckboxes(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}}
-function waitForMapImages(timeoutMs=3000){const t=Date.now();return new Promise(resolve=>{(function check(){const p=Array.from(document.querySelectorAll("#map img")).filter(i=>!i.complete||i.naturalWidth===0);if(!p.length||Date.now()-t>=timeoutMs)return resolve();setTimeout(check,60);})();});}
-async function applyExportLayerSelection(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}await waitForMapImages(3000);}
-function exportLayerLabel(selected) {
-    const labels = [];
-    if (selected.radar) labels.push("MRMS Reflectivity");
-    if (selected.precipType) labels.push("Precipitation Type Composite");
-    if (selected.phase) labels.push("Winter Phase Mask");
-    if (selected.radarFusion) labels.push("Radar Phase Evidence");
-    if (selected.agreement) labels.push("Phase Agreement");
-    return labels.length ? labels.join("  •  ") : "Basemap / Reference Layers";
-}
-
-function exportFrameTimestamp(index) {
-    let value = null;
-    if (historyMode && historyFrames[index]) {
-        value = historyFrames[index].timestamp_utc;
-    }
-    if (!value && window.currentMRMSTimeUtc) value = window.currentMRMSTimeUtc;
-    if (!value) value = new Date().toISOString();
-    return new Date(value);
-}
-
-function formatExportTime(dt) {
-    if (!(dt instanceof Date) || !Number.isFinite(dt.getTime())) return "Time unavailable";
-    return new Intl.DateTimeFormat(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-        timeZoneName: "short"
-    }).format(dt);
-}
-
-const NWS_EXPORT_LOGO_URL = "https://www.weather.gov/images/nws/nws_logo.png";
-let nwsExportLogoPromise = null;
-
-function loadNWSExportLogo() {
-    if (nwsExportLogoPromise) return nwsExportLogoPromise;
-
-    nwsExportLogoPromise = new Promise(function(resolve) {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.referrerPolicy = "no-referrer";
-        img.onload = function() { resolve(img); };
-        img.onerror = function() { resolve(null); };
-        img.src = NWS_EXPORT_LOGO_URL;
-    });
-
-    return nwsExportLogoPromise;
-}
-
-function exportLegendItems(selected) {
-    const items = [];
-    if (selected.radar) {
-        items.push({type:"gradient", label:"MRMS Reflectivity (dBZ)", colors:[
-            [0,"#323232"],[5,"#0e0e5a"],[10,"#034f8c"],[15,"#07a2b6"],
-            [20,"#11e51f"],[25,"#0ca914"],[34.5,"#066808"],[35,"#ffff00"],
-            [40,"#ffc200"],[45,"#ff8c00"],[50,"#dd0000"],[57.5,"#6b0000"],
-            [62.5,"#ffa3ff"],[67.5,"#ee1df4"],[72.5,"#7500eb"],[77.5,"#00ffdb"],[82.5,"#004c4a"],[95,"#000000"]
-        ]});
-    }
-    if (selected.precipType) {
-        items.push({type:"swatches", label:"Precipitation Type Composite", swatches:[
-            ["Rain (MRMS dBZ)","#1d6fb8"],["Snow","#3aa7ff"],["Sleet","#b84de0"],
-            ["Freezing Rain","#e13958"],["Mixed","#9b73df"]
-        ]});
-    }
-    if (selected.phase) {
-        items.push({type:"swatches", label:"Winter Phase Mask", swatches:[
-            ["Snow","#3791ff"],["Sleet","#b950dc"],["FZRA","#e13746"],["Mixed","#dc5fc3"],["Uncertain","#91969b"]
-        ]});
-    }
-    if (selected.radarFusion) {
-        items.push({type:"swatches", label:"Radar Phase Evidence", swatches:[
-            ["Consistent","#36a852"],["Conflicts","#e24a3b"],["Conflicting signatures","#a23bb7"],["No decisive signature","#808890"]
-        ]});
-    }
-    if (selected.agreement) {
-        items.push({type:"swatches", label:"Phase Agreement", swatches:[
-            ["Agreement","#28a745"],["Partial / uncertain","#e0a82e"],["Disagreement","#d83b3b"]
-        ]});
-    }
-    return items;
-}
-
-function exportLegendHeight(items, scale) {
-    const rowH = Math.round(39 * scale);
-    const top = Math.round(44 * scale);
-    return Math.max(82, top + Math.max(1, items.length) * rowH + Math.round(16 * scale));
-}
-
-async function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
-    const scale = Math.max(1, Math.min(2, Number(document.getElementById("exportScale")?.value || 1)));
-    const w = sourceCanvas.width;
-    const items = exportLegendItems(selected);
-    const bannerH = Math.round(104 * scale);
-    const legendH = Math.round(exportLegendHeight(items, scale));
-    const out = document.createElement("canvas");
-    out.width = w;
-    out.height = sourceCanvas.height + bannerH + legendH;
-    const ctx = out.getContext("2d", { willReadFrequently: true });
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, out.width, out.height);
-
-    // Stronger, larger export header with the official NWS logo.
-    const grad = ctx.createLinearGradient(0, 0, w, 0);
-    grad.addColorStop(0, "#063b67");
-    grad.addColorStop(0.62, "#0a5d8b");
-    grad.addColorStop(1, "#1578a8");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, bannerH);
-
-    const pad = Math.round(20 * scale);
-    const logoSize = Math.round(76 * scale);
-    const logo = await loadNWSExportLogo();
-
-    if (logo) {
-        ctx.drawImage(logo, pad, Math.round((bannerH - logoSize) / 2), logoSize, logoSize);
-    } else {
-        // Fallback if the NWS host blocks canvas CORS; keep the header usable.
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        ctx.arc(pad + logoSize/2, bannerH/2, logoSize/2, 0, Math.PI*2);
-        ctx.fill();
-        ctx.fillStyle = "#0a4f79";
-        ctx.font = `900 ${Math.round(17*scale)}px Arial, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("NWS", pad + logoSize/2, bannerH/2 + 1*scale);
-    }
-
-    const textX = pad + logoSize + Math.round(18 * scale);
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `900 ${Math.round(25*scale)}px Arial, sans-serif`;
-    ctx.fillText("WINTER RADAR", textX, Math.round(39*scale));
-    ctx.font = `700 ${Math.round(12*scale)}px Arial, sans-serif`;
-    ctx.fillText(exportLayerLabel(selected), textX, Math.round(61*scale));
-    ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
-    ctx.fillStyle = "rgba(255,255,255,.84)";
-    ctx.fillText("MRMS / NOAA / National Weather Service", textX, Math.round(82*scale));
-
-    const dt = exportFrameTimestamp(frameIndex);
-    const timeText = formatExportTime(dt);
-    ctx.textAlign = "right";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `800 ${Math.round(13*scale)}px Arial, sans-serif`;
-    ctx.fillText("Valid " + timeText, w - pad, Math.round(42*scale));
-    ctx.font = `600 ${Math.round(9*scale)}px Arial, sans-serif`;
-    ctx.fillStyle = "rgba(255,255,255,.82)";
-    ctx.fillText("WinterRadar research display", w - pad, Math.round(64*scale));
-
-    ctx.drawImage(sourceCanvas, 0, bannerH);
-
-    // Dedicated legend panel below the map. Each selected layer gets its own
-    // clearly labeled row so the legend remains readable at 1x and 2x.
-    const legendY = bannerH + sourceCanvas.height;
-    ctx.fillStyle = "#f5f8fa";
-    ctx.fillRect(0, legendY, w, legendH);
-    ctx.strokeStyle = "#c7d1d8";
-    ctx.lineWidth = Math.max(1, scale);
-    ctx.strokeRect(0, legendY, w, legendH);
-
-    const left = pad;
-    let y = legendY + Math.round(22 * scale);
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#243943";
-    ctx.font = `900 ${Math.round(11*scale)}px Arial, sans-serif`;
-    ctx.fillText("LEGEND", left, y);
-    y += Math.round(23 * scale);
-
-    items.forEach(function(item) {
-        const rowTop = y;
-        ctx.fillStyle = "#53636d";
-        ctx.font = `800 ${Math.round(9*scale)}px Arial, sans-serif`;
-        ctx.fillText(item.label.toUpperCase(), left, rowTop);
-
-        if (item.type === "gradient") {
-            const gx = left + Math.round(142 * scale);
-            const gw = Math.min(Math.round(300 * scale), Math.max(170, w - gx - Math.round(100*scale)));
-            const gh = Math.round(12 * scale);
-            const g = ctx.createLinearGradient(gx, 0, gx + gw, 0);
-            item.colors.forEach(function(c) { g.addColorStop(c[0] / 95, c[1]); });
-            ctx.fillStyle = g;
-            ctx.fillRect(gx, rowTop - gh/2, gw, gh);
-            ctx.strokeStyle = "#8e9aa2";
-            ctx.strokeRect(gx, rowTop - gh/2, gw, gh);
-            ctx.fillStyle = "#5d6d77";
-            ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
-            ctx.fillText("5", gx, rowTop + Math.round(13*scale));
-            ctx.textAlign = "right";
-            ctx.fillText("95 dBZ", gx + gw, rowTop + Math.round(13*scale));
-            ctx.textAlign = "left";
-        } else {
-            let x = left + Math.round(142 * scale);
-            const maxX = w - pad;
-            item.swatches.forEach(function(sw) {
-                const bw = Math.round(11 * scale);
-                const labelW = Math.round((sw[0].length * 5.0 + 22) * scale);
-                if (x + bw + labelW > maxX) {
-                    x = left + Math.round(142 * scale);
-                    y += Math.round(16 * scale);
-                }
-                ctx.fillStyle = sw[1];
-                ctx.fillRect(x, rowTop - bw/2, bw, bw);
-                ctx.strokeStyle = "rgba(55,65,72,.35)";
-                ctx.strokeRect(x, rowTop - bw/2, bw, bw);
-                x += bw + Math.round(5 * scale);
-                ctx.fillStyle = "#52616a";
-                ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
-                ctx.fillText(sw[0], x, rowTop);
-                x += Math.round((sw[0].length * 4.8 + 18) * scale);
-            });
-        }
-
-        y = rowTop + Math.round(31 * scale);
-        ctx.strokeStyle = "#dce3e7";
-        ctx.lineWidth = Math.max(1, scale * 0.6);
-        ctx.beginPath();
-        ctx.moveTo(left, y - Math.round(8*scale));
-        ctx.lineTo(w - left, y - Math.round(8*scale));
-        ctx.stroke();
-    });
-
-    ctx.textAlign = "right";
-    ctx.fillStyle = "#7a8790";
-    ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
-    ctx.fillText("WinterRadar • MRMS data • NOAA/NWS", w-pad, out.height-Math.round(8*scale));
-    return out;
-}
-
-async function captureExportFrame(){
-    const el=document.getElementById("map");
-    if(!el||typeof html2canvas!=="function")throw new Error("Map export library is not available.");
-    el.classList.add("export-capture-mode");
-    await waitForMapImages(3000);
-    if(document.fonts?.ready){try{await document.fonts.ready;}catch(e){}}
-    const scale=Math.max(1,Math.min(2,Number(document.getElementById("exportScale")?.value||1)));
-    try{return await html2canvas(el,{backgroundColor:"#fff",useCORS:true,allowTaint:false,scale,logging:false,imageTimeout:10000,width:el.clientWidth,height:el.clientHeight,onclone:d=>d.getElementById("map")?.classList.add("export-capture-mode")});}
-    finally{el.classList.remove("export-capture-mode");}
-}
-
-function downloadCanvasPNG(c){const a=document.createElement("a"),stamp=new Date().toISOString().replace(/[:.]/g,"-");a.download="winterradar-map-"+stamp+".png";a.href=c.toDataURL("image/png");a.click();}
-
-async function exportPNG(){
-    const selected=exportSelectedLayers(),prev=snapshotLayerCheckboxes();
-    try{
-        setExportStatus("Preparing selected layers…");
-        await applyExportLayerSelection(selected);
-        const mapCanvas=await captureExportFrame();
-        const finalCanvas=await drawExportBannerAndLegend(mapCanvas,selected,historyIndex);
-        downloadCanvasPNG(finalCanvas);
-        setExportStatus("PNG exported with NWS-style banner, valid time, and legend.");
-    }finally{
-        restoreLayerCheckboxes(prev);
-        document.getElementById("map")?.classList.remove("export-capture-mode");
-    }
-}
-
-async function loadGifWorkerBlob() {
-    const workerSourceUrl = "https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js";
-    const response = await fetch(workerSourceUrl, {
-        mode: "cors",
-        cache: "force-cache"
-    });
-
-    if (!response.ok) {
-        throw new Error("Unable to load GIF worker: HTTP " + response.status);
-    }
-
-    const source = await response.text();
-    const blob = new Blob([source], { type: "application/javascript" });
-    return URL.createObjectURL(blob);
-}
-
-async function exportGIF() {
-    if (typeof GIF !== "function") {
-        throw new Error("GIF encoder is not available.");
-    }
-
-    if (!historyFrames.length) {
-        throw new Error("No history frames are loaded. Open History and try again.");
-    }
-
-    const selected = exportSelectedLayers();
-    const prev = snapshotLayerCheckboxes();
-    const prevMode = historyMode;
-    const prevIndex = historyIndex;
-
-    const requestedCount = Number(document.getElementById("exportFrameCount")?.value || 10);
-    const count = Math.min(
-        20,
-        Math.max(2, Math.floor(requestedCount)),
-        historyFrames.length
-    );
-
-    const delay = Math.max(
-        50,
-        Number(document.getElementById("exportDelay")?.value || 350)
-    );
-
-    const end = historyIndex >= 0
-        ? historyIndex
-        : historyFrames.length - 1;
-
-    const start = Math.max(0, end - count + 1);
-
-    const indices = Array.from(
-        { length: end - start + 1 },
-        (_, i) => start + i
-    );
-
-    let workerUrl = null;
-
-    try {
-        historyMode = true;
-        stopHistoryPlayback();
-
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = null;
-
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = null;
-
-        await applyExportLayerSelection({
-            radar: selected.radar,
-            precipType: selected.precipType,
-            phase: selected.phase,
-            radarFusion: false,
-            agreement: false
-        });
-
-        const canvases = [];
-
-        for (let n = 0; n < indices.length; n++) {
-            setExportStatus(
-                "Capturing frame " +
-                (n + 1) +
-                " of " +
-                indices.length +
-                "…"
-            );
-
-            renderHistoryFrame(indices[n], false);
-
-            await waitForMapImages(4500);
-            await new Promise(resolve => setTimeout(resolve, 180));
-
-            canvases.push(await drawExportBannerAndLegend(await captureExportFrame(), selected, indices[n]));
-        }
-
-        if (!canvases.length) {
-            throw new Error("No export frames were captured.");
-        }
-
-        setExportStatus("Loading GIF encoder worker…");
-
-        // gif.js cannot directly spawn a worker from a CDN URL on GitHub Pages.
-        // Fetch the worker through CORS and turn it into a same-origin Blob URL.
-        workerUrl = await loadGifWorkerBlob();
-
-        const first = canvases[0];
-
-        const gif = new GIF({
-            workers: 2,
-            quality: 8,
-            width: first.width,
-            height: first.height,
-            workerScript: workerUrl
-        });
-
-        canvases.forEach(function(canvas) {
-            // Pass a 2D context configured for repeated pixel readback.
-            // This avoids the browser's getImageData/willReadFrequently warning.
-            const ctx = canvas.getContext(
-                "2d",
-                { willReadFrequently: true }
-            );
-
-            gif.addFrame(ctx, {
-                copy: true,
-                delay: delay
-            });
-        });
-
-        await new Promise(function(resolve, reject) {
-            gif.on("progress", function(progress) {
-                setExportStatus(
-                    "Encoding GIF… " +
-                    Math.round(progress * 100) +
-                    "%"
-                );
-            });
-
-            gif.on("finished", function(blob) {
-                const a = document.createElement("a");
-                const stamp = new Date()
-                    .toISOString()
-                    .replace(/[:.]/g, "-");
-
-                a.download =
-                    "winterradar-loop-" +
-                    stamp +
-                    ".gif";
-
-                a.href = URL.createObjectURL(blob);
-                a.click();
-
-                setTimeout(function() {
-                    URL.revokeObjectURL(a.href);
-                }, 30000);
-
-                resolve();
-            });
-
-            gif.on("abort", function() {
-                reject(new Error("GIF encoding was aborted."));
-            });
-
-            gif.render();
-        });
-
-        setExportStatus(
-            "GIF exported with " +
-            indices.length +
-            " frames at " +
-            delay +
-            " ms/frame."
-        );
-
-    } finally {
-        if (workerUrl) {
-            URL.revokeObjectURL(workerUrl);
-        }
-
-        restoreLayerCheckboxes(prev);
-
-        if (prevMode && historyFrames.length) {
-            historyMode = true;
-            historyIndex = Math.max(
-                0,
-                Math.min(prevIndex, historyFrames.length - 1)
-            );
-
-            renderHistoryFrame(
-                historyIndex,
-                false
-            );
-
-        } else if (!prevMode) {
-            historyMode = false;
-
-            loadCurrentRadarOverlay(true);
-            loadCurrentPhaseOverlay(true);
-            loadCurrentPrecipTypeOverlay(true);
-        }
-    }
-}
-async function startMapExport(){if(exportBusy)return;exportBusy=true;const b=document.getElementById("exportStartButton");if(b)b.disabled=true;try{await((document.getElementById("exportFormat")?.value||"png")==="gif"?exportGIF():exportPNG());}catch(e){console.error("Map export failed:",e);setExportStatus("Export failed: "+(e?.message||e),true);}finally{exportBusy=false;if(b)b.disabled=false;document.getElementById("map")?.classList.remove("export-capture-mode");}}
-document.getElementById("exportModalBackdrop")?.addEventListener("click",e=>{if(e.target===e.currentTarget&&!exportBusy)closeExportModal();});
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&exportModalOpen&&!exportBusy)closeExportModal();});
-
-initializeMap();
-refreshDiagnosticImages();
-refreshData();
-refreshHistoryManifest();
-
-window.setInterval(
-    refreshData,
-    AUTO_REFRESH_MS
-);
-
-document.addEventListener(
-    "click",
-    closeLayerPanelWhenClickingOutside
-);
-
-
-// Left/Right = previous/next MRMS history frame when focus is not in a form field.
-// Capture phase stops Leaflet's built-in arrow-key map panning.
-document.addEventListener("keydown", function(event) {
-    const tag = event.target && event.target.tagName
-        ? event.target.tagName.toLowerCase()
-        : "";
-
-    if (
-        tag === "input" ||
-        tag === "textarea" ||
-        tag === "select" ||
-        tag === "button" ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
-    ) {
-        return;
-    }
-
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
-        return;
-    }
-
-    if (!historyFrames.length) {
-        return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (!historyMode) {
-        historyMode = true;
-        stopHistoryPlayback();
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = null;
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = null;
-        historyIndex = Math.max(
-            0,
-            Math.min(
-                historyIndex >= 0 ? historyIndex : historyFrames.length - 1,
-                historyFrames.length - 1
-            )
-        );
-    }
-
-    historyStep(event.key === "ArrowLeft" ? -1 : 1);
-}, true);
-
-
-["historySlider", "mapHistorySlider"].forEach(function(id) {
-    const slider = document.getElementById(id);
-    if (!slider) return;
-
-    slider.addEventListener("pointerdown", function() {
-        historySliderIsActive = true;
-    });
-
-    slider.addEventListener("pointerup", function() {
-        historySliderIsActive = false;
-        syncHistorySliderValues();
-    });
-
-    slider.addEventListener("blur", function() {
-        historySliderIsActive = false;
-        syncHistorySliderValues();
-    });
-});
-
-document.addEventListener("pointerup", function() {
-    historySliderIsActive = false;
-    syncHistorySliderValues();
-});
-
-// Explicit startup state requested for the overlay opacity control.
-setOverlayOpacity(0);
-</script>
-
-</body>
-</html>
+name: MRMS Winter Radar
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: mrms-radar
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeccodes-dev \
+            libeccodes-tools
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            numpy \
+            requests \
+            Pillow \
+            xarray \
+            cfgrib \
+            matplotlib \
+            pygrib
+
+      - name: Core syntax QC
+        run: |
+          python -m py_compile \
+            src/config.py \
+            src/download_mrms.py \
+            src/read_mrms.py \
+            src/classifier.py \
+            src/render.py \
+            src/main.py \
+            src/project_mrms_webmercator.py \
+            src/build_phase_diagnostics.py \
+            src/build_phase_radar_fusion.py \
+            src/archive_mrms_history.py
+
+      - name: Run core MRMS processing
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p ../outputs
+          python -u main.py 2>&1 | tee ../outputs/main.log
+
+      - name: Verify live MRMS outputs immediately
+        run: |
+          set -euo pipefail
+          echo "=============================================="
+          echo "LIVE MRMS OUTPUT CHECK"
+          echo "=============================================="
+          bash ./src/verify_core_outputs.sh
+
+      - name: Build phase probability and QC diagnostics
+        continue-on-error: true
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u src/build_phase_diagnostics.py
+
+      # Diagnostics are deliberately OUTSIDE the critical live-radar path.
+      # They can fail without taking the current MRMS radar offline.
+      - name: Download optional diagnostic 2-D fields
+        continue-on-error: true
+        working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: python -u download_mrms.py --diagnostics
+
+      - name: Build MRMS diagnostics
+        continue-on-error: true
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: python -u build_mrms_diagnostics.py
+
+      - name: Download vertical dual-pol data
+        continue-on-error: true
+        working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          if [ -f download_vertical_dualpol.py ]; then
+            python -u download_vertical_dualpol.py
+          else
+            echo "Vertical dual-pol downloader is not present; skipping."
+          fi
+
+      - name: Build vertical dual-pol diagnostic
+        continue-on-error: true
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          if [ -f build_vertical_dualpol_diagnostic.py ]; then
+            python -u build_vertical_dualpol_diagnostic.py
+          else
+            echo "Vertical dual-pol diagnostic is not present; skipping."
+          fi
+
+      - name: Normalize vertical diagnostic filename
+        continue-on-error: true
+        run: |
+          if [ -s outputs/vertical_dualpol_diagnostic.png ]; then
+            cp outputs/vertical_dualpol_diagnostic.png outputs/mrms_vertical_dualpol.png
+          fi
+
+      - name: Build radar phase evidence fusion
+        continue-on-error: true
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          if [ -f build_phase_radar_fusion.py ]; then
+            python -u build_phase_radar_fusion.py
+          else
+            echo "Radar phase evidence fusion is not present; skipping."
+          fi
+
+      - name: Build winter precipitation diagnostic
+        continue-on-error: true
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          if [ -f build_winter_mask.py ]; then
+            python -u build_winter_mask.py
+          else
+            echo "Winter mask diagnostic is not present; skipping."
+          fi
+
+      - name: Create diagnostic fallbacks if needed
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+          import json
+
+          out = Path("outputs")
+          out.mkdir(exist_ok=True)
+
+          def placeholder(name, label):
+              path = out / name
+              if path.exists() and path.stat().st_size > 0:
+                  return
+              img = Image.new("RGB", (1200, 675), (238, 240, 242))
+              d = ImageDraw.Draw(img)
+              d.text((60, 300), label, fill=(80, 85, 90))
+              img.save(path, optimize=True)
+
+          def map_placeholder(name):
+              # Map rasters must have the same full native MRMS geometry even
+              # when an optional research product fails. A small 1200x675
+              # diagnostic placeholder is not geographically valid and can
+              # trigger a browser decode/extent problem. Keep the fallback
+              # completely transparent but full size so Leaflet can load it
+              # safely without implying data that do not exist.
+              path = out / name
+              if path.exists() and path.stat().st_size > 0:
+                  return
+              img = Image.new("RGBA", (7000, 3500), (0, 0, 0, 0))
+              img.save(path, optimize=True)
+
+          placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
+          placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
+          map_placeholder("phase_radar_fusion_overlay.png")
+          map_placeholder("phase_agreement_overlay.png")
+          map_placeholder("winter_precip_type.png")
+          map_placeholder("winter_phase_mask.png")
+          placeholder("phase_radar_fusion.png", "Radar phase evidence fusion temporarily unavailable")
+          placeholder("phase_agreement.png", "Phase agreement diagnostic temporarily unavailable")
+          placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
+          placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
+          placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
+
+          for name in ("mrms_diagnostics.json", "winter_mask_diagnostics.json", "phase_qc.json", "phase_radar_fusion.json", "phase_agreement.json"):
+              path = out / name
+              if not path.exists() or path.stat().st_size == 0:
+                  path.write_text(
+                      json.dumps({"status": "temporarily_unavailable"}, indent=2),
+                      encoding="utf-8",
+                  )
+          PY
+
+      # Build every browser-facing national raster only after all scientific
+      # products have been generated. This prevents stale/partial Web Mercator
+      # copies from surviving from an earlier pipeline stage. Each source also
+      # gets a lossless WebP browser copy; the viewer uses WebP for the live
+      # raster overlays because it is smaller and reliably decodes in Chrome.
+      - name: Project all browser rasters to Web Mercator
+        run: |
+          set -euo pipefail
+          python -u src/project_mrms_webmercator.py
+
+      - name: Validate national browser raster assets
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json
+
+          out = Path("outputs")
+          names = [
+              "mrms_current_web.png",
+              "mrms_current_web.webp",
+              "winter_phase_mask_web.png",
+              "winter_phase_mask_web.webp",
+              "winter_precip_type_web.png",
+              "winter_precip_type_web.webp",
+              "phase_radar_fusion_overlay_web.png",
+              "phase_radar_fusion_overlay_web.webp",
+              "phase_agreement_overlay_web.png",
+              "phase_agreement_overlay_web.webp",
+          ]
+
+          sizes = {}
+          for name in names:
+              path = out / name
+              if not path.exists() or path.stat().st_size == 0:
+                  raise SystemExit(f"ERROR: missing browser raster: {path}")
+              with Image.open(path) as im:
+                  im.load()
+                  sizes[name] = {
+                      "size": list(im.size),
+                      "mode": im.mode,
+                      "format": im.format,
+                  }
+                  if im.width < 3000 or im.height < 1500:
+                      raise SystemExit(f"ERROR: browser raster is unexpectedly small: {name} {im.size}")
+                  if im.mode not in ("RGBA", "RGB"):
+                      raise SystemExit(f"ERROR: unexpected image mode for {name}: {im.mode}")
+
+          metadata = json.loads((out / "mrms_web.json").read_text(encoding="utf-8"))
+          layer_sizes = metadata.get("web_layer_sizes", {})
+          required = {"radar", "phase", "precip_type", "radar_phase_evidence", "phase_agreement"}
+          missing = sorted(required - set(layer_sizes))
+          if missing:
+              raise SystemExit(f"ERROR: mrms_web.json missing layer sizes: {missing}")
+
+          print("NATIONAL BROWSER RASTER QC PASSED")
+          for name, info in sizes.items():
+              print(f"  {name}: {info['size'][0]}x{info['size'][1]} {info['format']} {info['mode']} { (out/name).stat().st_size:,} bytes")
+          PY
+
+      # Archive history after all current browser rasters are complete.
+      # History is deliberately non-critical so it can never take the live
+      # radar/Pages product offline. The collector discovers any timestamped
+      # MRMS frames missed while this workflow was queued or running.
+      - name: Archive 8-hour full-CONUS MRMS history
+        continue-on-error: true
+        working-directory: src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u archive_mrms_history.py
+
+
+      # GitHub Release assets are intentionally delivered as downloads with
+      # application/octet-stream/attachment semantics. They are excellent
+      # persistent storage for Actions, but not reliable <img> sources in the
+      # browser. Stage the archived WebP frames into the Pages deployment so
+      # the history viewer can load them same-origin with image/webp.
+      - name: Stage archived MRMS history for Pages
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          rm -rf site_history_tmp
+          mkdir -p site_history_tmp
+
+          python - <<'PY'
+          import concurrent.futures
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import quote
+
+          import requests
+
+          manifest_path = Path("outputs/mrms_history.json")
+          history_dir = Path("site_history_tmp")
+          history_dir.mkdir(parents=True, exist_ok=True)
+
+          if not manifest_path.exists() or manifest_path.stat().st_size == 0:
+              print("No MRMS history manifest found; skipping history staging.")
+              raise SystemExit(0)
+
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          frames = manifest.get("frames", [])
+
+          assets = {}
+          for frame in frames:
+              radar_name = frame.get("radar_asset")
+              radar_api = frame.get("radar_api_url")
+              if radar_name and radar_api:
+                  assets[radar_name] = radar_api
+
+              phase_name = frame.get("phase_asset")
+              phase_api = frame.get("phase_api_url")
+              if phase_name and phase_api:
+                  assets[phase_name] = phase_api
+
+              precip_type_name = frame.get("precip_type_asset")
+              precip_type_api = frame.get("precip_type_api_url")
+              if precip_type_name and precip_type_api:
+                  assets[precip_type_name] = precip_type_api
+
+          print(f"History frames in manifest: {len(frames)}")
+          print(f"Unique history assets to stage: {len(assets)}")
+          if not assets:
+              print("No stageable history assets are present yet.")
+              raise SystemExit(0)
+
+          token = os.environ.get("GITHUB_TOKEN", "")
+          session = requests.Session()
+          session.headers.update({
+              "Accept": "application/octet-stream",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2026-03-10",
+              "User-Agent": "WinterRadar/1.1 (Pages history staging)",
+          })
+
+          def download(item):
+              name, api_url = item
+              target = history_dir / name
+              if target.exists() and target.stat().st_size > 0:
+                  return name, True, "cached"
+
+              last_error = None
+              for attempt in range(1, 4):
+                  try:
+                      response = session.get(api_url, timeout=(20, 120), allow_redirects=True)
+                      response.raise_for_status()
+                      data = response.content
+                      if len(data) < 64 or not data[:4] == b"RIFF" or data[8:12] != b"WEBP":
+                          raise RuntimeError(f"unexpected payload ({len(data):,} bytes; not WebP)")
+                      target.write_bytes(data)
+                      return name, True, f"{len(data):,} bytes"
+                  except Exception as exc:
+                      last_error = exc
+              return name, False, str(last_error)
+
+          failures = []
+          completed = 0
+          items = sorted(assets.items())
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
+              futures = [pool.submit(download, item) for item in items]
+              for future in concurrent.futures.as_completed(futures):
+                  name, ok, info = future.result()
+                  completed += 1
+                  if not ok:
+                      failures.append((name, info))
+                  if completed % 50 == 0 or completed == len(items):
+                      print(f"  Staged {completed}/{len(items)} history assets")
+
+          if failures:
+              print(f"History staging failures: {len(failures)}")
+              for name, error in failures[:10]:
+                  print(f"  FAILED {name}: {error}")
+              if len(failures) > 10:
+                  print(f"  ... plus {len(failures) - 10} more")
+              raise SystemExit(1)
+
+          print("MRMS history staging complete.")
+          PY
+
+      - name: Assemble Pages site
+        run: |
+          set -euo pipefail
+          rm -rf site
+          mkdir -p site/outputs site/history
+
+          if [ -d site_history_tmp ]; then
+            cp -a site_history_tmp/. site/history/
+          fi
+
+          cp index.html site/index.html
+          cp outputs/mrms_current.png site/outputs/mrms_current.png
+          cp outputs/mrms_current_web.png site/outputs/mrms_current_web.png
+          cp outputs/mrms_current_web.webp site/outputs/mrms_current_web.webp
+          if [ -s outputs/mrms_current_regional_web.png ]; then
+            cp outputs/mrms_current_regional_web.png site/outputs/mrms_current_regional_web.png
+          else
+            echo "Regional sharp MRMS raster is unavailable; full-CONUS raster remains available."
+          fi
+          cp outputs/mrms_current.json site/outputs/mrms_current.json
+          cp outputs/mrms_web.json site/outputs/mrms_web.json
+          cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
+          cp outputs/winter_phase_mask_web.png site/outputs/winter_phase_mask_web.png
+          cp outputs/winter_phase_mask_web.webp site/outputs/winter_phase_mask_web.webp
+          if [ -s outputs/winter_phase_mask_regional_web.png ]; then
+            cp outputs/winter_phase_mask_regional_web.png site/outputs/winter_phase_mask_regional_web.png
+          else
+            echo "Regional sharp winter mask is unavailable; full-CONUS mask remains available."
+          fi
+          cp outputs/winter_precip_type.png site/outputs/winter_precip_type.png
+          cp outputs/winter_precip_type_web.png site/outputs/winter_precip_type_web.png
+          cp outputs/winter_precip_type_web.webp site/outputs/winter_precip_type_web.webp
+          if [ -s outputs/winter_precip_type_regional_web.png ]; then
+            cp outputs/winter_precip_type_regional_web.png site/outputs/winter_precip_type_regional_web.png
+          else
+            echo "Regional sharp precipitation-type composite is unavailable; full-CONUS composite remains available."
+          fi
+          cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
+          cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
+          cp outputs/phase_radar_fusion.png site/outputs/phase_radar_fusion.png
+          cp outputs/phase_radar_fusion_overlay.png site/outputs/phase_radar_fusion_overlay.png
+          cp outputs/phase_radar_fusion_overlay_web.png site/outputs/phase_radar_fusion_overlay_web.png
+          cp outputs/phase_radar_fusion_overlay_web.webp site/outputs/phase_radar_fusion_overlay_web.webp
+          cp outputs/phase_radar_fusion.json site/outputs/phase_radar_fusion.json
+          cp outputs/phase_agreement.png site/outputs/phase_agreement.png
+          cp outputs/phase_agreement_overlay.png site/outputs/phase_agreement_overlay.png
+          cp outputs/phase_agreement_overlay_web.png site/outputs/phase_agreement_overlay_web.png
+          cp outputs/phase_agreement_overlay_web.webp site/outputs/phase_agreement_overlay_web.webp
+          cp outputs/phase_agreement.json site/outputs/phase_agreement.json
+          cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
+          cp outputs/phase_probability.png site/outputs/phase_probability.png
+          cp outputs/phase_diagnostics.png site/outputs/phase_diagnostics.png
+          cp outputs/phase_qc.json site/outputs/phase_qc.json
+          cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
+          cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
+          cp outputs/main.log site/outputs/main.log
+
+          if [ -s outputs/mrms_history.json ]; then
+            cp outputs/mrms_history.json site/outputs/mrms_history.json
+          else
+            printf '%s\n' '{"version":"1.0-history","frame_count":0,"phase_snapshot_count":0,"frames":[]}' > site/outputs/mrms_history.json
+          fi
+
+          test -s site/outputs/winter_precip_type.png
+          test -s site/outputs/winter_precip_type_web.png
+          test -s site/outputs/mrms_current_web.png
+          test -s site/outputs/winter_phase_mask_web.png
+          test -s site/outputs/winter_precip_type_web.png
+          test -s site/outputs/phase_radar_fusion_overlay_web.png
+          test -s site/outputs/phase_agreement_overlay_web.png
+          bash ./src/verify_core_outputs.sh site/outputs
+
+          echo "=============================================="
+          echo "PAGES CONTENT"
+          echo "=============================================="
+          find site -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          echo "History assets staged: $(find site/history -type f 2>/dev/null | wc -l)"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
