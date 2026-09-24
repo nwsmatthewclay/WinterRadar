@@ -3,10 +3,11 @@ from __future__ import annotations
 """Fast, robust RAP pressure-level reader for WinterRadar phase analysis.
 
 The workflow downloads a small NOMADS RAP awp130 subset containing TMP, RH,
-and HGT on pressure levels.  This module deliberately avoids opening the
-entire GRIB with xarray/cfgrib or calling MetPy's iterative wet-bulb solver on
-every grid point.  ecCodes reads the filtered GRIB directly in one pass, and a
-vectorized psychrometric Newton solve derives wet-bulb temperature.
+and HGT on pressure levels.  This module deliberately avoids importing the
+Python eccodes binding into the core process because the core MRMS reader uses
+the system-linked pygrib binding.  Mixing those two native ecCodes bindings in
+one Python process can trigger ``double free or corruption`` on Linux CI.
+A vectorized psychrometric Newton solve derives wet-bulb temperature.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -131,38 +132,14 @@ def download_rap_profile(valid_time_utc: str) -> Path:
     raise RuntimeError(f"No usable RAP pressure-level subset found in the last 7 hours: {last_error}")
 
 
-def _get_string(gid, key: str) -> str | None:
+def _grb_get(grb, key, default=None):
     try:
-        import eccodes
-        return str(eccodes.codes_get(gid, key))
+        return grb[key]
     except Exception:
-        return None
+        return default
 
 
-def _get_float(gid, key: str) -> float | None:
-    try:
-        import eccodes
-        value = eccodes.codes_get(gid, key)
-        return float(value)
-    except Exception:
-        return None
-
-
-def _get_int(gid, key: str) -> int | None:
-    try:
-        import eccodes
-        value = eccodes.codes_get(gid, key)
-        return int(value)
-    except Exception:
-        return None
-
-
-def _safe_array(gid, key: str) -> np.ndarray:
-    import eccodes
-    return np.asarray(eccodes.codes_get_array(gid, key), dtype=np.float64)
-
-
-def _projection_from_gid(gid) -> dict:
+def _projection_from_grb(grb) -> dict:
     keys = (
         "gridType",
         "LaDInDegrees",
@@ -180,41 +157,39 @@ def _projection_from_gid(gid) -> dict:
     )
     out: dict[str, float | int | str] = {}
     for key in keys:
-        try:
-            import eccodes
-            value = eccodes.codes_get(gid, key)
+        value = _grb_get(grb, key)
+        if value is not None:
             out[f"GRIB_{key}"] = value
-        except Exception:
-            continue
     return out
 
 
-def _valid_time_from_gid(gid) -> str | None:
-    import eccodes
-
-    # Prefer explicit validity keys when present.
+def _valid_time_from_grb(grb) -> str | None:
     for date_key, time_key in (("validityDate", "validityTime"),):
         try:
-            date = int(eccodes.codes_get(gid, date_key))
-            hhmm = int(eccodes.codes_get(gid, time_key))
-            dt = datetime.strptime(f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+            date = int(grb[date_key])
+            hhmm = int(grb[time_key])
+            dt = datetime.strptime(
+                f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M"
+            ).replace(tzinfo=timezone.utc)
             return dt.isoformat()
         except Exception:
             pass
 
     try:
-        date = int(eccodes.codes_get(gid, "dataDate"))
-        hhmm = int(eccodes.codes_get(gid, "dataTime"))
-        forecast = int(eccodes.codes_get(gid, "forecastTime"))
-        dt = datetime.strptime(f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+        date = int(grb["dataDate"])
+        hhmm = int(grb["dataTime"])
+        forecast = int(grb["forecastTime"])
+        dt = datetime.strptime(
+            f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M"
+        ).replace(tzinfo=timezone.utc)
         return (dt + timedelta(hours=forecast)).isoformat()
     except Exception:
         return None
 
 
 def _decode_pressure_fields(path: Path) -> dict:
-    """Read TMP/RH/HGT from the filtered GRIB in one sequential ecCodes pass."""
-    import eccodes
+    """Read TMP/RH/HGT from the filtered GRIB with one pygrib handle."""
+    import pygrib
 
     wanted = {"TMP": TMP_NAMES, "RH": RH_NAMES, "HGT": HGT_NAMES}
     fields: dict[str, dict[float, np.ndarray]] = {k: {} for k in wanted}
@@ -224,76 +199,70 @@ def _decode_pressure_fields(path: Path) -> dict:
     shape = None
     n_messages = 0
 
-    print("  Reading RAP GRIB with ecCodes (single pass)...", flush=True)
-    with path.open("rb") as fh:
-        while True:
-            gid = eccodes.codes_grib_new_from_file(fh)
-            if gid is None:
-                break
+    print("  Reading RAP GRIB with pygrib (single pass)...", flush=True)
+    grbs = None
+    try:
+        grbs = pygrib.open(str(path))
+        for grb in grbs:
             n_messages += 1
-            try:
-                type_of_level = _get_string(gid, "typeOfLevel")
-                if type_of_level != "isobaricInhPa":
-                    continue
-                short_name = (_get_string(gid, "shortName") or "").lower()
-                level = _get_float(gid, "level")
-                if level is None:
-                    continue
+            type_of_level = str(_grb_get(grb, "typeOfLevel", "")).lower()
+            if type_of_level != "isobaricinhpa":
+                continue
 
-                field_name = None
-                for name, candidates in wanted.items():
-                    if short_name in candidates:
-                        field_name = name
-                        break
-                if field_name is None:
-                    continue
+            short_name = str(_grb_get(grb, "shortName", "")).lower()
+            level = _grb_get(grb, "level")
+            if level is None:
+                continue
 
-                # Keep only requested pressure levels.
-                nearest = min(PRESSURE_LEVELS, key=lambda x: abs(x - level))
-                if abs(nearest - level) > 0.01:
-                    continue
+            field_name = None
+            for name, candidates in wanted.items():
+                if short_name in candidates:
+                    field_name = name
+                    break
+            if field_name is None:
+                continue
 
-                values = _safe_array(gid, "values")
-                ni = _get_int(gid, "Ni")
-                nj = _get_int(gid, "Nj")
-                if ni is None or nj is None or ni * nj != values.size:
-                    raise RuntimeError(f"Unexpected RAP grid shape: Ni={ni}, Nj={nj}, values={values.size}")
-                values = values.reshape(nj, ni)
+            nearest = min(PRESSURE_LEVELS, key=lambda x: abs(x - float(level)))
+            if abs(nearest - float(level)) > 0.01:
+                continue
 
-                missing = _get_float(gid, "missingValue")
-                if missing is not None and np.isfinite(missing):
-                    values[np.isclose(values, missing, rtol=0.0, atol=1e-6)] = np.nan
-                values[~np.isfinite(values)] = np.nan
+            values = np.asarray(grb.values, dtype=np.float32).copy()
+            if values.ndim != 2:
+                raise RuntimeError(
+                    f"Unexpected RAP field shape for {field_name} {level}: {values.shape}"
+                )
 
-                fields[field_name][nearest] = values
-                shape = values.shape
+            missing = _grb_get(grb, "missingValue")
+            if missing is not None and np.isfinite(float(missing)):
+                values[np.isclose(values, float(missing), rtol=0.0, atol=1e-6)] = np.nan
+            values[~np.isfinite(values)] = np.nan
 
-                if lat is None:
-                    projection = _projection_from_gid(gid)
-                    valid_time = _valid_time_from_gid(gid)
+            fields[field_name][nearest] = values
+            shape = values.shape
 
-                    # Prefer the native ecCodes coordinate arrays when they
-                    # actually match the decoded field. Some filtered RAP
-                    # GRIBs expose broadcast/reduced coordinate arrays (for
-                    # example (40, 1) and (1, 7000)); those are not valid
-                    # coordinates for a (325, 451) field and previously caused
-                    # the phase engine to abort. Reconstruct the regular
-                    # Lambert grid from authoritative GRIB geometry instead.
-                    raw_lat = _safe_array(gid, "latitudes")
-                    raw_lon = _safe_array(gid, "longitudes")
-                    if raw_lat.size == int(np.prod(shape)) and raw_lon.size == int(np.prod(shape)):
-                        lat = raw_lat.reshape(shape)
-                        lon = raw_lon.reshape(shape)
-                    else:
-                        print(
-                            f"  RAP coordinate arrays are non-native: lat={raw_lat.shape}, lon={raw_lon.shape}; "
-                            f"reconstructing {shape} Lambert grid from GRIB geometry.",
-                            flush=True,
-                        )
-                        lat, lon, _, _ = _build_regular_lambert_grid(shape, projection)
-                    lon = np.where(lon > 180.0, lon - 360.0, lon)
-            finally:
-                eccodes.codes_release(gid)
+            if lat is None:
+                projection = _projection_from_grb(grb)
+                valid_time = _valid_time_from_grb(grb)
+
+                raw_lat, raw_lon = grb.latlons()
+                raw_lat = np.asarray(raw_lat, dtype=np.float64)
+                raw_lon = np.asarray(raw_lon, dtype=np.float64)
+
+                if raw_lat.shape == shape and raw_lon.shape == shape:
+                    lat = raw_lat.copy()
+                    lon = raw_lon.copy()
+                else:
+                    print(
+                        f"  RAP coordinate arrays are non-native: lat={raw_lat.shape}, "
+                        f"lon={raw_lon.shape}; reconstructing {shape} Lambert grid.",
+                        flush=True,
+                    )
+                    lat, lon, _, _ = _build_regular_lambert_grid(shape, projection)
+
+                lon = np.where(lon > 180.0, lon - 360.0, lon)
+    finally:
+        if grbs is not None:
+            grbs.close()
 
     print(f"  RAP GRIB messages inspected: {n_messages}", flush=True)
     if lat is None or lon is None or not shape:
@@ -302,11 +271,15 @@ def _decode_pressure_fields(path: Path) -> dict:
     missing_fields = [name for name, data in fields.items() if len(data) != len(PRESSURE_LEVELS)]
     if missing_fields:
         details = ", ".join(f"{name}: {sorted(data)}" for name, data in fields.items())
-        raise RuntimeError(f"RAP pressure-level fields incomplete ({details}); missing {missing_fields}")
+        raise RuntimeError(
+            f"RAP pressure-level fields incomplete ({details}); missing {missing_fields}"
+        )
 
     ordered = {}
     for name in wanted:
-        ordered[name] = np.stack([fields[name][lev] for lev in PRESSURE_LEVELS]).astype(np.float32)
+        ordered[name] = np.stack(
+            [fields[name][lev] for lev in PRESSURE_LEVELS]
+        ).astype(np.float32)
 
     return {
         "temperature_k": ordered["TMP"],
@@ -318,7 +291,6 @@ def _decode_pressure_fields(path: Path) -> dict:
         "projection": projection,
         "valid_time_utc": valid_time,
     }
-
 
 def _sat_vapor_pressure_water(temp_c: np.ndarray) -> np.ndarray:
     """Magnus saturation vapor pressure over water, hPa."""
