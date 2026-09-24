@@ -387,7 +387,20 @@ def load_rap_profile(path: Path) -> dict:
     # Cache projected RAP coordinates so sample_profile_to_mrms does not
     # transform the RAP grid again for every MRMS chunk.
     transformer = _make_transformer(data["projection"])
-    hx, hy = transformer.transform(data["longitude"], data["latitude"])
+
+    # pyproj may interpret large 2-D coordinate arrays as mixed-dimensional
+    # input and raise: "x, y, z, and time must be same size if included."
+    # Flatten the paired lon/lat arrays explicitly, transform them as a simple
+    # x/y vector, then restore the RAP grid shape. This is the same safe pattern
+    # used when sampling the RAP grid onto MRMS below.
+    rap_shape = data["longitude"].shape
+    hx_flat, hy_flat = transformer.transform(
+        np.asarray(data["longitude"], dtype=np.float64).ravel(),
+        np.asarray(data["latitude"], dtype=np.float64).ravel(),
+    )
+    hx = np.asarray(hx_flat, dtype=np.float64).reshape(rap_shape)
+    hy = np.asarray(hy_flat, dtype=np.float64).reshape(rap_shape)
+
     x_axis = hx[0, :].astype(np.float64)
     y_axis = hy[:, 0].astype(np.float64)
 
