@@ -1647,12 +1647,9 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 <div class="export-field"><label for="exportFormat">Output</label><select id="exportFormat" onchange="updateExportFormatUI()"><option value="png">PNG — current frame</option><option value="gif">GIF — history loop</option></select></div>
 <div class="export-field"><label for="exportScale">Resolution</label><select id="exportScale"><option value="1">1× — map size</option><option value="1.5">1.5×</option><option value="2">2×</option></select></div></div></div>
 <div class="export-section"><div class="export-section-title">Data layers</div>
-<label class="export-layer-row"><input id="exportRadar" type="checkbox" checked><span>MRMS Radar Data</span></label>
+<label class="export-layer-row"><input id="exportRadar" type="checkbox" checked><span>MRMS Reflectivity</span></label>
 <label class="export-layer-row"><input id="exportPrecipType" type="checkbox" checked><span>Precipitation Type Composite</span></label>
-<label class="export-layer-row"><input id="exportPhase" type="checkbox"><span>Winter Phase Mask</span></label>
-<label class="export-layer-row"><input id="exportRadarFusion" type="checkbox"><span>Radar Phase Evidence</span></label>
-<label class="export-layer-row"><input id="exportAgreement" type="checkbox"><span>Phase Agreement</span></label>
-<div class="export-mode-note">Basemap and NWS boundary layers remain part of the map view. Dashboard headers, controls, history controls, and other page content are not exported.</div></div>
+<div class="export-mode-note">Exports are designed as a finished radar graphic: MRMS reflectivity and precipitation type only. Basemap and NWS boundary layers remain part of the map view; dashboard controls and other page content are not exported.</div></div>
 <div id="exportGifOptions" class="export-section" style="display:none;"><div class="export-section-title">GIF loop</div><div class="export-grid">
 <div class="export-field"><label for="exportFrameCount">Frames (max 20)</label><input id="exportFrameCount" type="number" min="2" max="20" value="10"></div>
 <div class="export-field"><label for="exportDelay">Loop speed</label><select id="exportDelay"><option value="100">0.10 s</option><option value="200">0.20 s</option><option value="350" selected>0.35 s</option><option value="500">0.50 s</option><option value="750">0.75 s</option><option value="1000">1.00 s</option></select></div></div>
@@ -4196,29 +4193,69 @@ function closeLayerPanelWhenClickingOutside(event) {
 let exportModalOpen=false;
 let exportBusy=false;
 function setExportStatus(message,error=false){const el=document.getElementById("exportStatus");if(el){el.textContent=message||"";el.classList.toggle("error",!!error);}}
-function openExportModal(){if(exportBusy)return;exportModalOpen=true;const b=document.getElementById("exportModalBackdrop");b.classList.add("open");b.setAttribute("aria-hidden","false");[["exportRadar","radarToggle"],["exportPrecipType","precipTypeToggle"],["exportPhase","phaseToggle"],["exportRadarFusion","radarFusionToggle"],["exportAgreement","phaseAgreementToggle"]].forEach(([a,b])=>{document.getElementById(a).checked=!!document.getElementById(b)?.checked;});updateExportFormatUI();setExportStatus("Pan and zoom the map behind this panel to set the export frame.");}
+function openExportModal(){
+    if(exportBusy)return;
+    exportModalOpen=true;
+    const b=document.getElementById("exportModalBackdrop");
+    b.classList.add("open");
+    b.setAttribute("aria-hidden","false");
+    const radar=document.getElementById("exportRadar");
+    const precip=document.getElementById("exportPrecipType");
+    if(radar)radar.checked=!!document.getElementById("radarToggle")?.checked;
+    if(precip)precip.checked=!!document.getElementById("precipTypeToggle")?.checked;
+    updateExportFormatUI();
+    setExportStatus("Pan and zoom the map behind this panel to set the exact export frame.");
+}
 function closeExportModal(){if(exportBusy)return;exportModalOpen=false;const b=document.getElementById("exportModalBackdrop");b.classList.remove("open");b.setAttribute("aria-hidden","true");document.getElementById("map")?.classList.remove("export-capture-mode");}
-function updateExportFormatUI(){const gif=document.getElementById("exportFormat")?.value==="gif", opts=document.getElementById("exportGifOptions"), btn=document.getElementById("exportStartButton"), f=document.getElementById("exportRadarFusion"), a=document.getElementById("exportAgreement");if(opts)opts.style.display=gif?"block":"none";if(btn)btn.textContent=gif?"Export GIF":"Export PNG";if(f){f.disabled=gif;if(gif)f.checked=false;}if(a){a.disabled=gif;if(gif)a.checked=false;}const info=document.getElementById("exportHistoryInfo");if(info&&gif)info.textContent=historyFrames.length?historyFrames.length+" archived frames available. Up to 20 frames ending at the current history frame will be used.":"History frames are not loaded yet. Open History first.";}
-function exportSelectedLayers(){return{radar:!!document.getElementById("exportRadar")?.checked,precipType:!!document.getElementById("exportPrecipType")?.checked,phase:!!document.getElementById("exportPhase")?.checked,radarFusion:!!document.getElementById("exportRadarFusion")?.checked,agreement:!!document.getElementById("exportAgreement")?.checked};}
+function updateExportFormatUI(){
+    const gif=document.getElementById("exportFormat")?.value==="gif";
+    const opts=document.getElementById("exportGifOptions");
+    const btn=document.getElementById("exportStartButton");
+    if(opts)opts.style.display=gif?"block":"none";
+    if(btn)btn.textContent=gif?"Export GIF":"Export PNG";
+    const info=document.getElementById("exportHistoryInfo");
+    if(info&&gif)info.textContent=historyFrames.length?historyFrames.length+" archived frames available. Up to 20 frames ending at the current history frame will be used.":"History frames are not loaded yet. Open History first.";
+}
+function exportSelectedLayers(){
+    // Export is intentionally limited to the two operational products that
+    // belong in a finished radar graphic: MRMS reflectivity and the winter
+    // precipitation-type composite.
+    return{
+        radar:!!document.getElementById("exportRadar")?.checked,
+        precipType:!!document.getElementById("exportPrecipType")?.checked,
+        phase:false,
+        radarFusion:false,
+        agreement:false
+    };
+}
 function snapshotLayerCheckboxes(){return{radar:!!document.getElementById("radarToggle")?.checked,precipType:!!document.getElementById("precipTypeToggle")?.checked,phase:!!document.getElementById("phaseToggle")?.checked,radarFusion:!!document.getElementById("radarFusionToggle")?.checked,agreement:!!document.getElementById("phaseAgreementToggle")?.checked};}
 function restoreLayerCheckboxes(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}}
 function waitForMapImages(timeoutMs=3000){const t=Date.now();return new Promise(resolve=>{(function check(){const p=Array.from(document.querySelectorAll("#map img")).filter(i=>!i.complete||i.naturalWidth===0);if(!p.length||Date.now()-t>=timeoutMs)return resolve();setTimeout(check,60);})();});}
-async function applyExportLayerSelection(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}await waitForMapImages(3000);}
+async function applyExportLayerSelection(s){
+    // Hide analysis-only overlays while exporting. The map capture should
+    // contain only the selected reflectivity / precipitation-type products.
+    [["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",false],["radarFusionToggle",false],["phaseAgreementToggle",false]].forEach(([id,v])=>{
+        const e=document.getElementById(id);if(e)e.checked=v;
+    });
+    toggleRadar(s.radar);
+    togglePrecipType(s.precipType);
+    togglePhase(false);
+    if(!historyMode){
+        toggleRadarFusion(false);
+        togglePhaseAgreement(false);
+    }
+    await waitForMapImages(3000);
+}
 function exportLayerLabel(selected) {
-    const labels = [];
-    if (selected.radar) labels.push("MRMS Reflectivity");
-    if (selected.precipType) labels.push("Precipitation Type Composite");
-    if (selected.phase) labels.push("Winter Phase Mask");
-    if (selected.radarFusion) labels.push("Radar Phase Evidence");
-    if (selected.agreement) labels.push("Phase Agreement");
-    return labels.length ? labels.join("  •  ") : "Basemap / Reference Layers";
+    if (selected.radar && selected.precipType) return "MRMS Reflectivity + Precipitation Type";
+    if (selected.radar) return "MRMS Reflectivity (Lowest Elevation Angle)";
+    if (selected.precipType) return "Precipitation Type Composite";
+    return "MRMS Radar";
 }
 
 function exportFrameTimestamp(index) {
     let value = null;
-    if (historyMode && historyFrames[index]) {
-        value = historyFrames[index].timestamp_utc;
-    }
+    if (historyMode && historyFrames[index]) value = historyFrames[index].timestamp_utc;
     if (!value && window.currentMRMSTimeUtc) value = window.currentMRMSTimeUtc;
     if (!value) value = new Date().toISOString();
     return new Date(value);
@@ -4237,12 +4274,22 @@ function formatExportTime(dt) {
     }).format(dt);
 }
 
+function formatExportTimeUTC(dt) {
+    if (!(dt instanceof Date) || !Number.isFinite(dt.getTime())) return "Time unavailable";
+    return new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
+        timeZoneName: "short"
+    }).format(dt);
+}
+
 const NWS_EXPORT_LOGO_URL = "https://www.weather.gov/images/nws/nws_logo.png";
 let nwsExportLogoPromise = null;
 
 function loadNWSExportLogo() {
     if (nwsExportLogoPromise) return nwsExportLogoPromise;
-
     nwsExportLogoPromise = new Promise(function(resolve) {
         const img = new Image();
         img.crossOrigin = "anonymous";
@@ -4251,191 +4298,233 @@ function loadNWSExportLogo() {
         img.onerror = function() { resolve(null); };
         img.src = NWS_EXPORT_LOGO_URL;
     });
-
     return nwsExportLogoPromise;
 }
 
 function exportLegendItems(selected) {
     const items = [];
     if (selected.radar) {
-        items.push({type:"gradient", label:"MRMS Reflectivity (dBZ)", colors:[
+        items.push({type:"gradient", label:"RADAR REFLECTIVITY (dBZ)", colors:[
             [0,"#323232"],[5,"#0e0e5a"],[10,"#034f8c"],[15,"#07a2b6"],
             [20,"#11e51f"],[25,"#0ca914"],[34.5,"#066808"],[35,"#ffff00"],
             [40,"#ffc200"],[45,"#ff8c00"],[50,"#dd0000"],[57.5,"#6b0000"],
-            [62.5,"#ffa3ff"],[67.5,"#ee1df4"],[72.5,"#7500eb"],[77.5,"#00ffdb"],[82.5,"#004c4a"],[95,"#000000"]
+            [62.5,"#ffa3ff"],[67.5,"#ee1df4"],[72.5,"#7500eb"],[77.5,"#00ffdb"],
+            [82.5,"#004c4a"],[95,"#000000"]
         ]});
     }
     if (selected.precipType) {
-        items.push({type:"swatches", label:"Precipitation Type Composite", swatches:[
-            ["Rain (MRMS dBZ)","#1d6fb8"],["Snow","#3aa7ff"],["Sleet","#b84de0"],
-            ["Freezing Rain","#e13958"],["Mixed","#9b73df"]
-        ]});
-    }
-    if (selected.phase) {
-        items.push({type:"swatches", label:"Winter Phase Mask", swatches:[
-            ["Snow","#3791ff"],["Sleet","#b950dc"],["FZRA","#e13746"],["Mixed","#dc5fc3"],["Uncertain","#91969b"]
-        ]});
-    }
-    if (selected.radarFusion) {
-        items.push({type:"swatches", label:"Radar Phase Evidence", swatches:[
-            ["Consistent","#36a852"],["Conflicts","#e24a3b"],["Conflicting signatures","#a23bb7"],["No decisive signature","#808890"]
-        ]});
-    }
-    if (selected.agreement) {
-        items.push({type:"swatches", label:"Phase Agreement", swatches:[
-            ["Environment + radar consistent","#32aa5f"],["Potential phase conflict","#dc4141"],
-            ["Radar signatures conflict","#e19123"],["No decisive radar signature","#7d8791"]
+        items.push({type:"ptype", label:"PRECIPITATION TYPE (Composite)", swatches:[
+            ["Rain","#5dcc6b"],
+            ["Snow","#3399ea"],
+            ["Sleet","#ef9691"],
+            ["Freezing Rain","#9851d8"],
+            ["Mixed","#a5a5a5"],
+            ["Uncertain","#ffffff"]
         ]});
     }
     return items;
 }
 
 function exportLegendHeight(items, scale) {
-    const rowH = Math.round(48 * scale);
-    const top = Math.round(52 * scale);
-    return Math.max(100, top + Math.max(1, items.length) * rowH + Math.round(22 * scale));
+    // A deliberately generous lower information band, matching the polished
+    // two-column NOAA-style mockup. It scales with output resolution.
+    return Math.round(190 * scale);
 }
 
 async function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
     const scale = Math.max(1, Math.min(2, Number(document.getElementById("exportScale")?.value || 1)));
     const w = sourceCanvas.width;
     const items = exportLegendItems(selected);
-    const bannerH = Math.round(104 * scale);
-    const legendH = Math.round(exportLegendHeight(items, scale));
+    const bannerH = Math.round(108 * scale);
+    const legendH = exportLegendHeight(items, scale);
     const out = document.createElement("canvas");
     out.width = w;
     out.height = sourceCanvas.height + bannerH + legendH;
     const ctx = out.getContext("2d", { willReadFrequently: true });
 
+    // Clean white page background.
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, out.width, out.height);
 
-    // Stronger, larger export header with the official NWS logo.
+    // NOAA/NWS-style blue title banner.
     const grad = ctx.createLinearGradient(0, 0, w, 0);
-    grad.addColorStop(0, "#063b67");
-    grad.addColorStop(0.62, "#0a5d8b");
-    grad.addColorStop(1, "#1578a8");
+    grad.addColorStop(0, "#06416c");
+    grad.addColorStop(0.62, "#0b628f");
+    grad.addColorStop(1, "#187daa");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, bannerH);
 
-    const pad = Math.round(20 * scale);
-    const logoSize = Math.round(76 * scale);
+    const pad = Math.round(22 * scale);
+    const logoSize = Math.round(80 * scale);
     const logo = await loadNWSExportLogo();
-
     if (logo) {
         ctx.drawImage(logo, pad, Math.round((bannerH - logoSize) / 2), logoSize, logoSize);
     } else {
-        // Fallback if the NWS host blocks canvas CORS; keep the header usable.
         ctx.fillStyle = "#ffffff";
         ctx.beginPath();
         ctx.arc(pad + logoSize/2, bannerH/2, logoSize/2, 0, Math.PI*2);
         ctx.fill();
         ctx.fillStyle = "#0a4f79";
-        ctx.font = `900 ${Math.round(17*scale)}px Arial, sans-serif`;
+        ctx.font = `900 ${Math.round(18*scale)}px Arial, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText("NWS", pad + logoSize/2, bannerH/2 + 1*scale);
     }
 
-    const textX = pad + logoSize + Math.round(18 * scale);
+    const textX = pad + logoSize + Math.round(20 * scale);
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = "#ffffff";
-    ctx.font = `900 ${Math.round(25*scale)}px Arial, sans-serif`;
-    ctx.fillText("MRMS Radar Mosaic", textX, Math.round(39*scale));
-    ctx.font = `700 ${Math.round(12*scale)}px Arial, sans-serif`;
-    ctx.fillText(exportLayerLabel(selected), textX, Math.round(61*scale));
-    ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
-    ctx.fillStyle = "rgba(255,255,255,.84)";
-    ctx.fillText("MRMS / NOAA / National Weather Service", textX, Math.round(82*scale));
+    ctx.font = `900 ${Math.round(31*scale)}px Arial, sans-serif`;
+    ctx.fillText("MRMS Radar Mosaic", textX, Math.round(43*scale));
+    ctx.font = `800 ${Math.round(14*scale)}px Arial, sans-serif`;
+    ctx.fillText("MRMS Reflectivity (Lowest Elevation Angle)", textX, Math.round(67*scale));
+    ctx.font = `700 ${Math.round(10*scale)}px Arial, sans-serif`;
+    ctx.fillStyle = "rgba(255,255,255,.86)";
+    ctx.fillText("MRMS data  •  NOAA / National Weather Service", textX, Math.round(88*scale));
 
     const dt = exportFrameTimestamp(frameIndex);
-    const timeText = formatExportTime(dt);
     ctx.textAlign = "right";
     ctx.fillStyle = "#ffffff";
-    ctx.font = `800 ${Math.round(13*scale)}px Arial, sans-serif`;
-    ctx.fillText("Valid " + timeText, w - pad, Math.round(42*scale));
-    ctx.font = `600 ${Math.round(9*scale)}px Arial, sans-serif`;
+    ctx.font = `900 ${Math.round(15*scale)}px Arial, sans-serif`;
+    ctx.fillText("Valid " + formatExportTime(dt), w - pad, Math.round(43*scale));
+    ctx.font = `700 ${Math.round(11*scale)}px Arial, sans-serif`;
     ctx.fillStyle = "rgba(255,255,255,.82)";
-    
+    ctx.fillText("(" + formatExportTimeUTC(dt) + ")", w - pad, Math.round(66*scale));
 
+    // Map frame.
     ctx.drawImage(sourceCanvas, 0, bannerH);
 
-    // Dedicated legend panel below the map. Each selected layer gets its own
-    // clearly labeled row so the legend remains readable at 1x and 2x.
+    // Bottom information panel.
     const legendY = bannerH + sourceCanvas.height;
     ctx.fillStyle = "#f5f8fa";
     ctx.fillRect(0, legendY, w, legendH);
-    ctx.strokeStyle = "#c7d1d8";
+    ctx.strokeStyle = "#c6d1d8";
     ctx.lineWidth = Math.max(1, scale);
     ctx.strokeRect(0, legendY, w, legendH);
 
-    const left = pad;
-    let y = legendY + Math.round(22 * scale);
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#243943";
-    ctx.font = `900 ${Math.round(15*scale)}px Arial, sans-serif`;
-    ctx.fillText("LEGEND", left, y);
-    y += Math.round(28 * scale);
+    const top = legendY + Math.round(27 * scale);
+    const left = Math.round(24 * scale);
+    const dividerX = Math.round(w * 0.56);
+    const rightLeft = dividerX + Math.round(34 * scale);
 
-    items.forEach(function(item) {
-        const rowTop = y;
-        ctx.fillStyle = "#53636d";
-        ctx.font = `800 ${Math.round(11*scale)}px Arial, sans-serif`;
-        ctx.fillText(item.label.toUpperCase(), left, rowTop);
+    // Two-column layout: reflectivity on the left, p-type on the right.
+    ctx.strokeStyle = "#cbd5db";
+    ctx.lineWidth = Math.max(1, scale);
+    ctx.beginPath();
+    ctx.moveTo(dividerX, legendY + Math.round(14*scale));
+    ctx.lineTo(dividerX, legendY + legendH - Math.round(14*scale));
+    ctx.stroke();
 
-        if (item.type === "gradient") {
-            const gx = left + Math.round(142 * scale);
-            const gw = Math.min(Math.round(300 * scale), Math.max(170, w - gx - Math.round(100*scale)));
-            const gh = Math.round(16 * scale);
-            const g = ctx.createLinearGradient(gx, 0, gx + gw, 0);
-            item.colors.forEach(function(c) { g.addColorStop(c[0] / 95, c[1]); });
-            ctx.fillStyle = g;
-            ctx.fillRect(gx, rowTop - gh/2, gw, gh);
-            ctx.strokeStyle = "#8e9aa2";
-            ctx.strokeRect(gx, rowTop - gh/2, gw, gh);
-            ctx.fillStyle = "#5d6d77";
-            ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
-            ctx.fillText("5", gx, rowTop + Math.round(13*scale));
-            ctx.textAlign = "right";
-            ctx.fillText("95 dBZ", gx + gw, rowTop + Math.round(13*scale));
-            ctx.textAlign = "left";
-        } else {
-            let x = left + Math.round(142 * scale);
-            const maxX = w - pad;
-            item.swatches.forEach(function(sw) {
-                const bw = Math.round(15 * scale);
-                const labelW = Math.round((sw[0].length * 6.2 + 28) * scale);
-                if (x + bw + labelW > maxX) {
-                    x = left + Math.round(142 * scale);
-                    y += Math.round(20 * scale);
-                }
-                ctx.fillStyle = sw[1];
-                ctx.fillRect(x, rowTop - bw/2, bw, bw);
-                ctx.strokeStyle = "rgba(55,65,72,.35)";
-                ctx.strokeRect(x, rowTop - bw/2, bw, bw);
-                x += bw + Math.round(7 * scale);
-                ctx.fillStyle = "#52616a";
-                ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
-                ctx.fillText(sw[0], x, rowTop);
-                x += Math.round((sw[0].length * 5.8 + 24) * scale);
-            });
-        }
+    const radarItem = items.find(i => i.type === "gradient");
+    const ptypeItem = items.find(i => i.type === "ptype");
 
-        y = rowTop + Math.round(39 * scale);
-        ctx.strokeStyle = "#dce3e7";
-        ctx.lineWidth = Math.max(1, scale * 0.6);
-        ctx.beginPath();
-        ctx.moveTo(left, y - Math.round(10*scale));
-        ctx.lineTo(w - left, y - Math.round(10*scale));
-        ctx.stroke();
-    });
+    if (radarItem) {
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = "#18384d";
+        ctx.font = `900 ${Math.round(18*scale)}px Arial, sans-serif`;
+        ctx.fillText(radarItem.label, left, top);
 
+        const gx = left;
+        const gy = top + Math.round(19*scale);
+        const gw = dividerX - left - Math.round(34*scale);
+        const gh = Math.round(24*scale);
+        const g = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+        radarItem.colors.forEach(function(c){g.addColorStop(c[0]/95, c[1]);});
+        ctx.fillStyle = g;
+        ctx.fillRect(gx, gy, gw, gh);
+        ctx.strokeStyle = "#87949d";
+        ctx.lineWidth = Math.max(1, scale);
+        ctx.strokeRect(gx, gy, gw, gh);
+
+        // Readable reflectivity tick marks.
+        const ticks = [5,15,25,35,45,55,65,75,85,95];
+        ctx.font = `700 ${Math.round(11*scale)}px Arial, sans-serif`;
+        ctx.fillStyle = "#52616a";
+        ctx.textBaseline = "top";
+        ticks.forEach(function(v, i){
+            const x = gx + (v - 5) / 90 * gw;
+            ctx.textAlign = i === ticks.length-1 ? "right" : (i === 0 ? "left" : "center");
+            ctx.fillText(String(v), x, gy + gh + Math.round(7*scale));
+        });
+        ctx.textAlign = "left";
+        ctx.font = `700 ${Math.round(12*scale)}px Arial, sans-serif`;
+        const bands = [
+            ["Light", 5, 25],
+            ["Moderate", 25, 45],
+            ["Heavy", 45, 65],
+            ["Extreme", 65, 95]
+        ];
+        bands.forEach(function(b){
+            const x1 = gx + (b[1]-5)/90*gw;
+            const x2 = gx + (b[2]-5)/90*gw;
+            ctx.strokeStyle = "#aab6bd";
+            ctx.lineWidth = Math.max(1, scale);
+            ctx.beginPath();
+            ctx.moveTo(x1, gy + gh + Math.round(28*scale));
+            ctx.lineTo(x2, gy + gh + Math.round(28*scale));
+            ctx.moveTo(x1, gy + gh + Math.round(28*scale));
+            ctx.lineTo(x1, gy + gh + Math.round(23*scale));
+            ctx.moveTo(x2, gy + gh + Math.round(28*scale));
+            ctx.lineTo(x2, gy + gh + Math.round(23*scale));
+            ctx.stroke();
+            ctx.fillStyle = "#52616a";
+            ctx.textAlign = "center";
+            ctx.fillText(b[0], (x1+x2)/2, gy + gh + Math.round(47*scale));
+        });
+    }
+
+    if (ptypeItem) {
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = "#18384d";
+        ctx.font = `900 ${Math.round(18*scale)}px Arial, sans-serif`;
+        ctx.fillText(ptypeItem.label, rightLeft, top);
+
+        const swY = top + Math.round(28*scale);
+        const available = w - rightLeft - left;
+        const count = ptypeItem.swatches.length;
+        const gap = Math.round(12*scale);
+        const sw = Math.min(Math.round(58*scale), Math.max(Math.round(42*scale), Math.floor((available - gap*(count-1)) / count)));
+        const total = sw*count + gap*(count-1);
+        let x = rightLeft + Math.max(0, Math.floor((available-total)/2));
+        ptypeItem.swatches.forEach(function(swatch){
+            const boxH = Math.round(40*scale);
+            ctx.fillStyle = swatch[1];
+            ctx.fillRect(x, swY, sw, boxH);
+            ctx.strokeStyle = "#aeb8be";
+            ctx.lineWidth = Math.max(1, scale);
+            ctx.strokeRect(x, swY, sw, boxH);
+            ctx.fillStyle = "#203f52";
+            ctx.font = `800 ${Math.round(10*scale)}px Arial, sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            const words = swatch[0].split(" ");
+            if (words.length > 1) {
+                const first = words.slice(0, Math.ceil(words.length/2)).join(" ");
+                const second = words.slice(Math.ceil(words.length/2)).join(" ");
+                ctx.fillText(first, x + sw/2, swY + boxH + Math.round(7*scale));
+                ctx.fillText(second, x + sw/2, swY + boxH + Math.round(20*scale));
+            } else {
+                ctx.fillText(swatch[0], x + sw/2, swY + boxH + Math.round(8*scale));
+            }
+            x += sw + gap;
+        });
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#71808a";
+        ctx.font = `italic 600 ${Math.round(11*scale)}px Arial, sans-serif`;
+        ctx.fillText("Color = predominant precipitation type", rightLeft, legendY + Math.round(126*scale));
+        ctx.fillText("Intensity = MRMS reflectivity (dBZ)", rightLeft, legendY + Math.round(143*scale));
+    }
+
+    // Small, quiet footer attribution.
     ctx.textAlign = "right";
+    ctx.textBaseline = "alphabetic";
     ctx.fillStyle = "#7a8790";
-    ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
-    ctx.fillText("WinterRadar • MRMS data • NOAA/NWS", w-pad, out.height-Math.round(10*scale));
+    ctx.font = `700 ${Math.round(10*scale)}px Arial, sans-serif`;
+    ctx.fillText("MRMS data • NOAA / National Weather Service", w-pad, out.height-Math.round(10*scale));
     return out;
 }
 
