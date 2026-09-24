@@ -449,7 +449,16 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
     x_sorted = x_axis[::-1] if x_rev else x_axis
     y_sorted = y_axis[::-1] if y_rev else y_axis
 
-    x, y = transformer.transform(lon2, lat2)
+    # pyproj can raise a size-mismatch ProjError when very large 2-D arrays
+    # are passed directly through a transformer (especially when a source/grid
+    # CRS carries dimensional metadata). Flattening the coordinate arrays makes
+    # the transform unambiguously 2-D x/y input, then restore the MRMS chunk
+    # shape. This preserves the exact geographic sampling while avoiding the
+    # intermittent "x, y, z, and time must be same size" failure.
+    target_shape = lon2.shape
+    x_flat, y_flat = transformer.transform(lon2.ravel(), lat2.ravel())
+    x = np.asarray(x_flat, dtype=np.float64).reshape(target_shape)
+    y = np.asarray(y_flat, dtype=np.float64).reshape(target_shape)
     ix_sorted = _nearest_index(x_sorted, x)
     iy_sorted = _nearest_index(y_sorted, y)
     ix = (len(x_axis) - 1 - ix_sorted) if x_rev else ix_sorted
