@@ -26,9 +26,7 @@ from render import (  # noqa: E402
 )
 
 MAIN_VERSION = "9.1-rap-profile-phase"
-# Diagnostic aggregation is 10x10. Keep profile chunks divisible by the
-# row aggregation factor so every chunk contributes to the diagnostic grid.
-PROFILE_CHUNK_ROWS = 40
+PROFILE_CHUNK_ROWS = 32
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
 
@@ -190,13 +188,39 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
                 h2 = arr.shape[0] // DIAG_Y_FACTOR
                 w2 = arr.shape[1] // DIAG_X_FACTOR
                 block = arr.reshape(h2, DIAG_Y_FACTOR, w2, DIAG_X_FACTOR)
-                diag[key][dy0:dy1] = np.nanmean(block, axis=(1, 3))
+
+                # Do not call np.nanmean() on all-NaN blocks. Some RAP/MRMS
+                # sample cells legitimately contain no valid precipitation/profile
+                # samples, and np.nanmean() emits a RuntimeWarning for those cells.
+                # Sum/count gives the same mean where data exist and leaves truly
+                # empty diagnostic cells as NaN without generating warnings.
+                valid = np.isfinite(block)
+                count = valid.sum(axis=(1, 3))
+                total = np.nansum(block, axis=(1, 3))
+                block_mean = np.full((h2, w2), np.nan, dtype=np.float32)
+                np.divide(
+                    total,
+                    count,
+                    out=block_mean,
+                    where=count > 0,
+                )
+                diag[key][dy0:dy1] = block_mean
 
         for key in max_prob:
-            max_prob[key] = max(max_prob[key], float(np.nanmax(probs[key])))
-        mean_me.append(float(np.nanmean(probs["melting_energy"])))
-        mean_re.append(float(np.nanmean(probs["refreezing_energy"])))
-        mean_ice.append(float(np.nanmean(probs["prob_ice"])))
+            values = np.asarray(probs[key], dtype=np.float32)
+            finite = values[np.isfinite(values)]
+            if finite.size:
+                max_prob[key] = max(max_prob[key], float(np.max(finite)))
+
+        for values, target in (
+            (probs["melting_energy"], mean_me),
+            (probs["refreezing_energy"], mean_re),
+            (probs["prob_ice"], mean_ice),
+        ):
+            finite = np.asarray(values, dtype=np.float32)
+            finite = finite[np.isfinite(finite)]
+            if finite.size:
+                target.append(float(np.mean(finite)))
 
     diagnostics = {
         "engine": "Modified Bourgouin (Birk et al. 2021)",
@@ -210,9 +234,9 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
             "west": -100.0, "east": -65.0, "south": 30.0, "north": 52.0,
         },
         "max_probabilities_percent": max_prob,
-        "mean_melting_energy_jkg": float(np.mean(mean_me)),
-        "mean_refreezing_energy_jkg": float(np.mean(mean_re)),
-        "mean_prob_ice_percent": float(np.mean(mean_ice)),
+        "mean_melting_energy_jkg": float(np.mean(mean_me)) if mean_me else None,
+        "mean_refreezing_energy_jkg": float(np.mean(mean_re)) if mean_re else None,
+        "mean_prob_ice_percent": float(np.mean(mean_ice)) if mean_ice else None,
     }
     diagnostics["precip_pixels"] = int(np.count_nonzero(np.isfinite(ref) & (ref >= 10.0)))
     diagnostics["diagnostic_grid"] = {"width": int(diag_w), "height": int(diag_h), "downsample_factor": 10}
