@@ -184,6 +184,9 @@ html, body {
     image-rendering: pixelated !important;
 }
 
+.map-legend[hidden] { display: none !important; }
+.map-legend-section[hidden] { display: none !important; }
+
 .map-legend {
     position: absolute;
     top: 48px;
@@ -280,23 +283,9 @@ html, body {
 
 .phase-ramp-rain {
     background: linear-gradient(90deg,
-        rgb(14,14,90) 0%,
-        rgb(3,79,140) 6%,
-        rgb(7,162,182) 12%,
-        rgb(17,229,31) 18%,
-        rgb(12,169,20) 24%,
-        rgb(6,104,8) 32%,
-        rgb(255,255,0) 35%,
-        rgb(255,194,0) 41%,
-        rgb(255,140,0) 47%,
-        rgb(221,0,0) 53%,
-        rgb(107,0,0) 61%,
-        rgb(255,163,255) 68%,
-        rgb(238,29,244) 74%,
-        rgb(117,0,235) 80%,
-        rgb(0,255,219) 86%,
-        rgb(0,76,74) 93%,
-        rgb(0,0,0) 100%
+        rgb(248,232,74),
+        rgb(246,166,48),
+        rgb(224,47,50)
     );
 }
 
@@ -1110,7 +1099,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
             <div class="map-legend" aria-label="WinterRadar map legend">
                 <div class="map-legend-title">Map Legend</div>
 
-                <div class="map-legend-section">
+                <div class="map-legend-section" id="legendRadarSection">
                     <div class="map-legend-label">MRMS Reflectivity (dBZ)</div>
                     <div class="reflectivity-gradient" aria-label="MRMS reflectivity color scale from 5 to 95 plus dBZ"></div>
                     <div class="reflectivity-label-row">
@@ -1118,15 +1107,15 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section">
-                    <div class="map-legend-label">Precipitation Type Composite • shade = MRMS dBZ</div>
-                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-rain"></span><span>Rain — exact BR HiRes</span></div>
+                <div class="map-legend-section" id="legendPrecipTypeSection">
+                    <div class="map-legend-label">Precipitation Type Composite</div>
+                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-rain"></span><span>Rain</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-ice"></span><span>Ice (sleet / FZRA)</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
                 </div>
 
-                <div class="map-legend-section">
+                <div class="map-legend-section" id="legendPhaseSection">
                     <div class="map-legend-label">Winter Phase Mask</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch snow"></span>Snow</div>
@@ -1137,7 +1126,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section">
+                <div class="map-legend-section" id="legendRadarFusionSection">
                     <div class="map-legend-label">Radar Phase Evidence</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch radar-melting"></span>Melting-layer evidence</div>
@@ -1147,7 +1136,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section">
+                <div class="map-legend-section" id="legendAgreementSection">
                     <div class="map-legend-label">Phase Agreement</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch agree"></span>Consistent</div>
@@ -1535,8 +1524,19 @@ const NWS_LAYER_CONFIG = {
 // so the map remains responsive while still showing every applicable
 // boundary in view.
 const NWS_DYNAMIC_LAYERS = {
+    // Restrict all working boundary requests to the visible map extent.
+    // This avoids loading the full national CWA geometry at startup.
+    cwa: true,
     county: true,
     zone: true
+};
+
+let dynamicReferenceRefreshTimer = null;
+const referenceRequestSerial = {
+    cwa: 0,
+    county: 0,
+    zone: 0,
+    state: 0
 };
 
 
@@ -1654,15 +1654,7 @@ function initializeMap() {
         refreshRadarResolutionOnView();
         refreshPhaseResolutionOnView();
         refreshPrecipTypeResolutionOnView();
-        ["county", "zone"].forEach(function(name) {
-            const checkbox = document.getElementById(
-                name === "county" ? "countyToggle" : "zoneToggle"
-            );
-
-            if (checkbox && checkbox.checked && referenceLoaded[name]) {
-                refreshDynamicReferenceLayer(name);
-            }
-        });
+        scheduleDynamicReferenceRefresh();
     });
 }
 
@@ -1808,6 +1800,7 @@ function loadCurrentPrecipTypeOverlay(force = false) {
         } else {
             console.warn("Precipitation-type composite is not available yet.");
             document.getElementById("precipTypeToggle").checked = false;
+            updateMapLegendVisibility();
             removeMapOverlay(precipTypeOverlay);
             precipTypeOverlay = null;
         }
@@ -2030,6 +2023,7 @@ function loadRadarFusionLayer() {
     radarFusionOverlay.on("error", function() {
         console.warn("Radar phase evidence overlay is not available yet.");
         document.getElementById("radarFusionToggle").checked = false;
+        updateMapLegendVisibility();
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
     });
@@ -2065,9 +2059,34 @@ function loadPhaseAgreementLayer() {
     phaseAgreementOverlay.on("error", function() {
         console.warn("Phase agreement overlay is not available yet.");
         document.getElementById("phaseAgreementToggle").checked = false;
+        updateMapLegendVisibility();
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
     });
+}
+
+
+function updateMapLegendVisibility() {
+    const mappings = [
+        ["legendRadarSection", "radarToggle"],
+        ["legendPrecipTypeSection", "precipTypeToggle"],
+        ["legendPhaseSection", "phaseToggle"],
+        ["legendRadarFusionSection", "radarFusionToggle"],
+        ["legendAgreementSection", "phaseAgreementToggle"]
+    ];
+
+    let anyVisible = false;
+    mappings.forEach(function(pair) {
+        const section = document.getElementById(pair[0]);
+        const checkbox = document.getElementById(pair[1]);
+        if (!section) return;
+        const visible = !!checkbox && checkbox.checked;
+        section.hidden = !visible;
+        if (visible) anyVisible = true;
+    });
+
+    const legend = document.querySelector(".map-legend");
+    if (legend) legend.hidden = !anyVisible;
 }
 
 
@@ -2084,6 +2103,7 @@ function togglePhaseAgreement(enabled) {
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
     }
+    updateMapLegendVisibility();
 }
 
 
@@ -2100,6 +2120,7 @@ function toggleRadarFusion(enabled) {
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
     }
+    updateMapLegendVisibility();
 }
 
 
@@ -2119,6 +2140,7 @@ function toggleRadar(enabled) {
         radarOverlay = null;
         radarDisplayMode = null;
     }
+    updateMapLegendVisibility();
 }
 
 
@@ -2138,6 +2160,7 @@ function togglePrecipType(enabled) {
         precipTypeOverlay = null;
         precipTypeDisplayMode = null;
     }
+    updateMapLegendVisibility();
 }
 
 
@@ -2157,20 +2180,23 @@ function togglePhase(enabled) {
         phaseOverlay = null;
         phaseDisplayMode = null;
     }
+    updateMapLegendVisibility();
 }
 
 
 async function toggleReferenceLayer(name, enabled) {
 
-    if (!enabled) {
+    const checkbox = document.getElementById(layerCheckboxId(name));
 
-        if (
-            referenceLayers[name] &&
-            map.hasLayer(referenceLayers[name])
-        ) {
+    if (!enabled) {
+        // Invalidate in-flight requests so a late response cannot turn the
+        // layer back on after the user disabled it.
+        referenceRequestSerial[name]++;
+
+        if (referenceLayers[name] && map.hasLayer(referenceLayers[name])) {
             map.removeLayer(referenceLayers[name]);
         }
-
+        if (checkbox) checkbox.checked = false;
         return;
     }
 
@@ -2181,28 +2207,12 @@ async function toggleReferenceLayer(name, enabled) {
             await refreshDynamicReferenceLayer(name);
         }
 
-        const layer = referenceLayers[name];
-
-        if (layer && !map.hasLayer(layer)) {
-            layer.addTo(map);
+        if (referenceLayers[name] && !map.hasLayer(referenceLayers[name])) {
+            referenceLayers[name].addTo(map);
         }
-
     } catch (error) {
         console.error("Unable to enable NWS " + name + " layer:", error);
-
-        const checkbox = document.getElementById(
-            name === "county"
-                ? "countyToggle"
-                : name === "zone"
-                    ? "zoneToggle"
-                    : name === "state"
-                        ? "stateToggle"
-                        : "cwaToggle"
-        );
-
-        if (checkbox) {
-            checkbox.checked = false;
-        }
+        if (checkbox) checkbox.checked = false;
     }
 }
 
@@ -2220,143 +2230,155 @@ function getMapExtent4326() {
 }
 
 
+function boundaryGeneralizationDegrees(name) {
+    const zoom = map ? Number(map.getZoom()) : 7;
+    if (zoom >= 10) return 0.0025;
+    if (zoom >= 8) return 0.005;
+    if (zoom >= 6) return 0.01;
+    return 0.02;
+}
+
+
+function layerCheckboxId(name) {
+    return name === "county"
+        ? "countyToggle"
+        : name === "zone"
+            ? "zoneToggle"
+            : name === "state"
+                ? "stateToggle"
+                : "cwaToggle";
+}
+
+
 async function fetchNWSGeoJSON(name, extent) {
 
     const config = NWS_LAYER_CONFIG[name];
+    if (!config) throw new Error("Unknown NWS layer: " + name);
 
-    if (!config) {
-        throw new Error("Unknown NWS layer: " + name);
-    }
+    const url = NWS_FEATURE_BASE + "/" + config.id + "/query";
+    const baseParams = new URLSearchParams();
 
-    const url =
-        NWS_FEATURE_BASE +
-        "/" + config.id + "/query";
-
-    const params = new URLSearchParams();
-
-    params.set("where", "1=1");
-    params.set("outFields", config.fields);
-    params.set("returnGeometry", "true");
-    params.set("outSR", "4326");
-    params.set("f", "geojson");
-    params.set("returnExceededLimitFeatures", "true");
+    baseParams.set("where", "1=1");
+    baseParams.set("outFields", config.fields);
+    baseParams.set("returnGeometry", "true");
+    baseParams.set("outSR", "4326");
+    baseParams.set("inSR", "4326");
+    baseParams.set("f", "geojson");
+    baseParams.set("returnExceededLimitFeatures", "true");
+    baseParams.set("maxAllowableOffset", String(boundaryGeneralizationDegrees(name)));
+    baseParams.set("resultRecordCount", "250");
 
     if (extent) {
-        params.set(
-            "geometry",
-            [
-                extent.west,
-                extent.south,
-                extent.east,
-                extent.north
-            ].join(",")
-        );
-        params.set("geometryType", "esriGeometryEnvelope");
-        params.set("inSR", "4326");
-        params.set("spatialRel", "esriSpatialRelIntersects");
+        baseParams.set("geometry", [extent.west, extent.south, extent.east, extent.north].join(","));
+        baseParams.set("geometryType", "esriGeometryEnvelope");
+        baseParams.set("spatialRel", "esriSpatialRelIntersects");
     }
 
-    const response = await fetch(
-        url + "?" + params.toString(),
-        {
-            cache: "no-store"
+    const features = [];
+    let resultOffset = 0;
+
+    for (let page = 0; page < 20; page++) {
+        const params = new URLSearchParams(baseParams);
+        params.set("resultOffset", String(resultOffset));
+
+        const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+        const timeoutId = controller ? window.setTimeout(() => controller.abort(), 10000) : null;
+
+        try {
+            const response = await fetch(
+                url + "?" + params.toString(),
+                controller ? { cache: "no-store", signal: controller.signal } : { cache: "no-store" }
+            );
+            if (!response.ok) {
+                throw new Error("NWS layer " + name + " request failed: " + response.status);
+            }
+
+            const pageGeoJSON = await response.json();
+            if (pageGeoJSON.error) {
+                throw new Error("NWS layer " + name + " returned an error: " + JSON.stringify(pageGeoJSON.error));
+            }
+
+            const pageFeatures = Array.isArray(pageGeoJSON.features) ? pageGeoJSON.features : [];
+            features.push(...pageFeatures);
+
+            const exceeded = pageGeoJSON.exceededTransferLimit === true;
+            if (!pageFeatures.length || (!exceeded && pageFeatures.length < 250)) {
+                break;
+            }
+
+            resultOffset += pageFeatures.length;
+        } finally {
+            if (timeoutId) window.clearTimeout(timeoutId);
         }
-    );
-
-    if (!response.ok) {
-        throw new Error(
-            "NWS layer " + name + " request failed: " + response.status
-        );
     }
 
-    const geojson = await response.json();
-
-    if (geojson.error) {
-        throw new Error(
-            "NWS layer " + name + " returned an error: " +
-            JSON.stringify(geojson.error)
-        );
-    }
-
-    return geojson;
+    return { type: "FeatureCollection", features: features };
 }
 
 
 function installReferenceGeoJSON(name, geojson) {
-
-    if (
-        referenceLayers[name] &&
-        map.hasLayer(referenceLayers[name])
-    ) {
+    if (referenceLayers[name] && map.hasLayer(referenceLayers[name])) {
         map.removeLayer(referenceLayers[name]);
     }
 
-    referenceLayers[name] = L.geoJSON(
-        geojson,
-        {
-            style: NWS_STYLES[name],
-            interactive: false
-        }
-    );
+    referenceLayers[name] = L.geoJSON(geojson, {
+        style: NWS_STYLES[name],
+        interactive: false
+    });
 
-    if (referenceLayers[name]) {
-        referenceLayers[name].addTo(map);
-    }
+    if (referenceLayers[name]) referenceLayers[name].addTo(map);
 }
 
 
 async function loadReferenceLayer(name) {
+    if (referenceLoaded[name]) return;
 
-    if (referenceLoaded[name]) {
-        return;
-    }
-
-    // Counties and public forecast zones are loaded for the current map
-    // extent. CWA and state layers load all features.
-    const extent = NWS_DYNAMIC_LAYERS[name]
-        ? getMapExtent4326()
-        : null;
-
+    const extent = NWS_DYNAMIC_LAYERS[name] ? getMapExtent4326() : null;
+    const requestId = ++referenceRequestSerial[name];
     const geojson = await fetchNWSGeoJSON(name, extent);
 
-    installReferenceGeoJSON(name, geojson);
+    if (requestId !== referenceRequestSerial[name]) return;
 
+    installReferenceGeoJSON(name, geojson);
     referenceLoaded[name] = true;
 
-    console.info(
-        "Loaded NWS " + name + " layer: " +
-        ((geojson.features || []).length) + " features"
-    );
+    console.info("Loaded NWS " + name + " layer: " + ((geojson.features || []).length) + " features");
 }
 
 
 async function refreshDynamicReferenceLayer(name) {
+    if (!NWS_DYNAMIC_LAYERS[name]) return;
 
-    if (!NWS_DYNAMIC_LAYERS[name]) {
-        return;
-    }
+    const checkbox = document.getElementById(layerCheckboxId(name));
+    if (!checkbox || !checkbox.checked) return;
 
-    const checkbox = document.getElementById(
-        name === "county" ? "countyToggle" : "zoneToggle"
-    );
+    const requestId = ++referenceRequestSerial[name];
+    const geojson = await fetchNWSGeoJSON(name, getMapExtent4326());
 
-    if (!checkbox || !checkbox.checked) {
-        return;
-    }
-
-    const geojson = await fetchNWSGeoJSON(
-        name,
-        getMapExtent4326()
-    );
+    if (requestId !== referenceRequestSerial[name]) return;
+    if (!checkbox.checked) return;
 
     installReferenceGeoJSON(name, geojson);
-
     referenceLoaded[name] = true;
+    console.info("Refreshed NWS " + name + " layer: " + ((geojson.features || []).length) + " features");
+}
 
-    console.info(
-        "Refreshed NWS " + name + " layer for current map extent: " +
-        ((geojson.features || []).length) + " features"
-    );
+
+function scheduleDynamicReferenceRefresh() {
+    if (dynamicReferenceRefreshTimer !== null) {
+        window.clearTimeout(dynamicReferenceRefreshTimer);
+    }
+
+    dynamicReferenceRefreshTimer = window.setTimeout(function() {
+        dynamicReferenceRefreshTimer = null;
+        ["cwa", "county", "zone"].forEach(function(name) {
+            const checkbox = document.getElementById(layerCheckboxId(name));
+            if (!checkbox || !checkbox.checked) return;
+            refreshDynamicReferenceLayer(name).catch(function(error) {
+                console.warn("NWS " + name + " boundary refresh failed:", error);
+            });
+        });
+    }, 500);
 }
 
 
@@ -3672,6 +3694,7 @@ function closeLayerPanelWhenClickingOutside(event) {
 
 
 initializeMap();
+updateMapLegendVisibility();
 refreshData();
 refreshHistoryManifest();
 
