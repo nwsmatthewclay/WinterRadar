@@ -4291,9 +4291,9 @@ function exportLegendItems(selected) {
 }
 
 function exportLegendHeight(items, scale) {
-    const rowH = Math.round(39 * scale);
-    const top = Math.round(44 * scale);
-    return Math.max(82, top + Math.max(1, items.length) * rowH + Math.round(16 * scale));
+    const rowH = Math.round(48 * scale);
+    const top = Math.round(52 * scale);
+    return Math.max(100, top + Math.max(1, items.length) * rowH + Math.round(22 * scale));
 }
 
 async function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
@@ -4357,7 +4357,7 @@ async function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
     ctx.fillText("Valid " + timeText, w - pad, Math.round(42*scale));
     ctx.font = `600 ${Math.round(9*scale)}px Arial, sans-serif`;
     ctx.fillStyle = "rgba(255,255,255,.82)";
-    ctx.fillText("WinterRadar research display", w - pad, Math.round(64*scale));
+    
 
     ctx.drawImage(sourceCanvas, 0, bannerH);
 
@@ -4375,20 +4375,20 @@ async function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#243943";
-    ctx.font = `900 ${Math.round(11*scale)}px Arial, sans-serif`;
+    ctx.font = `900 ${Math.round(15*scale)}px Arial, sans-serif`;
     ctx.fillText("LEGEND", left, y);
-    y += Math.round(23 * scale);
+    y += Math.round(28 * scale);
 
     items.forEach(function(item) {
         const rowTop = y;
         ctx.fillStyle = "#53636d";
-        ctx.font = `800 ${Math.round(9*scale)}px Arial, sans-serif`;
+        ctx.font = `800 ${Math.round(11*scale)}px Arial, sans-serif`;
         ctx.fillText(item.label.toUpperCase(), left, rowTop);
 
         if (item.type === "gradient") {
             const gx = left + Math.round(142 * scale);
             const gw = Math.min(Math.round(300 * scale), Math.max(170, w - gx - Math.round(100*scale)));
-            const gh = Math.round(12 * scale);
+            const gh = Math.round(16 * scale);
             const g = ctx.createLinearGradient(gx, 0, gx + gw, 0);
             item.colors.forEach(function(c) { g.addColorStop(c[0] / 95, c[1]); });
             ctx.fillStyle = g;
@@ -4396,7 +4396,7 @@ async function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
             ctx.strokeStyle = "#8e9aa2";
             ctx.strokeRect(gx, rowTop - gh/2, gw, gh);
             ctx.fillStyle = "#5d6d77";
-            ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
+            ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
             ctx.fillText("5", gx, rowTop + Math.round(13*scale));
             ctx.textAlign = "right";
             ctx.fillText("95 dBZ", gx + gw, rowTop + Math.round(13*scale));
@@ -4405,37 +4405,37 @@ async function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
             let x = left + Math.round(142 * scale);
             const maxX = w - pad;
             item.swatches.forEach(function(sw) {
-                const bw = Math.round(11 * scale);
-                const labelW = Math.round((sw[0].length * 5.0 + 22) * scale);
+                const bw = Math.round(15 * scale);
+                const labelW = Math.round((sw[0].length * 6.2 + 28) * scale);
                 if (x + bw + labelW > maxX) {
                     x = left + Math.round(142 * scale);
-                    y += Math.round(16 * scale);
+                    y += Math.round(20 * scale);
                 }
                 ctx.fillStyle = sw[1];
                 ctx.fillRect(x, rowTop - bw/2, bw, bw);
                 ctx.strokeStyle = "rgba(55,65,72,.35)";
                 ctx.strokeRect(x, rowTop - bw/2, bw, bw);
-                x += bw + Math.round(5 * scale);
+                x += bw + Math.round(7 * scale);
                 ctx.fillStyle = "#52616a";
-                ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
+                ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
                 ctx.fillText(sw[0], x, rowTop);
-                x += Math.round((sw[0].length * 4.8 + 18) * scale);
+                x += Math.round((sw[0].length * 5.8 + 24) * scale);
             });
         }
 
-        y = rowTop + Math.round(31 * scale);
+        y = rowTop + Math.round(39 * scale);
         ctx.strokeStyle = "#dce3e7";
         ctx.lineWidth = Math.max(1, scale * 0.6);
         ctx.beginPath();
-        ctx.moveTo(left, y - Math.round(8*scale));
-        ctx.lineTo(w - left, y - Math.round(8*scale));
+        ctx.moveTo(left, y - Math.round(10*scale));
+        ctx.lineTo(w - left, y - Math.round(10*scale));
         ctx.stroke();
     });
 
     ctx.textAlign = "right";
     ctx.fillStyle = "#7a8790";
-    ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
-    ctx.fillText("WinterRadar • MRMS data • NOAA/NWS", w-pad, out.height-Math.round(8*scale));
+    ctx.font = `600 ${Math.round(10*scale)}px Arial, sans-serif`;
+    ctx.fillText("WinterRadar • MRMS data • NOAA/NWS", w-pad, out.height-Math.round(10*scale));
     return out;
 }
 
