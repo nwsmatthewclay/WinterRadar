@@ -186,7 +186,7 @@ html, body {
 
 .map-legend {
     position: absolute;
-    top: 58px;
+    top: 64px;
     left: 9px;
     z-index: 1260;
     width: min(295px, calc(100% - 18px));
@@ -4301,6 +4301,10 @@ function loadNWSExportLogo() {
     return nwsExportLogoPromise;
 }
 
+// Export legend colors are deliberately fixed. They mirror the uploaded
+// BR HiRes palette and the fixed WinterRadar precipitation-type display.
+// Do not derive these colors from the current frame; the legend must remain
+// visually identical across PNG/GIF frames.
 function exportLegendItems(selected) {
     const items = [];
     if (selected.radar) {
@@ -4665,7 +4669,14 @@ async function exportGIF() {
             quality: 8,
             width: first.width,
             height: first.height,
-            workerScript: workerUrl
+            workerScript: workerUrl,
+            // Use one palette for the entire animation. This is especially
+            // important for the exported NOAA-style legend: gif.js otherwise
+            // quantizes each frame independently, which can make the fixed
+            // reflectivity gradient and precipitation-type swatches appear to
+            // change/flicker from frame to frame.
+            globalPalette: true,
+            dither: false
         });
 
         canvases.forEach(function(canvas) {
