@@ -782,6 +782,41 @@ def main() -> None:
         "web_projection": "EPSG:3857",
     }
     (OUTPUT_DIR / "phase_agreement.json").write_text(json.dumps(agreement_payload, indent=2), encoding="utf-8")
+    # Compact browser-facing point-diagnostic grid.  This intentionally uses a
+    # second nearest-neighbor reduction from the 350x700 agreement grid so the
+    # browser can provide useful click diagnostics without shipping a large
+    # JSON representation of the native 3500x7000 arrays.
+    click_step = 2
+    click_agreement = evaluation["agreement"][::click_step, ::click_step]
+    click_strength = evaluation["strength"][::click_step, ::click_step]
+    click_dominant = dominant[::click_step, ::click_step]
+    click_top = top[::click_step, ::click_step]
+    click_second = second[::click_step, ::click_step]
+    click_valid = evidence["valid_fraction"][::click_step, ::click_step]
+    click_ml = evidence["ml_fraction"][::click_step, ::click_step]
+    click_dry = evidence["dry_snow_fraction"][::click_step, ::click_step]
+    south, west, north, east = bounds
+    click_payload = {
+        "status": "ok",
+        "purpose": "Compact point diagnostics for the Phase Agreement map.",
+        "bounds": [south, west, north, east],
+        "shape": [int(click_agreement.shape[0]), int(click_agreement.shape[1])],
+        "source_grid": list(evaluation["agreement"].shape),
+        "fields": {
+            "agreement": click_agreement.astype(int).ravel().tolist(),
+            "agreement_strength": np.round(click_strength, 3).ravel().tolist(),
+            "dominant_phase": click_dominant.astype(int).ravel().tolist(),
+            "top_probability_percent": np.round(click_top, 1).ravel().tolist(),
+            "runner_up_probability_percent": np.round(click_second, 1).ravel().tolist(),
+            "valid_fraction": np.round(click_valid, 3).ravel().tolist(),
+            "melting_layer_fraction": np.round(click_ml, 3).ravel().tolist(),
+            "dry_snow_fraction": np.round(click_dry, 3).ravel().tolist(),
+        },
+    }
+    (OUTPUT_DIR / "phase_agreement_click.json").write_text(
+        json.dumps(click_payload, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
     summary_path = OUTPUT_DIR / "phase_radar_fusion.json"
     data = json.loads(summary_path.read_text(encoding="utf-8"))
