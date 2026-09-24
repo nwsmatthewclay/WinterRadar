@@ -777,7 +777,7 @@ def main() -> None:
             "4": "Radar usable, but no decisive phase signature",
         },
         "stats": agreement_stats,
-        "overlay_file": "phase_agreement_overlay_web.png",
+        "overlay_file": "phase_agreement_overlay_web.webp",
         "native_overlay_file": "phase_agreement_overlay.png",
         "web_projection": "EPSG:3857",
     }
@@ -785,7 +785,7 @@ def main() -> None:
 
     summary_path = OUTPUT_DIR / "phase_radar_fusion.json"
     data = json.loads(summary_path.read_text(encoding="utf-8"))
-    data["overlay_file"] = "phase_radar_fusion_overlay_web.png"
+    data["overlay_file"] = "phase_radar_fusion_overlay_web.webp"
     data["native_overlay_file"] = "phase_radar_fusion_overlay.png"
     data["web_projection"] = "EPSG:3857"
     data["bounds"] = load_lat_lon_bounds(metadata, reflectivity.shape)
@@ -801,9 +801,11 @@ def main() -> None:
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion_overlay.png'}")
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion.json'}")
     print(f"  {OUTPUT_DIR / 'phase_radar_fusion_overlay_web.png'}")
+    print(f"  {OUTPUT_DIR / 'phase_radar_fusion_overlay_web.webp'}")
     print(f"  {OUTPUT_DIR / 'phase_agreement.png'}")
     print(f"  {OUTPUT_DIR / 'phase_agreement_overlay.png'}")
     print(f"  {OUTPUT_DIR / 'phase_agreement_overlay_web.png'}")
+    print(f"  {OUTPUT_DIR / 'phase_agreement_overlay_web.webp'}")
     print(f"  {OUTPUT_DIR / 'phase_agreement.json'}")
     print("=" * 72)
 
