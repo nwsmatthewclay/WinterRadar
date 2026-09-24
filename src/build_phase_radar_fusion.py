@@ -196,25 +196,49 @@ def place_phase_probabilities(
     idx = diag.get("phase_domain_mrms_indices") or {}
 
     if all(k in idx for k in ("row_start", "row_end", "col_start", "col_end")):
+        # Domain-only diagnostic arrays: place them using their native MRMS
+        # indices.
         y0 = max(0, int(idx["row_start"]) // factor)
         x0 = max(0, int(idx["col_start"]) // factor)
-
         domain_rows = max(0, int(idx["row_end"]) - int(idx["row_start"]))
         domain_cols = max(0, int(idx["col_end"]) - int(idx["col_start"]))
         expected_h = max(1, int(np.ceil(domain_rows / factor)))
         expected_w = max(1, int(np.ceil(domain_cols / factor)))
+
+        def nearest_resize(arr: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+            if arr.shape == shape:
+                return arr
+            rr = np.minimum((np.arange(shape[0]) * arr.shape[0] // shape[0]), arr.shape[0] - 1)
+            cc = np.minimum((np.arange(shape[1]) * arr.shape[1] // shape[1]), arr.shape[1] - 1)
+            return arr[np.ix_(rr, cc)]
+
+        for name, arr in phase_data.items():
+            arr2 = nearest_resize(np.asarray(arr, dtype=np.float32), (expected_h, expected_w))
+            h = min(arr2.shape[0], out_rows - y0)
+            w = min(arr2.shape[1], out_cols - x0)
+            if h > 0 and w > 0:
+                placed[name][y0:y0 + h, x0:x0 + w] = arr2[:h, :w]
     else:
-        # Fallback run: main.py may have created a full-CONUS diagnostic grid.
+        # Current main.py writes a FULL-CONUS 10x diagnostic grid (350x700),
+        # while the dual-pol evidence is a 5x grid (700x1400). The old code
+        # placed the 350x700 array into the upper-left corner of the 700x1400
+        # grid, which put the RAP phase field over the wrong geography and
+        # caused phase agreement to have essentially no overlapping valid
+        # model/radar pixels. Expand the full-CONUS probability grid to the
+        # evidence grid with nearest-neighbor replication.
         y0 = 0
         x0 = 0
-        expected_h = out_rows
-        expected_w = out_cols
 
-    for name, arr in phase_data.items():
-        h = min(arr.shape[0], expected_h, out_rows - y0)
-        w = min(arr.shape[1], expected_w, out_cols - x0)
-        if h > 0 and w > 0:
-            placed[name][y0:y0 + h, x0:x0 + w] = arr[:h, :w]
+        def nearest_resize(arr: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+            if arr.shape == shape:
+                return arr
+            rr = np.minimum((np.arange(shape[0]) * arr.shape[0] // shape[0]), arr.shape[0] - 1)
+            cc = np.minimum((np.arange(shape[1]) * arr.shape[1] // shape[1]), arr.shape[1] - 1)
+            return arr[np.ix_(rr, cc)]
+
+        for name, arr in phase_data.items():
+            arr2 = nearest_resize(np.asarray(arr, dtype=np.float32), (out_rows, out_cols))
+            placed[name][:] = arr2
 
     return placed
 
@@ -325,6 +349,15 @@ def build_phase_agreement(
         "conflict_area_percent": float(100.0 * np.count_nonzero(agreement == AGREEMENT_CONFLICT) / max(np.count_nonzero(valid_radar), 1)),
         "radar_conflict_area_percent": float(100.0 * np.count_nonzero(agreement == AGREEMENT_RADAR_CONFLICT) / max(np.count_nonzero(valid_radar), 1)),
         "no_decisive_radar_area_percent": float(100.0 * np.count_nonzero(agreement == AGREEMENT_NO_DECISIVE_RADAR) / max(np.count_nonzero(valid_radar), 1)),
+        "precip_pixels": int(np.count_nonzero(precip)),
+        "valid_radar_pixels": int(np.count_nonzero(valid_radar)),
+        "model_valid_pixels": int(np.count_nonzero(model_valid)),
+        "overlap_pixels": int(np.count_nonzero(valid_radar & model_valid)),
+        "consistent_pixels": int(np.count_nonzero(agreement == AGREEMENT_CONSISTENT)),
+        "conflict_pixels": int(np.count_nonzero(agreement == AGREEMENT_CONFLICT)),
+        "radar_conflict_pixels": int(np.count_nonzero(agreement == AGREEMENT_RADAR_CONFLICT)),
+        "no_decisive_radar_pixels": int(np.count_nonzero(agreement == AGREEMENT_NO_DECISIVE_RADAR)),
+        "unclassified_pixels": int(np.count_nonzero(agreement == AGREEMENT_NONE)),
     }
 
     return {
