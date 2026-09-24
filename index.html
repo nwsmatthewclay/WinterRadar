@@ -887,8 +887,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
 .diagnostic-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: 1fr;
+    gap: 10px;
     padding: 0 9px 9px;
 }
 
@@ -920,6 +920,17 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
     display: block;
     width: 100%;
     height: auto;
+    min-height: 120px;
+    object-fit: contain;
+    background: #fff;
+}
+
+.diag-card img.diag-load-failed {
+    min-height: 120px;
+    padding: 28px;
+    box-sizing: border-box;
+    color: #7a2f2f;
+    background: #fff5f5;
 }
 
 
@@ -1440,7 +1451,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Phase Probability Layer</div>
                     <div class="diag-desc">Dominant precipitation type shaded by the model probability. Transparency increases with probability.</div>
                 </div>
-                <img src="./outputs/phase_probability.png" alt="Phase probability layer">
+                <img class="diagnostic-image" src="./outputs/phase_probability.png" alt="Phase probability layer" loading="lazy">
             </section>
 
             <section class="diag-card">
@@ -1448,7 +1459,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Phase Probability / Energy QC</div>
                     <div class="diag-desc">Rain, snow, sleet, freezing-rain probabilities plus melting/refreezing energy.</div>
                 </div>
-                <img src="./outputs/phase_diagnostics.png" alt="Phase probability and energy diagnostics">
+                <img class="diagnostic-image" src="./outputs/phase_diagnostics.png" alt="Phase probability and energy diagnostics" loading="lazy">
             </section>
 
             <section class="diag-card">
@@ -1456,7 +1467,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">MRMS Diagnostics</div>
                     <div class="diag-desc">Core MRMS fields and precipitation diagnostics.</div>
                 </div>
-                <img src="./outputs/mrms_diagnostics.png" alt="MRMS diagnostics">
+                <img class="diagnostic-image" src="./outputs/mrms_diagnostics.png" alt="MRMS diagnostics" loading="lazy">
             </section>
 
             <section class="diag-card">
@@ -1464,7 +1475,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Vertical Dual-Pol</div>
                     <div class="diag-desc">Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.</div>
                 </div>
-                <img src="./outputs/mrms_vertical_dualpol.png" alt="Vertical dual-pol diagnostic">
+                <img class="diagnostic-image" src="./outputs/mrms_vertical_dualpol.png" alt="Vertical dual-pol diagnostic" loading="lazy">
             </section>
 
             <section class="diag-card">
@@ -1472,7 +1483,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Radar Phase Evidence Fusion</div>
                     <div class="diag-desc">Independent MRMS dual-pol evidence for melting-layer and dry-snow-like signatures; does not replace the RAP phase solution.</div>
                 </div>
-                <img src="./outputs/phase_radar_fusion.png" alt="Radar phase evidence fusion diagnostic">
+                <img class="diagnostic-image" src="./outputs/phase_radar_fusion.png" alt="Radar phase evidence fusion diagnostic" loading="lazy">
             </section>
 
             <section class="diag-card">
@@ -1480,7 +1491,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Winter Precipitation Diagnostic</div>
                     <div class="diag-desc">Fields used to develop the winter phase mask.</div>
                 </div>
-                <img src="./outputs/winter_mask_diagnostics.png" alt="Winter precipitation diagnostic">
+                <img class="diagnostic-image" src="./outputs/winter_mask_diagnostics.png" alt="Winter precipitation diagnostic" loading="lazy">
             </section>
 
             <section class="diag-card">
@@ -1488,7 +1499,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Phase Agreement</div>
                     <div class="diag-desc">Agreement between the primary RAP/Bourgouin phase solution and independent MRMS vertical dual-pol evidence.</div>
                 </div>
-                <img src="./outputs/phase_agreement.png" alt="Phase agreement diagnostic">
+                <img class="diagnostic-image" src="./outputs/phase_agreement.png" alt="Phase agreement diagnostic" loading="lazy">
             </section>
 
         </div>
@@ -3735,27 +3746,27 @@ async function refreshPhaseQC() {
 }
 
 function refreshDiagnosticImages() {
+    const stamp = Date.now();
 
-    const stamp =
-        Date.now();
+    document.querySelectorAll(".diag-card img").forEach(function(img) {
+        const original = img.getAttribute("src");
+        if (!original) return;
 
-    document.querySelectorAll(
-        ".diag-card img"
-    ).forEach(function(img) {
+        img.classList.remove("diag-load-failed");
 
-        const original =
-            img.getAttribute("src");
+        const clean = original.split("?")[0];
+        const next = clean + "?v=" + stamp;
 
-        if (!original) {
-            return;
-        }
+        img.onload = function() {
+            img.classList.remove("diag-load-failed");
+        };
 
-        img.setAttribute(
-            "src",
-            original.split("?")[0] +
-            "?v=" +
-            stamp
-        );
+        img.onerror = function() {
+            img.classList.add("diag-load-failed");
+            console.warn("Diagnostic image failed to load:", clean);
+        };
+
+        img.src = next;
     });
 }
 
@@ -3798,12 +3809,211 @@ async function applyExportLayerSelection(s){[["radarToggle",s.radar],["precipTyp
 async function captureExportFrame(){const el=document.getElementById("map");if(!el||typeof html2canvas!=="function")throw new Error("Map export library is not available.");el.classList.add("export-capture-mode");await waitForMapImages(3000);if(document.fonts?.ready){try{await document.fonts.ready;}catch(e){}}const scale=Math.max(1,Math.min(2,Number(document.getElementById("exportScale")?.value||1)));try{return await html2canvas(el,{backgroundColor:"#fff",useCORS:true,allowTaint:false,scale,logging:false,imageTimeout:10000,width:el.clientWidth,height:el.clientHeight,onclone:d=>d.getElementById("map")?.classList.add("export-capture-mode")});}finally{el.classList.remove("export-capture-mode");}}
 function downloadCanvasPNG(c){const a=document.createElement("a"),stamp=new Date().toISOString().replace(/[:.]/g,"-");a.download="winterradar-map-"+stamp+".png";a.href=c.toDataURL("image/png");a.click();}
 async function exportPNG(){const selected=exportSelectedLayers(),prev=snapshotLayerCheckboxes();try{setExportStatus("Preparing selected layers…");await applyExportLayerSelection(selected);downloadCanvasPNG(await captureExportFrame());setExportStatus("PNG exported.");}finally{restoreLayerCheckboxes(prev);document.getElementById("map")?.classList.remove("export-capture-mode");}}
-async function exportGIF(){if(typeof GIF!=="function")throw new Error("GIF encoder is not available.");if(!historyFrames.length)throw new Error("No history frames are loaded. Open History and try again.");const selected=exportSelectedLayers(),prev=snapshotLayerCheckboxes(),prevMode=historyMode,prevIndex=historyIndex,count=Math.min(20,Math.max(2,Number(document.getElementById("exportFrameCount")?.value||10)),historyFrames.length),delay=Math.max(50,Number(document.getElementById("exportDelay")?.value||350)),end=historyIndex>=0?historyIndex:historyFrames.length-1,start=Math.max(0,end-count+1),indices=Array.from({length:end-start+1},(_,i)=>start+i);try{historyMode=true;stopHistoryPlayback();removeMapOverlay(radarFusionOverlay);radarFusionOverlay=null;removeMapOverlay(phaseAgreementOverlay);phaseAgreementOverlay=null;await applyExportLayerSelection({radar:selected.radar,precipType:selected.precipType,phase:selected.phase,radarFusion:false,agreement:false});const canvases=[];for(let n=0;n<indices.length;n++){setExportStatus("Capturing frame "+(n+1)+" of "+indices.length+"…");renderHistoryFrame(indices[n],false);await waitForMapImages(4500);await new Promise(r=>setTimeout(r,180));canvases.push(await captureExportFrame());}const first=canvases[0],gif=new GIF({workers:2,quality:8,width:first.width,height:first.height,workerScript:"https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js"});canvases.forEach(c=>gif.addFrame(c,{copy:true,delay}));await new Promise((resolve,reject)=>{gif.on("progress",p=>setExportStatus("Encoding GIF… "+Math.round(p*100)+"%"));gif.on("finished",blob=>{const a=document.createElement("a"),stamp=new Date().toISOString().replace(/[:.]/g,"-");a.download="winterradar-loop-"+stamp+".gif";a.href=URL.createObjectURL(blob);a.click();setTimeout(()=>URL.revokeObjectURL(a.href),30000);resolve();});gif.on("abort",()=>reject(new Error("GIF encoding was aborted.")));gif.render();});setExportStatus("GIF exported with "+indices.length+" frames at "+delay+" ms/frame.");}finally{restoreLayerCheckboxes(prev);if(prevMode&&historyFrames.length){historyMode=true;historyIndex=Math.max(0,Math.min(prevIndex,historyFrames.length-1));renderHistoryFrame(historyIndex,false);}else if(!prevMode){historyMode=false;loadCurrentRadarOverlay(true);loadCurrentPhaseOverlay(true);loadCurrentPrecipTypeOverlay(true);}}}
+async function loadGifWorkerBlob() {
+    const workerSourceUrl = "https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js";
+    const response = await fetch(workerSourceUrl, {
+        mode: "cors",
+        cache: "force-cache"
+    });
+
+    if (!response.ok) {
+        throw new Error("Unable to load GIF worker: HTTP " + response.status);
+    }
+
+    const source = await response.text();
+    const blob = new Blob([source], { type: "application/javascript" });
+    return URL.createObjectURL(blob);
+}
+
+async function exportGIF() {
+    if (typeof GIF !== "function") {
+        throw new Error("GIF encoder is not available.");
+    }
+
+    if (!historyFrames.length) {
+        throw new Error("No history frames are loaded. Open History and try again.");
+    }
+
+    const selected = exportSelectedLayers();
+    const prev = snapshotLayerCheckboxes();
+    const prevMode = historyMode;
+    const prevIndex = historyIndex;
+
+    const requestedCount = Number(document.getElementById("exportFrameCount")?.value || 10);
+    const count = Math.min(
+        20,
+        Math.max(2, Math.floor(requestedCount)),
+        historyFrames.length
+    );
+
+    const delay = Math.max(
+        50,
+        Number(document.getElementById("exportDelay")?.value || 350)
+    );
+
+    const end = historyIndex >= 0
+        ? historyIndex
+        : historyFrames.length - 1;
+
+    const start = Math.max(0, end - count + 1);
+
+    const indices = Array.from(
+        { length: end - start + 1 },
+        (_, i) => start + i
+    );
+
+    let workerUrl = null;
+
+    try {
+        historyMode = true;
+        stopHistoryPlayback();
+
+        removeMapOverlay(radarFusionOverlay);
+        radarFusionOverlay = null;
+
+        removeMapOverlay(phaseAgreementOverlay);
+        phaseAgreementOverlay = null;
+
+        await applyExportLayerSelection({
+            radar: selected.radar,
+            precipType: selected.precipType,
+            phase: selected.phase,
+            radarFusion: false,
+            agreement: false
+        });
+
+        const canvases = [];
+
+        for (let n = 0; n < indices.length; n++) {
+            setExportStatus(
+                "Capturing frame " +
+                (n + 1) +
+                " of " +
+                indices.length +
+                "…"
+            );
+
+            renderHistoryFrame(indices[n], false);
+
+            await waitForMapImages(4500);
+            await new Promise(resolve => setTimeout(resolve, 180));
+
+            canvases.push(await captureExportFrame());
+        }
+
+        if (!canvases.length) {
+            throw new Error("No export frames were captured.");
+        }
+
+        setExportStatus("Loading GIF encoder worker…");
+
+        // gif.js cannot directly spawn a worker from a CDN URL on GitHub Pages.
+        // Fetch the worker through CORS and turn it into a same-origin Blob URL.
+        workerUrl = await loadGifWorkerBlob();
+
+        const first = canvases[0];
+
+        const gif = new GIF({
+            workers: 2,
+            quality: 8,
+            width: first.width,
+            height: first.height,
+            workerScript: workerUrl
+        });
+
+        canvases.forEach(function(canvas) {
+            // Pass a 2D context configured for repeated pixel readback.
+            // This avoids the browser's getImageData/willReadFrequently warning.
+            const ctx = canvas.getContext(
+                "2d",
+                { willReadFrequently: true }
+            );
+
+            gif.addFrame(ctx, {
+                copy: true,
+                delay: delay
+            });
+        });
+
+        await new Promise(function(resolve, reject) {
+            gif.on("progress", function(progress) {
+                setExportStatus(
+                    "Encoding GIF… " +
+                    Math.round(progress * 100) +
+                    "%"
+                );
+            });
+
+            gif.on("finished", function(blob) {
+                const a = document.createElement("a");
+                const stamp = new Date()
+                    .toISOString()
+                    .replace(/[:.]/g, "-");
+
+                a.download =
+                    "winterradar-loop-" +
+                    stamp +
+                    ".gif";
+
+                a.href = URL.createObjectURL(blob);
+                a.click();
+
+                setTimeout(function() {
+                    URL.revokeObjectURL(a.href);
+                }, 30000);
+
+                resolve();
+            });
+
+            gif.on("abort", function() {
+                reject(new Error("GIF encoding was aborted."));
+            });
+
+            gif.render();
+        });
+
+        setExportStatus(
+            "GIF exported with " +
+            indices.length +
+            " frames at " +
+            delay +
+            " ms/frame."
+        );
+
+    } finally {
+        if (workerUrl) {
+            URL.revokeObjectURL(workerUrl);
+        }
+
+        restoreLayerCheckboxes(prev);
+
+        if (prevMode && historyFrames.length) {
+            historyMode = true;
+            historyIndex = Math.max(
+                0,
+                Math.min(prevIndex, historyFrames.length - 1)
+            );
+
+            renderHistoryFrame(
+                historyIndex,
+                false
+            );
+
+        } else if (!prevMode) {
+            historyMode = false;
+
+            loadCurrentRadarOverlay(true);
+            loadCurrentPhaseOverlay(true);
+            loadCurrentPrecipTypeOverlay(true);
+        }
+    }
+}
 async function startMapExport(){if(exportBusy)return;exportBusy=true;const b=document.getElementById("exportStartButton");if(b)b.disabled=true;try{await((document.getElementById("exportFormat")?.value||"png")==="gif"?exportGIF():exportPNG());}catch(e){console.error("Map export failed:",e);setExportStatus("Export failed: "+(e?.message||e),true);}finally{exportBusy=false;if(b)b.disabled=false;document.getElementById("map")?.classList.remove("export-capture-mode");}}
 document.getElementById("exportModalBackdrop")?.addEventListener("click",e=>{if(e.target===e.currentTarget&&!exportBusy)closeExportModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&exportModalOpen&&!exportBusy)closeExportModal();});
 
 initializeMap();
+refreshDiagnosticImages();
 refreshData();
 refreshHistoryManifest();
 
