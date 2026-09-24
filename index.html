@@ -1055,7 +1055,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 .export-status { min-height:18px; margin-top:10px; color:#53636d; font-size:10px; line-height:1.4; }
 .export-status.error { color:#9b2f2f; }
 #map.export-capture-mode .leaflet-control-container,#map.export-capture-mode .layer-box,#map.export-capture-mode #loading,#map.export-capture-mode .radar-time { display:none !important; }
-#map.export-capture-mode .map-legend { display:block !important; }
+#map.export-capture-mode .map-legend { display:none !important; }
 .export-mode-note { margin-top:8px; padding:7px 8px; border-radius:5px; background:#eef4f7; color:#41545f; font-size:10px; line-height:1.35; }
 @media (max-width:600px) { .export-modal { top:8px; right:8px; width:calc(100vw - 16px); max-width:none; max-height:calc(100vh - 16px); } }
 
@@ -1134,7 +1134,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
             <div class="map-legend" aria-label="WinterRadar map legend">
                 <div class="map-legend-title">Map Legend</div>
 
-                <div class="map-legend-section">
+                <div id="legendRadar" class="map-legend-section">
                     <div class="map-legend-label">MRMS Reflectivity (dBZ)</div>
                     <div class="reflectivity-gradient" aria-label="MRMS reflectivity color scale from 5 to 95 plus dBZ"></div>
                     <div class="reflectivity-label-row">
@@ -1142,7 +1142,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section">
+                <div id="legendPrecipType" class="map-legend-section">
                     <div class="map-legend-label">Precipitation Type Composite</div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-rain"></span><span>Rain</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
@@ -1150,7 +1150,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
                 </div>
 
-                <div class="map-legend-section">
+                <div id="legendPhase" class="map-legend-section">
                     <div class="map-legend-label">Winter Phase Mask</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch snow"></span>Snow</div>
@@ -1161,7 +1161,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section">
+                <div id="legendRadarFusion" class="map-legend-section">
                     <div class="map-legend-label">Radar Phase Evidence</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch radar-melting"></span>Melting-layer evidence</div>
@@ -1171,7 +1171,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section">
+                <div id="legendAgreement" class="map-legend-section">
                     <div class="map-legend-label">Phase Agreement</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch agree"></span>Consistent</div>
@@ -1421,7 +1421,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
     </section>
 
-    <details class="diagnostics">
+    <details class="diagnostics" ontoggle="if(this.open) refreshDiagnosticImages()">
         <summary>Diagnostics</summary>
 
 
@@ -1451,7 +1451,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Phase Probability Layer</div>
                     <div class="diag-desc">Dominant precipitation type shaded by the model probability. Transparency increases with probability.</div>
                 </div>
-                <img class="diagnostic-image" src="./outputs/phase_probability.png" alt="Phase probability layer" loading="lazy">
+                <img class="diagnostic-image" src="./outputs/phase_probability.png" alt="Phase probability layer">
+                <div class="diag-open"><a href="./outputs/phase_probability.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
             </section>
 
             <section class="diag-card">
@@ -1459,7 +1460,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Phase Probability / Energy QC</div>
                     <div class="diag-desc">Rain, snow, sleet, freezing-rain probabilities plus melting/refreezing energy.</div>
                 </div>
-                <img class="diagnostic-image" src="./outputs/phase_diagnostics.png" alt="Phase probability and energy diagnostics" loading="lazy">
+                <img class="diagnostic-image" src="./outputs/phase_diagnostics.png" alt="Phase probability and energy diagnostics">
+                <div class="diag-open"><a href="./outputs/phase_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
             </section>
 
             <section class="diag-card">
@@ -1467,7 +1469,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">MRMS Diagnostics</div>
                     <div class="diag-desc">Core MRMS fields and precipitation diagnostics.</div>
                 </div>
-                <img class="diagnostic-image" src="./outputs/mrms_diagnostics.png" alt="MRMS diagnostics" loading="lazy">
+                <img class="diagnostic-image" src="./outputs/mrms_diagnostics.png" alt="MRMS diagnostics">
+                <div class="diag-open"><a href="./outputs/mrms_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
             </section>
 
             <section class="diag-card">
@@ -1475,7 +1478,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Vertical Dual-Pol</div>
                     <div class="diag-desc">Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.</div>
                 </div>
-                <img class="diagnostic-image" src="./outputs/mrms_vertical_dualpol.png" alt="Vertical dual-pol diagnostic" loading="lazy">
+                <img class="diagnostic-image" src="./outputs/mrms_vertical_dualpol.png" alt="Vertical dual-pol diagnostic">
+                <div class="diag-open"><a href="./outputs/mrms_vertical_dualpol.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
             </section>
 
             <section class="diag-card">
@@ -1483,7 +1487,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Radar Phase Evidence Fusion</div>
                     <div class="diag-desc">Independent MRMS dual-pol evidence for melting-layer and dry-snow-like signatures; does not replace the RAP phase solution.</div>
                 </div>
-                <img class="diagnostic-image" src="./outputs/phase_radar_fusion.png" alt="Radar phase evidence fusion diagnostic" loading="lazy">
+                <img class="diagnostic-image" src="./outputs/phase_radar_fusion.png" alt="Radar phase evidence fusion diagnostic">
+                <div class="diag-open"><a href="./outputs/phase_radar_fusion.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
             </section>
 
             <section class="diag-card">
@@ -1491,7 +1496,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Winter Precipitation Diagnostic</div>
                     <div class="diag-desc">Fields used to develop the winter phase mask.</div>
                 </div>
-                <img class="diagnostic-image" src="./outputs/winter_mask_diagnostics.png" alt="Winter precipitation diagnostic" loading="lazy">
+                <img class="diagnostic-image" src="./outputs/winter_mask_diagnostics.png" alt="Winter precipitation diagnostic">
+                <div class="diag-open"><a href="./outputs/winter_mask_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
             </section>
 
             <section class="diag-card">
@@ -1499,7 +1505,8 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="diag-title">Phase Agreement</div>
                     <div class="diag-desc">Agreement between the primary RAP/Bourgouin phase solution and independent MRMS vertical dual-pol evidence.</div>
                 </div>
-                <img class="diagnostic-image" src="./outputs/phase_agreement.png" alt="Phase agreement diagnostic" loading="lazy">
+                <img class="diagnostic-image" src="./outputs/phase_agreement.png" alt="Phase agreement diagnostic">
+                <div class="diag-open"><a href="./outputs/phase_agreement.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
             </section>
 
         </div>
@@ -2135,6 +2142,8 @@ function loadPhaseAgreementLayer() {
 
 function togglePhaseAgreement(enabled) {
 
+    updateDynamicMapLegend();
+
     if (historyMode) {
         document.getElementById("phaseAgreementToggle").checked = false;
         return;
@@ -2151,6 +2160,8 @@ function togglePhaseAgreement(enabled) {
 
 function toggleRadarFusion(enabled) {
 
+    updateDynamicMapLegend();
+
     if (historyMode) {
         document.getElementById("radarFusionToggle").checked = false;
         return;
@@ -2165,7 +2176,35 @@ function toggleRadarFusion(enabled) {
 }
 
 
+function updateDynamicMapLegend() {
+    const mapping = [
+        ["legendRadar", "radarToggle"],
+        ["legendPrecipType", "precipTypeToggle"],
+        ["legendPhase", "phaseToggle"],
+        ["legendRadarFusion", "radarFusionToggle"],
+        ["legendAgreement", "phaseAgreementToggle"]
+    ];
+
+    let visible = 0;
+    mapping.forEach(function(pair) {
+        const section = document.getElementById(pair[0]);
+        const checkbox = document.getElementById(pair[1]);
+        if (!section) return;
+        const show = !!checkbox?.checked;
+        section.style.display = show ? "" : "none";
+        if (show) visible += 1;
+    });
+
+    const legend = document.querySelector(".map-legend");
+    if (legend) {
+        legend.classList.toggle("map-legend-empty", visible === 0);
+    }
+}
+
+
 function toggleRadar(enabled) {
+
+    updateDynamicMapLegend();
 
     if (historyMode) {
         if (historyFrames.length) {
@@ -2186,6 +2225,8 @@ function toggleRadar(enabled) {
 
 function togglePrecipType(enabled) {
 
+    updateDynamicMapLegend();
+
     if (historyMode) {
         if (historyFrames.length) {
             renderHistoryFrame(historyIndex, false);
@@ -2204,6 +2245,8 @@ function togglePrecipType(enabled) {
 
 
 function togglePhase(enabled) {
+
+    updateDynamicMapLegend();
 
     if (historyMode) {
         if (historyFrames.length) {
@@ -3657,6 +3700,8 @@ async function refreshData() {
                     ? new Date(metadata.generated_at_utc)
                     : new Date());
 
+        window.currentMRMSTimeUtc = metadata.mrms_time_utc || metadata.generated_at_utc || new Date().toISOString();
+
         const display =
             new Intl.DateTimeFormat(undefined, {
                 month: "short",
@@ -3753,19 +3798,25 @@ function refreshDiagnosticImages() {
         if (!original) return;
 
         img.classList.remove("diag-load-failed");
+        img.removeAttribute("title");
 
         const clean = original.split("?")[0];
         const next = clean + "?v=" + stamp;
 
         img.onload = function() {
             img.classList.remove("diag-load-failed");
+            img.removeAttribute("title");
+            try { img.decode?.(); } catch (e) {}
         };
 
         img.onerror = function() {
             img.classList.add("diag-load-failed");
+            img.title = "Diagnostic image unavailable: " + clean;
             console.warn("Diagnostic image failed to load:", clean);
         };
 
+        // Force a real browser request rather than relying on the stale
+        // image object left by the previous five-minute refresh.
         img.src = next;
     });
 }
@@ -3806,9 +3857,220 @@ function snapshotLayerCheckboxes(){return{radar:!!document.getElementById("radar
 function restoreLayerCheckboxes(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}}
 function waitForMapImages(timeoutMs=3000){const t=Date.now();return new Promise(resolve=>{(function check(){const p=Array.from(document.querySelectorAll("#map img")).filter(i=>!i.complete||i.naturalWidth===0);if(!p.length||Date.now()-t>=timeoutMs)return resolve();setTimeout(check,60);})();});}
 async function applyExportLayerSelection(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}await waitForMapImages(3000);}
-async function captureExportFrame(){const el=document.getElementById("map");if(!el||typeof html2canvas!=="function")throw new Error("Map export library is not available.");el.classList.add("export-capture-mode");await waitForMapImages(3000);if(document.fonts?.ready){try{await document.fonts.ready;}catch(e){}}const scale=Math.max(1,Math.min(2,Number(document.getElementById("exportScale")?.value||1)));try{return await html2canvas(el,{backgroundColor:"#fff",useCORS:true,allowTaint:false,scale,logging:false,imageTimeout:10000,width:el.clientWidth,height:el.clientHeight,onclone:d=>d.getElementById("map")?.classList.add("export-capture-mode")});}finally{el.classList.remove("export-capture-mode");}}
+function exportLayerLabel(selected) {
+    const labels = [];
+    if (selected.radar) labels.push("MRMS Reflectivity");
+    if (selected.precipType) labels.push("Precipitation Type Composite");
+    if (selected.phase) labels.push("Winter Phase Mask");
+    if (selected.radarFusion) labels.push("Radar Phase Evidence");
+    if (selected.agreement) labels.push("Phase Agreement");
+    return labels.length ? labels.join("  •  ") : "Basemap / Reference Layers";
+}
+
+function exportFrameTimestamp(index) {
+    let value = null;
+    if (historyMode && historyFrames[index]) {
+        value = historyFrames[index].timestamp_utc;
+    }
+    if (!value && window.currentMRMSTimeUtc) value = window.currentMRMSTimeUtc;
+    if (!value) value = new Date().toISOString();
+    return new Date(value);
+}
+
+function formatExportTime(dt) {
+    if (!(dt instanceof Date) || !Number.isFinite(dt.getTime())) return "Time unavailable";
+    return new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZoneName: "short"
+    }).format(dt);
+}
+
+function exportLegendItems(selected) {
+    const items = [];
+    if (selected.radar) {
+        items.push({type:"gradient", label:"Reflectivity (dBZ)", colors:[
+            [0,"#323232"],[5,"#0e0e5a"],[10,"#034f8c"],[15,"#07a2b6"],
+            [20,"#11e51f"],[25,"#0ca914"],[34.5,"#066808"],[35,"#ffff00"],
+            [40,"#ffc200"],[45,"#ff8c00"],[50,"#dd0000"],[57.5,"#6b0000"],
+            [62.5,"#ffa3ff"],[67.5,"#ee1df4"],[72.5,"#7500eb"],[77.5,"#00ffdb"],[82.5,"#004c4a"]
+        ]});
+    }
+    if (selected.precipType) {
+        items.push({type:"swatches", label:"Precipitation Type", swatches:[
+            ["Rain","#ff8c00"],["Snow","#3aa7ff"],["Sleet","#b84de0"],
+            ["Freezing Rain","#e13958"],["Mixed","#9b73df"]
+        ]});
+    }
+    if (selected.phase) {
+        items.push({type:"swatches", label:"Winter Phase", swatches:[
+            ["Snow","#3791ff"],["Sleet","#b950dc"],["FZRA","#e13746"],["Mixed","#dc5fc3"],["Uncertain","#91969b"]
+        ]});
+    }
+    if (selected.radarFusion) {
+        items.push({type:"swatches", label:"Radar Phase Evidence", swatches:[
+            ["Consistent","#36a852"],["Conflicts","#e24a3b"],["Conflicting signatures","#a23bb7"],["No decisive signature","#808890"]
+        ]});
+    }
+    if (selected.agreement) {
+        items.push({type:"swatches", label:"Phase Agreement", swatches:[
+            ["Agreement","#28a745"],["Partial / uncertain","#e0a82e"],["Disagreement","#d83b3b"]
+        ]});
+    }
+    return items;
+}
+
+function drawExportBannerAndLegend(sourceCanvas, selected, frameIndex) {
+    const scale = Math.max(1, Math.min(2, Number(document.getElementById("exportScale")?.value || 1)));
+    const w = sourceCanvas.width;
+    const bannerH = Math.round(78 * scale);
+    const legendH = Math.round(Math.max(58, 42 + exportLegendItems(selected).length * 26) * scale);
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = sourceCanvas.height + bannerH + legendH;
+    const ctx = out.getContext("2d");
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, out.width, out.height);
+
+    // NWS-inspired professional banner: blue field, white type, compact emblem.
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0, "#083b66");
+    grad.addColorStop(0.62, "#0b5f8e");
+    grad.addColorStop(1, "#1679aa");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, bannerH);
+
+    const pad = Math.round(18 * scale);
+    const emblem = Math.round(44 * scale);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(pad + emblem/2, bannerH/2, emblem/2, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "#0a4f79";
+    ctx.font = `900 ${Math.round(14*scale)}px Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("NWS", pad + emblem/2, bannerH/2 + 1*scale);
+
+    const textX = pad + emblem + Math.round(13*scale);
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `800 ${Math.round(18*scale)}px Arial, sans-serif`;
+    ctx.fillText("WINTER RADAR", textX, Math.round(27*scale));
+    ctx.font = `700 ${Math.round(11*scale)}px Arial, sans-serif`;
+    ctx.fillText(exportLayerLabel(selected), textX, Math.round(47*scale));
+
+    const dt = exportFrameTimestamp(frameIndex);
+    const timeText = formatExportTime(dt);
+    ctx.textAlign = "right";
+    ctx.font = `800 ${Math.round(12*scale)}px Arial, sans-serif`;
+    ctx.fillText("Valid " + timeText, w - pad, Math.round(31*scale));
+    ctx.font = `600 ${Math.round(9*scale)}px Arial, sans-serif`;
+    ctx.fillStyle = "rgba(255,255,255,.82)";
+    ctx.fillText("MRMS / NOAA", w - pad, Math.round(49*scale));
+
+    ctx.drawImage(sourceCanvas, 0, bannerH);
+
+    const legendY = bannerH + sourceCanvas.height;
+    ctx.fillStyle = "#f7f9fb";
+    ctx.fillRect(0, legendY, w, legendH);
+    ctx.strokeStyle = "#c9d2d9";
+    ctx.lineWidth = Math.max(1, scale);
+    ctx.strokeRect(0, legendY, w, legendH);
+
+    const items = exportLegendItems(selected);
+    let x = pad;
+    let y = legendY + Math.round(18*scale);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#344650";
+    ctx.font = `800 ${Math.round(10*scale)}px Arial, sans-serif`;
+    ctx.fillText("LEGEND", x, y);
+    x += Math.round(65*scale);
+
+    items.forEach(item => {
+        if (item.type === "gradient") {
+            ctx.fillStyle = "#53636d";
+            ctx.font = `700 ${Math.round(9*scale)}px Arial, sans-serif`;
+            ctx.fillText(item.label, x, y);
+            x += Math.round(104*scale);
+            const gw = Math.round(170*scale), gh = Math.round(11*scale);
+            const g = ctx.createLinearGradient(x, 0, x+gw, 0);
+            item.colors.forEach(c => g.addColorStop(c[0]/95, c[1]));
+            ctx.fillStyle = g;
+            ctx.fillRect(x, y-gh/2, gw, gh);
+            ctx.strokeStyle = "#9da9b0";
+            ctx.strokeRect(x, y-gh/2, gw, gh);
+            ctx.fillStyle = "#596a74";
+            ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
+            ctx.fillText("5", x, y + Math.round(14*scale));
+            ctx.textAlign = "right";
+            ctx.fillText("95+ dBZ", x+gw, y + Math.round(14*scale));
+            ctx.textAlign = "left";
+            x += gw + Math.round(35*scale);
+        } else {
+            ctx.fillStyle = "#53636d";
+            ctx.font = `700 ${Math.round(9*scale)}px Arial, sans-serif`;
+            ctx.fillText(item.label, x, y);
+            x += Math.round((item.label.length*5.5 + 10)*scale);
+            for (const sw of item.swatches) {
+                const bw = Math.round(9*scale);
+                ctx.fillStyle = sw[1];
+                ctx.fillRect(x, y-bw/2, bw, bw);
+                x += bw + Math.round(3*scale);
+                ctx.fillStyle = "#52616a";
+                ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
+                ctx.fillText(sw[0], x, y);
+                x += Math.round((sw[0].length*4.8 + 13)*scale);
+                if (x > w - pad - 120*scale) {
+                    x = pad;
+                    y += Math.round(24*scale);
+                }
+            }
+            x += Math.round(10*scale);
+        }
+    });
+
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#7a8790";
+    ctx.font = `600 ${Math.round(8*scale)}px Arial, sans-serif`;
+    ctx.fillText("WinterRadar • NOAA/NWS research display", w-pad, out.height-Math.round(9*scale));
+    return out;
+}
+
+async function captureExportFrame(){
+    const el=document.getElementById("map");
+    if(!el||typeof html2canvas!=="function")throw new Error("Map export library is not available.");
+    el.classList.add("export-capture-mode");
+    await waitForMapImages(3000);
+    if(document.fonts?.ready){try{await document.fonts.ready;}catch(e){}}
+    const scale=Math.max(1,Math.min(2,Number(document.getElementById("exportScale")?.value||1)));
+    try{return await html2canvas(el,{backgroundColor:"#fff",useCORS:true,allowTaint:false,scale,logging:false,imageTimeout:10000,width:el.clientWidth,height:el.clientHeight,onclone:d=>d.getElementById("map")?.classList.add("export-capture-mode")});}
+    finally{el.classList.remove("export-capture-mode");}
+}
+
 function downloadCanvasPNG(c){const a=document.createElement("a"),stamp=new Date().toISOString().replace(/[:.]/g,"-");a.download="winterradar-map-"+stamp+".png";a.href=c.toDataURL("image/png");a.click();}
-async function exportPNG(){const selected=exportSelectedLayers(),prev=snapshotLayerCheckboxes();try{setExportStatus("Preparing selected layers…");await applyExportLayerSelection(selected);downloadCanvasPNG(await captureExportFrame());setExportStatus("PNG exported.");}finally{restoreLayerCheckboxes(prev);document.getElementById("map")?.classList.remove("export-capture-mode");}}
+
+async function exportPNG(){
+    const selected=exportSelectedLayers(),prev=snapshotLayerCheckboxes();
+    try{
+        setExportStatus("Preparing selected layers…");
+        await applyExportLayerSelection(selected);
+        const mapCanvas=await captureExportFrame();
+        const finalCanvas=drawExportBannerAndLegend(mapCanvas,selected,historyIndex);
+        downloadCanvasPNG(finalCanvas);
+        setExportStatus("PNG exported with NWS-style banner, valid time, and legend.");
+    }finally{
+        restoreLayerCheckboxes(prev);
+        document.getElementById("map")?.classList.remove("export-capture-mode");
+    }
+}
+
 async function loadGifWorkerBlob() {
     const workerSourceUrl = "https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js";
     const response = await fetch(workerSourceUrl, {
@@ -3898,7 +4160,7 @@ async function exportGIF() {
             await waitForMapImages(4500);
             await new Promise(resolve => setTimeout(resolve, 180));
 
-            canvases.push(await captureExportFrame());
+            canvases.push(drawExportBannerAndLegend(await captureExportFrame(), selected, indices[n]));
         }
 
         if (!canvases.length) {
