@@ -1792,7 +1792,7 @@ function createImageOverlay(
 function radarDisplaySpec() {
     return {
         mode: "national",
-        url: "./outputs/mrms_current_web.png?v=" + Date.now(),
+        url: "./outputs/mrms_current_web.webp?v=" + Date.now(),
         bounds: MRMS_NATIONAL_BOUNDS
     };
 }
@@ -1801,7 +1801,7 @@ function radarDisplaySpec() {
 function phaseDisplaySpec() {
     return {
         mode: "national",
-        url: "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
+        url: "./outputs/winter_phase_mask_web.webp?v=" + Date.now(),
         bounds: MRMS_NATIONAL_BOUNDS
     };
 }
@@ -1810,7 +1810,7 @@ function phaseDisplaySpec() {
 function precipTypeDisplaySpec() {
     return {
         mode: "national",
-        url: "./outputs/winter_precip_type_web.png?v=" + Date.now(),
+        url: "./outputs/winter_precip_type_web.webp?v=" + Date.now(),
         bounds: MRMS_NATIONAL_BOUNDS
     };
 }
@@ -2044,7 +2044,7 @@ function loadRadarFusionLayer() {
     removeMapOverlay(radarFusionOverlay);
 
     radarFusionOverlay = createImageOverlay(
-        "./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(),
+        "./outputs/phase_radar_fusion_overlay_web.webp?v=" + Date.now(),
         MRMS_NATIONAL_BOUNDS,
         overlayOpacity,
         575,
@@ -2080,7 +2080,7 @@ function loadPhaseAgreementLayer() {
     removeMapOverlay(phaseAgreementOverlay);
 
     phaseAgreementOverlay = createImageOverlay(
-        "./outputs/phase_agreement_overlay_web.png?v=" + Date.now(),
+        "./outputs/phase_agreement_overlay_web.webp?v=" + Date.now(),
         MRMS_NATIONAL_BOUNDS,
         overlayOpacity,
         585,
