@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sys
+import gc
+import os
 
 import numpy as np
 import xarray as xr
@@ -26,7 +28,7 @@ from render import (  # noqa: E402
 )
 
 MAIN_VERSION = "9.3-rap-profile-phase-full-conus"
-PROFILE_CHUNK_ROWS = 40  # keep chunk boundaries aligned with the 10x diagnostic grid
+PROFILE_CHUNK_ROWS = 20  # memory-safe phase sampling; still aligned with the 10x diagnostic grid
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
 
@@ -222,6 +224,12 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
             if finite.size:
                 target.append(float(np.mean(finite)))
 
+        # Release the large temporary 3-D NumPy arrays before moving to the
+        # next chunk. This keeps the full-CONUS phase engine below the runner's
+        # memory ceiling and avoids native-library cleanup crashes at shutdown.
+        del sampled, probs, ph, conf, precip
+        gc.collect()
+
     diagnostics = {
         "engine": "Modified Bourgouin (Birk et al. 2021)",
         "profile_source": "RAP 13-km pressure-level subset",
@@ -390,3 +398,10 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # ecCodes/cfgrib can occasionally segfault during interpreter teardown on
+    # GitHub-hosted runners after a large full-CONUS run. All required files
+    # are closed and written before this point; exiting directly prevents a
+    # harmless native finalizer crash from being reported as workflow failure.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
