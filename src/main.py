@@ -4,10 +4,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sys
-import gc
-import os
 
 import numpy as np
+import xarray as xr
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -17,7 +16,7 @@ from config import DATA_DIR, OUTPUT_DIR, PRODUCTS  # noqa: E402
 from download_rap_profile import download_rap_profile, load_rap_profile, sample_profile_to_mrms  # noqa: E402
 from download_mrms import download_optional_live_products, download_required_live_products  # noqa: E402
 from phase_profile import classify_from_vertical_profile, probabilities_to_phase  # noqa: E402
-from read_mrms import get_values, get_valid_time  # noqa: E402
+from read_mrms import get_values  # noqa: E402
 from render import (  # noqa: E402
     reflectivity_to_rgba,
     result_to_phase_rgba,
@@ -26,8 +25,8 @@ from render import (  # noqa: E402
     write_metadata,
 )
 
-MAIN_VERSION = "9.3-rap-profile-phase-full-conus"
-PROFILE_CHUNK_ROWS = 20  # memory-safe phase sampling; still aligned with the 10x diagnostic grid
+MAIN_VERSION = "9.4-rap-profile-phase-sampler"
+PROFILE_CHUNK_ROWS = 40  # keep chunk boundaries aligned with the 10x diagnostic grid
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
 
@@ -68,8 +67,23 @@ def grid_bounds(lats: np.ndarray, lons: np.ndarray) -> list[float]:
 
 
 def get_mrms_valid_time(path: Path) -> str | None:
-    """Read MRMS valid time without loading cfgrib/eccodes into the core process."""
-    return get_valid_time(path)
+    """Read MRMS valid time through cfgrib/xarray; pygrib is not needed."""
+    try:
+        ds = xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""})
+        try:
+            if "valid_time" in ds.coords:
+                value = np.asarray(ds.valid_time.values).reshape(-1)[0]
+            elif "time" in ds.coords:
+                value = np.asarray(ds.time.values).reshape(-1)[0]
+            else:
+                return None
+            dt = value.astype("datetime64[us]").astype(datetime).replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+        finally:
+            ds.close()
+    except Exception as exc:
+        print(f"  Warning: could not read MRMS valid time: {exc}")
+        return None
 
 
 def update_metadata(metadata_path: Path, lats: np.ndarray, lons: np.ndarray, mrms_time_utc: str | None) -> None:
@@ -125,6 +139,10 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
     mean_me = []
     mean_re = []
     mean_ice = []
+    sample_valid_cells = 0
+    precip_overlap_cells = 0
+    full_profile_cells = 0
+    phase_cells = 0
 
     diag_h = ref.shape[0] // DIAG_Y_FACTOR
     diag_w = ref.shape[1] // DIAG_X_FACTOR
@@ -144,6 +162,17 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         lon_chunk = lons if lons.ndim == 1 else lons[y0:y1, :]
         sampled = sample_profile_to_mrms(profile, lat_chunk, lon_chunk)
 
+        sampled_valid = np.asarray(sampled["valid"], dtype=bool)
+        sample_valid_cells += int(np.count_nonzero(sampled_valid))
+
+        profile_finite = (
+            np.all(np.isfinite(sampled["wetbulb_c"]), axis=0)
+            & np.all(np.isfinite(sampled["temperature_c"]), axis=0)
+            & np.all(np.isfinite(sampled["rh_ice_pct"]), axis=0)
+            & np.all(np.isfinite(sampled["height_m"]), axis=0)
+        )
+        full_profile_cells += int(np.count_nonzero(profile_finite & sampled_valid))
+
         probs = classify_from_vertical_profile(
             pressure_hpa=sampled["pressure_hpa"],
             wetbulb_c=sampled["wetbulb_c"],
@@ -153,8 +182,10 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         )
         ph, conf = probabilities_to_phase(probs)
 
-        # Only classify where the radar actually indicates precipitation.
-        precip = np.isfinite(ref[y0:y1]) & (ref[y0:y1] >= 10.0) & sampled["valid"]
+        # Only classify where the radar actually indicates precipitation and
+        # the RAP profile is geographically valid.
+        precip = np.isfinite(ref[y0:y1]) & (ref[y0:y1] >= 10.0) & sampled_valid
+        precip_overlap_cells += int(np.count_nonzero(precip))
         ph[~precip] = CLEAR
         conf[~precip] = 0.0
 
@@ -192,6 +223,8 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
                 )
                 diag[key][dy0:dy1] = block_mean
 
+        phase_cells += int(np.count_nonzero(np.isfinite(probs["rain"]) & precip))
+
         for key in max_prob:
             values = np.asarray(probs[key], dtype=np.float32)
             finite = values[np.isfinite(values)]
@@ -207,12 +240,6 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
             finite = finite[np.isfinite(finite)]
             if finite.size:
                 target.append(float(np.mean(finite)))
-
-        # Release the large temporary 3-D NumPy arrays before moving to the
-        # next chunk. This keeps the full-CONUS phase engine below the runner's
-        # memory ceiling and avoids native-library cleanup crashes at shutdown.
-        del sampled, probs, ph, conf, precip
-        gc.collect()
 
     diagnostics = {
         "engine": "Modified Bourgouin (Birk et al. 2021)",
@@ -231,6 +258,10 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         "mean_prob_ice_percent": float(np.mean(mean_ice)) if mean_ice else None,
     }
     diagnostics["precip_pixels"] = int(np.count_nonzero(np.isfinite(ref) & (ref >= 10.0)))
+    diagnostics["sample_valid_cells"] = int(sample_valid_cells)
+    diagnostics["precip_overlap_cells"] = int(precip_overlap_cells)
+    diagnostics["full_profile_cells"] = int(full_profile_cells)
+    diagnostics["phase_cells"] = int(phase_cells)
     diagnostic_valid = np.isfinite(diag["rain"])
     diagnostics["diagnostic_grid"] = {
         "width": int(diag_w),
@@ -382,10 +413,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    # ecCodes/cfgrib can occasionally segfault during interpreter teardown on
-    # GitHub-hosted runners after a large full-CONUS run. All required files
-    # are closed and written before this point; exiting directly prevents a
-    # harmless native finalizer crash from being reported as workflow failure.
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(0)
