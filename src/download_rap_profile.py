@@ -175,6 +175,8 @@ def _projection_from_gid(gid) -> dict:
         "Ny",
         "iScansNegatively",
         "jScansPositively",
+        "latitudeOfFirstGridPointInDegrees",
+        "longitudeOfFirstGridPointInDegrees",
     )
     out: dict[str, float | int | str] = {}
     for key in keys:
@@ -267,11 +269,29 @@ def _decode_pressure_fields(path: Path) -> dict:
                 shape = values.shape
 
                 if lat is None:
-                    lat = _safe_array(gid, "latitudes").reshape(shape)
-                    lon = _safe_array(gid, "longitudes").reshape(shape)
-                    lon = np.where(lon > 180.0, lon - 360.0, lon)
                     projection = _projection_from_gid(gid)
                     valid_time = _valid_time_from_gid(gid)
+
+                    # Prefer the native ecCodes coordinate arrays when they
+                    # actually match the decoded field. Some filtered RAP
+                    # GRIBs expose broadcast/reduced coordinate arrays (for
+                    # example (40, 1) and (1, 7000)); those are not valid
+                    # coordinates for a (325, 451) field and previously caused
+                    # the phase engine to abort. Reconstruct the regular
+                    # Lambert grid from authoritative GRIB geometry instead.
+                    raw_lat = _safe_array(gid, "latitudes")
+                    raw_lon = _safe_array(gid, "longitudes")
+                    if raw_lat.size == int(np.prod(shape)) and raw_lon.size == int(np.prod(shape)):
+                        lat = raw_lat.reshape(shape)
+                        lon = raw_lon.reshape(shape)
+                    else:
+                        print(
+                            f"  RAP coordinate arrays are non-native: lat={raw_lat.shape}, lon={raw_lon.shape}; "
+                            f"reconstructing {shape} Lambert grid from GRIB geometry.",
+                            flush=True,
+                        )
+                        lat, lon, _, _ = _build_regular_lambert_grid(shape, projection)
+                    lon = np.where(lon > 180.0, lon - 360.0, lon)
             finally:
                 eccodes.codes_release(gid)
 
@@ -411,6 +431,75 @@ def _lambert_conformal_conic_xy(
     return x, y
 
 
+
+def _build_regular_lambert_grid(shape: tuple[int, int], projection: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build RAP grid coordinates from GRIB geometry when coordinate arrays are malformed.
+
+    NOMADS/ecCodes can occasionally expose the filtered RAP latitude/longitude
+    arrays with a reduced or broadcast shape even though the decoded field is
+    a regular Lambert grid.  The GRIB projection metadata contains everything
+    needed to reconstruct the exact regular grid, so use that as the
+    authoritative geometry rather than trusting a malformed coordinate array.
+    """
+    ny, nx = int(shape[0]), int(shape[1])
+    dx = projection.get("GRIB_DxInMetres")
+    dy = projection.get("GRIB_DyInMetres")
+    first_lat = projection.get("GRIB_latitudeOfFirstGridPointInDegrees")
+    first_lon = projection.get("GRIB_longitudeOfFirstGridPointInDegrees")
+    if None in (dx, dy, first_lat, first_lon):
+        raise RuntimeError(
+            "RAP Lambert grid geometry is incomplete: "
+            f"Dx={dx!r}, Dy={dy!r}, first_lat={first_lat!r}, first_lon={first_lon!r}"
+        )
+
+    # Project the first grid point using the same spherical LCC equations used
+    # for all subsequent sampling.
+    first_x, first_y = _lambert_conformal_conic_xy(
+        np.asarray([float(first_lon)], dtype=np.float64),
+        np.asarray([float(first_lat)], dtype=np.float64),
+        projection,
+    )
+    x0 = float(np.asarray(first_x).reshape(-1)[0])
+    y0 = float(np.asarray(first_y).reshape(-1)[0])
+
+    i_negative = bool(int(projection.get("GRIB_iScansNegatively", 0)))
+    j_positive = bool(int(projection.get("GRIB_jScansPositively", 1)))
+    x_step = -float(dx) if i_negative else float(dx)
+    y_step = float(dy) if j_positive else -float(dy)
+
+    x_axis = x0 + x_step * np.arange(nx, dtype=np.float64)
+    y_axis = y0 + y_step * np.arange(ny, dtype=np.float64)
+    xx, yy = np.meshgrid(x_axis, y_axis)
+
+    # Invert the spherical LCC so the profile retains useful geographic
+    # coordinates for diagnostics/debugging. Sampling itself uses xx/yy.
+    lat_0 = float(projection["GRIB_LaDInDegrees"])
+    lon_0 = float(projection["GRIB_LoVInDegrees"])
+    lat_1 = float(projection["GRIB_Latin1InDegrees"])
+    lat_2 = float(projection["GRIB_Latin2InDegrees"])
+    radius = 6371229.0
+    phi0 = np.deg2rad(lat_0)
+    phi1 = np.deg2rad(lat_1)
+    phi2 = np.deg2rad(lat_2)
+    lam0 = np.deg2rad(lon_0)
+
+    def _t(phi):
+        return np.tan(np.pi / 4.0 + phi / 2.0)
+
+    if abs(lat_1 - lat_2) < 1.0e-8:
+        n = np.sin(phi1)
+    else:
+        n = np.log(np.cos(phi1) / np.cos(phi2)) / np.log(_t(phi2) / _t(phi1))
+    f = np.cos(phi1) * (_t(phi1) ** n) / n
+    rho0 = radius * f / (_t(phi0) ** n)
+    rho = np.sign(n) * np.sqrt(xx * xx + (rho0 - yy) * (rho0 - yy))
+    rho = np.maximum(rho, 1.0e-6)
+    theta = np.arctan2(xx, rho0 - yy)
+    t = np.power(radius * f / rho, 1.0 / n)
+    lat = 2.0 * np.arctan(t) - np.pi / 2.0
+    lon = lam0 + theta / n
+    return np.rad2deg(lat), np.rad2deg(lon), xx, yy
+
 def load_rap_profile(path: Path) -> dict:
     """Load RAP TMP/RH/HGT and derive DPT, wet-bulb, and RH-ice."""
     if not path.exists():
@@ -432,15 +521,11 @@ def load_rap_profile(path: Path) -> dict:
     rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
 
     # Cache projected RAP coordinates so sample_profile_to_mrms does not
-    # perform a projection for every MRMS chunk.  Use the local spherical LCC
-    # implementation above rather than pyproj Transformer.transform().
-    rap_shape = data["longitude"].shape
-    hx, hy = _lambert_conformal_conic_xy(
-        data["longitude"], data["latitude"], data["projection"]
-    )
-    hx = np.asarray(hx, dtype=np.float64).reshape(rap_shape)
-    hy = np.asarray(hy, dtype=np.float64).reshape(rap_shape)
-
+    # perform a projection for every MRMS chunk. The regular projected grid is
+    # reconstructed directly from GRIB geometry; this avoids any dependency on
+    # the shape of ecCodes latitude/longitude arrays.
+    rap_shape = temp_c.shape[1:]
+    _, _, hx, hy = _build_regular_lambert_grid(rap_shape, data["projection"])
     x_axis = hx[0, :].astype(np.float64)
     y_axis = hy[:, 0].astype(np.float64)
 
