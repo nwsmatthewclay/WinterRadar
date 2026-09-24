@@ -500,11 +500,11 @@ jobs:
 
           test -s site/outputs/winter_precip_type.png
           test -s site/outputs/winter_precip_type_web.png
-          test -s site/outputs/mrms_current_web.webp
-          test -s site/outputs/winter_phase_mask_web.webp
-          test -s site/outputs/winter_precip_type_web.webp
-          test -s site/outputs/phase_radar_fusion_overlay_web.webp
-          test -s site/outputs/phase_agreement_overlay_web.webp
+          test -s site/outputs/mrms_current_web.png
+          test -s site/outputs/winter_phase_mask_web.png
+          test -s site/outputs/winter_precip_type_web.png
+          test -s site/outputs/phase_radar_fusion_overlay_web.png
+          test -s site/outputs/phase_agreement_overlay_web.png
           bash ./src/verify_core_outputs.sh site/outputs
 
           echo "=============================================="
