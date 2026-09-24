@@ -21,11 +21,8 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "outputs"
 
-WEB_VERSION = "1.1-webmercator-sharp-regional"
+WEB_VERSION = "1.2-webmercator-all-layers-webp"
 MAX_LAT = 85.0511287798
-
-REGIONAL_BOUNDS = (40.95, -77.50, 46.15, -68.40)
-REGIONAL_SCALE = 2
 
 
 def mercator_y(lat_deg: np.ndarray | float) -> np.ndarray | float:
@@ -84,7 +81,20 @@ def project_image(src_path: Path, dst_path: Path, bounds: tuple[float, float, fl
     nearest_rows = np.clip(nearest_rows, 0, src_h - 1)
     out[:] = src[nearest_rows]
 
-    Image.fromarray(out, mode="RGBA").save(dst_path, optimize=True)
+    projected = Image.fromarray(out, mode="RGBA")
+    projected.save(dst_path, optimize=True)
+
+    # Browser-facing copy. WebP is substantially smaller than the equivalent
+    # transparent PNG and avoids browser decoder failures seen with some large
+    # national transparent PNG overlays. Lossless WebP preserves the RGBA
+    # raster exactly while remaining easy for Leaflet to decode.
+    webp_path = dst_path.with_suffix(".webp")
+    projected.save(
+        webp_path,
+        format="WEBP",
+        lossless=True,
+        method=6,
+    )
 
     return {
         "source_width": src_w,
@@ -101,64 +111,6 @@ def project_image(src_path: Path, dst_path: Path, bounds: tuple[float, float, fl
     }
 
 
-
-def create_regional_closeup(
-    web_path: Path,
-    dst_path: Path,
-    full_bounds: tuple[float, float, float, float],
-    regional_bounds: tuple[float, float, float, float],
-    scale: int = 2,
-) -> dict:
-    """Create a sharp, nearest-neighbor regional presentation from the projected raster."""
-    south, west, north, east = full_bounds
-    rsouth, rwest, rnorth, reast = regional_bounds
-
-    if not (south <= rsouth < rnorth <= north and west <= rwest < reast <= east):
-        raise ValueError(
-            f"Regional bounds {regional_bounds!r} must be inside full bounds {full_bounds!r}."
-        )
-    if scale < 1:
-        raise ValueError("Regional scale must be >= 1.")
-
-    with Image.open(web_path) as im:
-        src = im.convert("RGBA")
-        width, height = src.size
-
-        # Horizontal coordinates are linear in both geographic longitude and
-        # Web Mercator X, while the vertical coordinate is linear in Mercator Y.
-        x0 = int(math.floor((rwest - west) / (east - west) * width))
-        x1 = int(math.ceil((reast - west) / (east - west) * width))
-
-        y_s = float(mercator_y(south))
-        y_n = float(mercator_y(north))
-        y_r_s = float(mercator_y(rsouth))
-        y_r_n = float(mercator_y(rnorth))
-        y0 = int(math.floor((y_n - y_r_n) / (y_n - y_s) * height))
-        y1 = int(math.ceil((y_n - y_r_s) / (y_n - y_s) * height))
-
-        x0 = max(0, min(x0, width - 1))
-        x1 = max(x0 + 1, min(x1, width))
-        y0 = max(0, min(y0, height - 1))
-        y1 = max(y0 + 1, min(y1, height))
-
-        crop = src.crop((x0, y0, x1, y1))
-        if scale != 1:
-            crop = crop.resize(
-                (crop.width * scale, crop.height * scale),
-                resample=Image.Resampling.NEAREST,
-            )
-
-        crop.save(dst_path, optimize=True)
-
-    return {
-        "source_size": [width, height],
-        "crop_pixels": [x0, y0, x1, y1],
-        "output_size": [crop.width, crop.height],
-        "bounds": list(regional_bounds),
-        "scale": scale,
-        "resampling": "nearest-neighbor",
-    }
-
 def main() -> None:
     metadata_path = OUTPUT_DIR / "mrms_current.json"
     if not metadata_path.exists():
@@ -173,47 +125,23 @@ def main() -> None:
     print("=" * 72)
     print(f"Geographic bounds: {bounds}")
 
-    radar_info = project_image(
-        OUTPUT_DIR / "mrms_current.png",
-        OUTPUT_DIR / "mrms_current_web.png",
-        bounds,
+    raster_specs = (
+        ("radar", "mrms_current.png", "mrms_current_web.png"),
+        ("phase", "winter_phase_mask.png", "winter_phase_mask_web.png"),
+        ("precip_type", "winter_precip_type.png", "winter_precip_type_web.png"),
+        ("radar_phase_evidence", "phase_radar_fusion_overlay.png", "phase_radar_fusion_overlay_web.png"),
+        ("phase_agreement", "phase_agreement_overlay.png", "phase_agreement_overlay_web.png"),
     )
 
-    regional_info = create_regional_closeup(
-        OUTPUT_DIR / "mrms_current_web.png",
-        OUTPUT_DIR / "mrms_current_regional_web.png",
-        bounds,
-        REGIONAL_BOUNDS,
-        REGIONAL_SCALE,
-    )
+    projected_info = {}
+    for key, source_name, dest_name in raster_specs:
+        source = OUTPUT_DIR / source_name
+        if not source.exists() or source.stat().st_size == 0:
+            raise RuntimeError(f"Missing browser raster source: {source}")
+        projected_info[key] = project_image(source, OUTPUT_DIR / dest_name, bounds)
 
-    phase_info = project_image(
-        OUTPUT_DIR / "winter_phase_mask.png",
-        OUTPUT_DIR / "winter_phase_mask_web.png",
-        bounds,
-    )
-
-    phase_regional_info = create_regional_closeup(
-        OUTPUT_DIR / "winter_phase_mask_web.png",
-        OUTPUT_DIR / "winter_phase_mask_regional_web.png",
-        bounds,
-        REGIONAL_BOUNDS,
-        REGIONAL_SCALE,
-    )
-
-    precip_type_info = project_image(
-        OUTPUT_DIR / "winter_precip_type.png",
-        OUTPUT_DIR / "winter_precip_type_web.png",
-        bounds,
-    )
-
-    precip_type_regional_info = create_regional_closeup(
-        OUTPUT_DIR / "winter_precip_type_web.png",
-        OUTPUT_DIR / "winter_precip_type_regional_web.png",
-        bounds,
-        REGIONAL_BOUNDS,
-        REGIONAL_SCALE,
-    )
+    radar_info = projected_info["radar"]
+    phase_info = projected_info["phase"]
 
     web_metadata = dict(metadata)
     web_metadata.update(
@@ -223,11 +151,11 @@ def main() -> None:
             "web_image_bounds": list(bounds),
             "web_version": WEB_VERSION,
             "web_radar_size": [radar_info["output_width"], radar_info["output_height"]],
-            "web_radar_regional": regional_info,
             "web_phase_size": [phase_info["output_width"], phase_info["output_height"]],
-            "web_phase_regional": phase_regional_info,
-            "web_precip_type_size": [precip_type_info["output_width"], precip_type_info["output_height"]],
-            "web_precip_type_regional": precip_type_regional_info,
+            "web_layer_sizes": {
+                key: [info["output_width"], info["output_height"]]
+                for key, info in projected_info.items()
+            },
             "webmercator_y_south": radar_info["webmercator_y_south"],
             "webmercator_y_north": radar_info["webmercator_y_north"],
         }
@@ -236,19 +164,18 @@ def main() -> None:
         json.dumps(web_metadata, indent=2), encoding="utf-8"
     )
 
-    for name in (
-        "mrms_current_web.png",
-        "mrms_current_regional_web.png",
-        "winter_phase_mask_web.png",
-        "winter_phase_mask_regional_web.png",
-        "winter_precip_type.png",
-        "winter_precip_type_web.png",
-        "winter_precip_type_regional_web.png",
+    browser_assets = (
+        "mrms_current_web.png", "mrms_current_web.webp",
+        "winter_phase_mask_web.png", "winter_phase_mask_web.webp",
+        "winter_precip_type_web.png", "winter_precip_type_web.webp",
+        "phase_radar_fusion_overlay_web.png", "phase_radar_fusion_overlay_web.webp",
+        "phase_agreement_overlay_web.png", "phase_agreement_overlay_web.webp",
         "mrms_web.json",
-    ):
+    )
+    for name in browser_assets:
         path = OUTPUT_DIR / name
         if not path.exists() or path.stat().st_size == 0:
-            raise RuntimeError(f"Projected output missing or empty: {path}")
+            raise RuntimeError(f"Projected browser output missing or empty: {path}")
         print(f"  {path.name}: {path.stat().st_size:,} bytes")
 
     print("WEB MERCATOR PROJECTION QC PASSED")
