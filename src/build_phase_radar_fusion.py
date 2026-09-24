@@ -53,7 +53,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
-import xarray as xr
+import pygrib
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,27 +96,31 @@ def dualpol_path(product: str, level: float) -> Path:
 
 
 def read_2d_grib(path: Path) -> np.ndarray:
-    """Read one 2-D GRIB field with cfgrib/xarray and close it promptly."""
+    """Read one MRMS GRIB message with pygrib and release native handles immediately.
+
+    The fusion step used to open each field through xarray/cfgrib. That path
+    was scientifically fine, but repeated cfgrib/eccodes teardown after the
+    16 dual-pol files could trigger a native ``double free or corruption``
+    abort on GitHub Actions. The diagnostic builders already use pygrib
+    safely, so fusion now follows the same one-file/one-handle pattern.
+    """
     if not path.exists():
         raise FileNotFoundError(path)
 
-    ds = xr.open_dataset(
-        path,
-        engine="cfgrib",
-        backend_kwargs={"indexpath": ""},
-    )
+    grbs = None
+    grb = None
     try:
-        candidates = []
-        for name, data in ds.data_vars.items():
-            if getattr(data, "ndim", 0) >= 2:
-                candidates.append(name)
-        if not candidates:
-            raise RuntimeError(f"No 2-D variable found in {path}")
-
-        data = np.asarray(ds[candidates[0]].values, dtype=np.float32).copy()
+        grbs = pygrib.open(str(path))
+        grb = grbs.message(1)
+        data = np.array(grb.values, dtype=np.float32, copy=True)
     finally:
-        ds.close()
-        del ds
+        grb = None
+        if grbs is not None:
+            try:
+                grbs.close()
+            except Exception:
+                pass
+        grbs = None
         gc.collect()
 
     if data.ndim != 2:
@@ -846,4 +850,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        # Explicitly release Python references before interpreter teardown.
+        # This is intentionally here because the GRIB reader uses native
+        # eccodes/pygrib allocations.
+        gc.collect()
