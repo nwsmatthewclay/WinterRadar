@@ -26,7 +26,9 @@ from render import (  # noqa: E402
 )
 
 MAIN_VERSION = "9.1-rap-profile-phase"
-PROFILE_CHUNK_ROWS = 32
+# Diagnostic aggregation is 10x10. Keep profile chunks divisible by the
+# row aggregation factor so every chunk contributes to the diagnostic grid.
+PROFILE_CHUNK_ROWS = 40
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
 
@@ -90,6 +92,7 @@ def update_metadata(metadata_path: Path, lats: np.ndarray, lons: np.ndarray, mrm
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update({
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "grid_shape": [int(np.asarray(lats).shape[0]), int(np.asarray(lons).shape[-1] if np.asarray(lons).ndim > 1 else np.asarray(lons).shape[0])],
         "bounds": grid_bounds(lats, lons),
         "bounds_format": ["south", "west", "north", "east"],
         "main_version": MAIN_VERSION,
