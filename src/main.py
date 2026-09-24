@@ -25,8 +25,8 @@ from render import (  # noqa: E402
     write_metadata,
 )
 
-MAIN_VERSION = "9.1-rap-profile-phase"
-PROFILE_CHUNK_ROWS = 32
+MAIN_VERSION = "9.2-rap-profile-phase-diagnostics"
+PROFILE_CHUNK_ROWS = 40  # keep chunk boundaries aligned with the 10x diagnostic grid
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
 
@@ -239,7 +239,26 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         "mean_prob_ice_percent": float(np.mean(mean_ice)) if mean_ice else None,
     }
     diagnostics["precip_pixels"] = int(np.count_nonzero(np.isfinite(ref) & (ref >= 10.0)))
-    diagnostics["diagnostic_grid"] = {"width": int(diag_w), "height": int(diag_h), "downsample_factor": 10}
+    diagnostic_valid = np.isfinite(diag["rain"])
+    diagnostics["diagnostic_grid"] = {
+        "width": int(diag_w),
+        "height": int(diag_h),
+        "downsample_factor": 10,
+        "valid_cells": int(np.count_nonzero(diagnostic_valid)),
+        "total_cells": int(diagnostic_valid.size),
+        "valid_fraction": float(np.count_nonzero(diagnostic_valid) / max(diagnostic_valid.size, 1)),
+    }
+
+    # Record a warning rather than failing the phase engine.  A live scan can
+    # legitimately have no precipitating pixels, while a nonzero precipitation
+    # count with an empty diagnostic grid points to a sampling/grid problem.
+    if diagnostics["precip_pixels"] > 0 and not np.any(diagnostic_valid):
+        diagnostics["diagnostic_warning"] = (
+            "No valid phase diagnostic cells were produced despite precipitating "
+            "MRMS pixels; check chunk/grid alignment and RAP profile sampling."
+        )
+        print(f"  WARNING: {diagnostics['diagnostic_warning']}")
+
     return ClassificationResult(phase=phase, confidence=confidence, intensity=intensity), diagnostics, diag
 
 
