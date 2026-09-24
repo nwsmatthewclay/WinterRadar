@@ -23,8 +23,8 @@ from config import DATA_DIR
 RAP_FILTER_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_rap.pl"
 RAP_PROFILE_FILE = DATA_DIR / "RAP_profile_latest.grib2"
 
-LEFT_LON, RIGHT_LON = -82.0, -65.0
-BOTTOM_LAT, TOP_LAT = 37.0, 50.0
+LEFT_LON, RIGHT_LON = -130.0, -60.0
+BOTTOM_LAT, TOP_LAT = 20.0, 55.0
 PRESSURE_LEVELS = (
     1000, 975, 950, 925, 900, 875, 850, 825, 800, 775,
     750, 725, 700, 675, 650, 625, 600, 575, 550, 525, 500,
@@ -76,7 +76,7 @@ def download_rap_profile(valid_time_utc: str) -> Path:
         print(
             f"  RAP profile candidate {attempt_index}/7: "
             f"{cycle:%Y-%m-%d %H}Z F{fhr:02d} "
-            f"({LEFT_LON:g} to {RIGHT_LON:g}, {BOTTOM_LAT:g} to {TOP_LAT:g})",
+            f"({LEFT_LON:g} to {RIGHT_LON:g}, {BOTTOM_LAT:g} to {TOP_LAT:g}; full CONUS)",
             flush=True,
         )
         try:
@@ -405,7 +405,6 @@ def load_rap_profile(path: Path) -> dict:
         "_projected_y": hy.astype(np.float64),
         "_x_axis": x_axis,
         "_y_axis": y_axis,
-        "_transformer": transformer,
     }
 
     print("  RAP PROFILE READY", flush=True)
@@ -434,15 +433,12 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
     lat = np.asarray(lats, dtype=np.float64)
     lon = np.asarray(lons, dtype=np.float64)
     if lat.ndim == 1:
-        # pyproj requires X and Y to have identical shapes. A (Ny,1) latitude
-        # array and (1,Nx) longitude array do not broadcast inside
-        # Transformer.transform(), so explicitly build the MRMS chunk grid.
-        lat2, lon2 = np.meshgrid(lat, lon, indexing="ij")
+        lat2, lon2 = lat[:, None], lon[None, :]
     else:
         lat2, lon2 = lat, lon
 
     # Reuse cached RAP projection coordinates.
-    transformer = profile.get("_transformer") or _make_transformer(profile["projection"])
+    transformer = _make_transformer(profile["projection"])
     hx = np.asarray(profile.get("_projected_x"), dtype=np.float64)
     hy = np.asarray(profile.get("_projected_y"), dtype=np.float64)
     x_axis = np.asarray(profile.get("_x_axis"), dtype=np.float64)
