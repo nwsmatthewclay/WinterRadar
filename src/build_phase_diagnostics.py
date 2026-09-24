@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Build compact QC products for the RAP/Modified-Bourgouin phase engine.
+"""Build compact QC products for the HRRR/Modified-Bourgouin phase engine.
 
 Inputs are written by src/main.py:
   outputs/phase_probabilities.npz
@@ -77,19 +77,25 @@ def save_probability_layer(data: dict[str, np.ndarray], path: Path) -> None:
 
 def build_panel(title: str, arr: np.ndarray, kind: str, size: tuple[int, int]) -> Image.Image:
     w, h = size
+    valid = np.isfinite(arr)
+
     if kind == "prob":
         color = COLORS[title.lower().replace(" ", "_")]
-        rgb = probability_rgb(arr, color)
         unit = "%"
+        rgb = probability_rgb(arr, color) if np.any(valid) else np.full((*arr.shape, 3), 232, dtype=np.uint8)
     else:
-        vmax = 250.0 if "Melting" in title else 150.0
-        rgb = energy_rgb(arr, vmax)
         unit = "J/kg"
+        if np.any(valid):
+            vmax = 250.0 if "Melting" in title else 150.0
+            rgb = energy_rgb(arr, vmax)
+        else:
+            rgb = np.full((*arr.shape, 3), 232, dtype=np.uint8)
 
-    img = Image.fromarray(rgb, "RGB").resize((w, h), Image.Resampling.BILINEAR)
+    # Keep the compact diagnostic grid crisp when enlarged for the dashboard.
+    img = Image.fromarray(rgb, "RGB").resize((w, h), Image.Resampling.NEAREST)
     d = ImageDraw.Draw(img, "RGBA")
     d.rectangle((0, 0, w, 34), fill=(255, 255, 255, 225))
-    valid = np.isfinite(arr)
+
     if np.any(valid):
         mn = float(np.nanmin(arr))
         mx = float(np.nanmax(arr))
@@ -97,6 +103,9 @@ def build_panel(title: str, arr: np.ndarray, kind: str, size: tuple[int, int]) -
         text = f"{title}   mean {mean:.1f}{unit}   max {mx:.1f}{unit}"
     else:
         text = f"{title}   no valid data"
+        d.text((w // 2, h // 2), "No valid data", fill=(110, 120, 130, 255),
+               font=font(20), anchor="mm")
+
     d.text((9, 9), text, fill=(25, 35, 45, 255), font=font(14))
     return img
 
@@ -151,9 +160,7 @@ def main() -> None:
         "status": "ok",
         "engine": meta.get("phase_diagnostics", {}).get("engine", "unknown"),
         "phase_status": meta.get("phase_status", "unknown"),
-        "rap_profile_file": meta.get("phase_diagnostics", {}).get("rap_profile_file"),
-        "rap_valid_time_utc": meta.get("phase_diagnostics", {}).get("rap_valid_time_utc"),
-        "rap_mrms_time_offset_minutes": meta.get("phase_diagnostics", {}).get("rap_mrms_time_offset_minutes"),
+        "hrrr_profile_file": meta.get("phase_diagnostics", {}).get("hrrr_profile_file"),
         "pressure_levels_hpa": meta.get("phase_diagnostics", {}).get("pressure_levels_hpa", []),
         "diagnostic_grid": {"width": int(data["rain"].shape[1]), "height": int(data["rain"].shape[0])},
         "mean_probability_percent": {},
