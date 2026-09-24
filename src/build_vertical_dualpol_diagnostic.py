@@ -1,37 +1,24 @@
 #!/usr/bin/env python3
 """
-WinterRadar vertical dual-pol diagnostic.
+WinterRadar winter-phase diagnostic.
 
-Purpose:
-    Build a diagnostic image from MRMS MergedRhoHV and MergedZdr
-    at 0.50 through 4.00 km without retaining all 16 full-resolution
-    arrays in memory.
+This is a diagnostic product only. It does NOT perform the final
+precipitation-type classification.
 
-Why this version exists:
-    The previous implementation successfully wrote the PNG and NPZ,
-    but then aborted with:
+The earlier implementation loaded the complete 3500 x 7000 RHOHV and
+ZDR fields at all eight vertical levels at once. That produced a native
+memory crash after the diagnostic image was written.
 
-        double free or corruption (!prev)
-        exit code 134
-
-    The previous process retained:
-        RHOHV shape = (8, 3500, 7000)
-        ZDR   shape = (8, 3500, 7000)
-
-    That is a very large native-memory workload for an Actions runner.
-    This implementation reads each GRIB file individually with pygrib,
-    copies the values into a NumPy array, creates only the reduced
-    diagnostic data needed for plotting, closes the GRIB handle, and
-    releases the array before moving to the next file.
+This version:
+    * Reads one GRIB field at a time with pygrib.
+    * Explicitly closes every GRIB handle.
+    * Downsamples only the arrays needed for plotting.
+    * Does not retain sixteen full-resolution vertical arrays.
+    * Keeps the diagnostic focused on the fields used by the winter mask.
 
 Outputs:
-    outputs/vertical_dualpol_diagnostic.png
-    outputs/vertical_dualpol_diagnostic.json
-
-Optional:
-    outputs/vertical_dualpol.npz contains only reduced-resolution
-    arrays suitable for research/inspection, not the original
-    3500 x 7000 full-resolution fields.
+    outputs/winter_mask_diagnostics.png
+    outputs/winter_mask_diagnostics.json
 """
 
 from __future__ import annotations
@@ -41,11 +28,14 @@ import json
 import os
 from pathlib import Path
 
-# Set native-library thread limits BEFORE importing NumPy/Matplotlib.
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+# Native-thread limits must be set before importing NumPy/Matplotlib.
+for key in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(key, "1")
 
 import matplotlib
 
@@ -66,6 +56,46 @@ OUTPUT_DIR.mkdir(
     exist_ok=True,
 )
 
+
+FIELDS = {
+    "Reflectivity":
+        DATA_DIR /
+        "MRMS_ReflectivityAtLowestAltitude.latest.grib2",
+
+    "Reflectivity_0C":
+        DATA_DIR /
+        "MRMS_Reflectivity_0C.latest.grib2",
+
+    "PrecipFlag":
+        DATA_DIR /
+        "MRMS_PrecipFlag.latest.grib2",
+
+    "PrecipRate":
+        DATA_DIR /
+        "MRMS_PrecipRate.latest.grib2",
+
+    "BrightBandTop":
+        DATA_DIR /
+        "MRMS_BrightBandTopHeight.latest.grib2",
+
+    "BrightBandBottom":
+        DATA_DIR /
+        "MRMS_BrightBandBottomHeight.latest.grib2",
+
+    "SurfaceTemp":
+        DATA_DIR /
+        "MRMS_Model_SurfaceTemp.latest.grib2",
+
+    "WetBulbTemp":
+        DATA_DIR /
+        "MRMS_Model_WetBulbTemp.latest.grib2",
+
+    "ZeroCHeight":
+        DATA_DIR /
+        "MRMS_Model_0degC_Height.latest.grib2",
+}
+
+
 LEVELS_KM = [
     0.50,
     1.00,
@@ -78,14 +108,26 @@ LEVELS_KM = [
 ]
 
 
+INVALID = {
+    "Reflectivity": (-999.0, -99.0, -3.0),
+    "Reflectivity_0C": (-999.0, -99.0, -3.0),
+    "PrecipFlag": (-999.0, -99.0, -3.0),
+    "PrecipRate": (-999.0, -99.0, -3.0),
+    "BrightBandTop": (-999.0, -99.0, -3.0),
+    "BrightBandBottom": (-999.0, -99.0, -3.0),
+    "SurfaceTemp": (-999.0, -99.0, -3.0),
+    "WetBulbTemp": (-999.0, -99.0, -3.0),
+    "ZeroCHeight": (-999.0, -99.0, -3.0),
+}
+
+
 def level_text(level: float) -> str:
     return f"{float(level):05.2f}"
 
 
-def load_one_grib(path: Path):
+def load_grib(path: Path) -> tuple[np.ndarray, str, str]:
     """
-    Read one GRIB message, copy the values into NumPy memory, and
-    explicitly close the pygrib handle before returning.
+    Read one GRIB message and close the file before returning.
     """
 
     if not path.exists():
@@ -98,7 +140,7 @@ def load_one_grib(path: Path):
         grbs = pygrib.open(str(path))
         grb = grbs.message(1)
 
-        values = np.array(
+        data = np.array(
             grb.values,
             dtype=np.float32,
             copy=True,
@@ -116,7 +158,7 @@ def load_one_grib(path: Path):
             "",
         ) or ""
 
-        return values, units, name
+        return data, units, name
 
     finally:
 
@@ -131,59 +173,32 @@ def load_one_grib(path: Path):
         gc.collect()
 
 
-def clean(data: np.ndarray) -> np.ndarray:
-    """
-    Convert MRMS missing/sentinel values to NaN.
-    """
+def clean(name: str, data: np.ndarray) -> np.ndarray:
 
     data = np.asarray(
         data,
         dtype=np.float32,
     )
 
-    invalid = (
-        ~np.isfinite(data)
-        | np.isclose(data, -999.0)
-        | np.isclose(data, -99.0)
-        | np.isclose(data, -3.0)
-    )
+    bad = ~np.isfinite(data)
 
-    data[invalid] = np.nan
+    for value in INVALID.get(name, ()):
+
+        bad |= np.isclose(
+            data,
+            value,
+        )
+
+    data[bad] = np.nan
 
     return data
 
 
-def finite_stats(data: np.ndarray) -> dict:
-
-    finite = data[np.isfinite(data)]
-
-    if finite.size == 0:
-        return {
-            "count": 0,
-            "min": None,
-            "p05": None,
-            "median": None,
-            "p95": None,
-            "max": None,
-        }
-
-    return {
-        "count": int(finite.size),
-        "min": float(np.min(finite)),
-        "p05": float(np.percentile(finite, 5)),
-        "median": float(np.median(finite)),
-        "p95": float(np.percentile(finite, 95)),
-        "max": float(np.max(finite)),
-    }
-
-
-def downsample(data: np.ndarray, target_rows=700, target_cols=1000):
-    """
-    Produce a display-only view.
-
-    The full-resolution source array is immediately eligible for
-    garbage collection after this function returns.
-    """
+def downsample(
+    data: np.ndarray,
+    target_rows: int = 700,
+    target_cols: int = 1000,
+) -> np.ndarray:
 
     rows, cols = data.shape
 
@@ -197,315 +212,559 @@ def downsample(data: np.ndarray, target_rows=700, target_cols=1000):
         int(np.ceil(cols / target_cols)),
     )
 
-    return data[
-        ::row_step,
-        ::col_step
-    ]
-
-
-def mixed_phase_signature(
-    rhohv: np.ndarray,
-    zdr: np.ndarray,
-) -> np.ndarray:
-    """
-    Conservative diagnostic signature only.
-
-    This is NOT the final precipitation-type classifier.
-
-    It flags locations with:
-        - valid RHOHV below approximately 0.98
-        - valid ZDR in a modest positive range
-
-    This preserves the purpose of the existing diagnostic: locating
-    areas that deserve additional winter-phase investigation.
-    """
-
-    return (
-        np.isfinite(rhohv)
-        &
-        np.isfinite(zdr)
-        &
-        (rhohv < 0.98)
-        &
-        (zdr >= -1.0)
-        &
-        (zdr <= 4.0)
+    return np.array(
+        data[::row_step, ::col_step],
+        dtype=np.float32,
+        copy=True,
     )
 
 
-def process_level(level: float):
-    text = level_text(level)
+def stats(data: np.ndarray) -> dict:
 
-    rho_path = (
-        DUALPOL_DIR
-        / f"{text}km"
-        / f"MRMS_MergedRhoHV_{text}.latest.grib2"
-    )
+    finite = data[np.isfinite(data)]
 
-    zdr_path = (
-        DUALPOL_DIR
-        / f"{text}km"
-        / f"MRMS_MergedZdr_{text}.latest.grib2"
-    )
+    if finite.size == 0:
 
-    print(
-        f"Loading MergedRhoHV @ {level:.2f} km"
-    )
+        return {
+            "count": 0,
+            "min": None,
+            "p05": None,
+            "p25": None,
+            "median": None,
+            "p75": None,
+            "p95": None,
+            "max": None,
+        }
 
-    rho, rho_units, rho_name = load_one_grib(
-        rho_path
-    )
-
-    rho = clean(rho)
-
-    print(
-        f"  Shape: {rho.shape}"
-    )
-
-    rho_stats = finite_stats(rho)
-
-    print(
-        f"  Valid: {rho_stats['count']:,}"
-    )
-
-    print(
-        f"  Min: {rho_stats['min']}"
-    )
-
-    print(
-        f"  Max: {rho_stats['max']}"
-    )
-
-    rho_display = downsample(rho)
-
-    print(
-        f"  Loading MergedZdr @ {level:.2f} km"
-    )
-
-    zdr, zdr_units, zdr_name = load_one_grib(
-        zdr_path
-    )
-
-    zdr = clean(zdr)
-
-    print(
-        f"  Shape: {zdr.shape}"
-    )
-
-    zdr_stats = finite_stats(zdr)
-
-    print(
-        f"  Valid: {zdr_stats['count']:,}"
-    )
-
-    print(
-        f"  Min: {zdr_stats['min']}"
-    )
-
-    print(
-        f"  Max: {zdr_stats['max']}"
-    )
-
-    zdr_display = downsample(zdr)
-
-    mixed = mixed_phase_signature(
-        rho,
-        zdr,
-    )
-
-    mixed_count = int(
-        np.count_nonzero(mixed)
-    )
-
-    # Downsample the diagnostic signature for plotting.
-    mixed_display = downsample(
-        mixed.astype(np.uint8)
-    ).astype(bool)
-
-    # Copy the display arrays. Then the original full-resolution arrays
-    # can be released before moving to the next altitude.
-    output = {
-        "rho_display": np.array(
-            rho_display,
-            dtype=np.float32,
-            copy=True,
-        ),
-        "zdr_display": np.array(
-            zdr_display,
-            dtype=np.float32,
-            copy=True,
-        ),
-        "mixed_display": np.array(
-            mixed_display,
-            dtype=bool,
-            copy=True,
-        ),
-        "rho_stats": rho_stats,
-        "zdr_stats": zdr_stats,
-        "mixed_count": mixed_count,
-        "rho_units": rho_units,
-        "zdr_units": zdr_units,
-        "rho_name": rho_name,
-        "zdr_name": zdr_name,
-        "shape": list(rho.shape),
+    return {
+        "count": int(finite.size),
+        "min": float(np.min(finite)),
+        "p05": float(np.percentile(finite, 5)),
+        "p25": float(np.percentile(finite, 25)),
+        "median": float(np.median(finite)),
+        "p75": float(np.percentile(finite, 75)),
+        "p95": float(np.percentile(finite, 95)),
+        "max": float(np.max(finite)),
     }
 
-    del rho
-    del zdr
-    del mixed
-    del rho_display
-    del zdr_display
-    del mixed_display
 
-    gc.collect()
+def load_main_fields():
 
-    return output
+    fields = {}
+    metadata = {}
+
+    print()
+    print("=" * 72)
+    print("WINTERRADAR MRMS FIELD DIAGNOSTIC")
+    print("=" * 72)
+
+    for name, path in FIELDS.items():
+
+        print()
+        print("Loading", name)
+        print(" ", path)
+
+        try:
+
+            data, units, grib_name = load_grib(
+                path
+            )
+
+            data = clean(
+                name,
+                data
+            )
+
+            fields[name] = data
+
+            field_stats = stats(
+                data
+            )
+
+            metadata[name] = {
+                "grib_name": grib_name,
+                "units": units,
+                "shape": list(data.shape),
+                "statistics": field_stats,
+            }
+
+            print(
+                f"  Shape: {data.shape}"
+            )
+
+            print(
+                f"  Valid: {field_stats['count']:,}"
+            )
+
+            print(
+                f"  Min: {field_stats['min']}"
+            )
+
+            print(
+                f"  Max: {field_stats['max']}"
+            )
+
+        except Exception as exc:
+
+            print(
+                f"  ERROR: {exc}"
+            )
+
+    return fields, metadata
 
 
-def save_reduced_npz(results: dict):
+def vertical_signature():
+
     """
-    Save reduced display-resolution arrays only.
+    Build only a low-memory vertical summary.
 
-    This replaces the previous full-resolution 16-array NPZ, which
-    unnecessarily retained/serialized a huge amount of data.
+    We do NOT retain the full RHOHV/ZDR volume.
+
+    The returned array is a reduced-resolution fraction of the eight
+    levels meeting a conservative mixed-phase diagnostic signature.
     """
 
-    arrays = {}
+    print()
+    print("=" * 72)
+    print("VERTICAL DUAL-POL DIAGNOSTIC")
+    print("=" * 72)
 
-    for level, result in results.items():
+    fraction = None
+    level_summaries = {}
 
-        key = f"{level:.2f}".replace(".", "_")
+    for level in LEVELS_KM:
 
-        arrays[
-            f"rhohv_{key}"
-        ] = result["rho_display"]
+        text = level_text(level)
 
-        arrays[
-            f"zdr_{key}"
-        ] = result["zdr_display"]
-
-        arrays[
-            f"mixed_{key}"
-        ] = result["mixed_display"]
-
-    np.savez_compressed(
-        OUTPUT_DIR / "vertical_dualpol.npz",
-        **arrays,
-    )
-
-    del arrays
-
-    gc.collect()
-
-
-def make_diagnostic_image(results: dict):
-
-    levels = list(
-        results.keys()
-    )
-
-    # Use the lowest level for the two full-field diagnostic maps.
-    low = levels[0]
-
-    rho_low = results[
-        low
-    ]["rho_display"]
-
-    zdr_low = results[
-        low
-    ]["zdr_display"]
-
-    # Vertical fraction of levels showing the mixed signature.
-    mixed_fraction = np.zeros_like(
-        results[low]["mixed_display"],
-        dtype=np.float32,
-    )
-
-    for level in levels:
-        mixed_fraction += results[
-            level
-        ]["mixed_display"].astype(
-            np.float32
+        rho_path = (
+            DUALPOL_DIR
+            / f"{text}km"
+            / f"MRMS_MergedRhoHV_{text}.latest.grib2"
         )
 
-    mixed_fraction /= max(
-        len(levels),
-        1,
+        zdr_path = (
+            DUALPOL_DIR
+            / f"{text}km"
+            / f"MRMS_MergedZdr_{text}.latest.grib2"
+        )
+
+        print(
+            f"\nLoading RHOHV @ {level:.2f} km"
+        )
+
+        try:
+
+            rho, rho_units, rho_name = load_grib(
+                rho_path
+            )
+
+            rho = clean(
+                "RHOHV",
+                rho
+            )
+
+            print(
+                f"  Valid: {np.count_nonzero(np.isfinite(rho)):,}"
+            )
+
+            print(
+                f"  Shape: {rho.shape}"
+            )
+
+            rho_stats = stats(
+                rho
+            )
+
+        except Exception as exc:
+
+            print(
+                f"  ERROR loading RHOHV: {exc}"
+            )
+
+            rho = None
+
+            rho_stats = {
+                "count": 0,
+                "min": None,
+                "p05": None,
+                "p25": None,
+                "median": None,
+                "p75": None,
+                "p95": None,
+                "max": None,
+            }
+
+            rho_units = ""
+            rho_name = ""
+
+        print(
+            f"Loading ZDR @ {level:.2f} km"
+        )
+
+        try:
+
+            zdr, zdr_units, zdr_name = load_grib(
+                zdr_path
+            )
+
+            zdr = clean(
+                "ZDR",
+                zdr
+            )
+
+            print(
+                f"  Valid: {np.count_nonzero(np.isfinite(zdr)):,}"
+            )
+
+            print(
+                f"  Shape: {zdr.shape}"
+            )
+
+            zdr_stats = stats(
+                zdr
+            )
+
+        except Exception as exc:
+
+            print(
+                f"  ERROR loading ZDR: {exc}"
+            )
+
+            zdr = None
+
+            zdr_stats = {
+                "count": 0,
+                "min": None,
+                "p05": None,
+                "p25": None,
+                "median": None,
+                "p75": None,
+                "p95": None,
+                "max": None,
+            }
+
+            zdr_units = ""
+            zdr_name = ""
+
+        if (
+            rho is not None and
+            zdr is not None
+        ):
+
+            signature = (
+                np.isfinite(rho)
+                &
+                np.isfinite(zdr)
+                &
+                (rho < 0.98)
+                &
+                (zdr >= -1.0)
+                &
+                (zdr <= 4.0)
+            )
+
+            signature_display = downsample(
+                signature.astype(np.float32)
+            )
+
+            if fraction is None:
+
+                fraction = np.zeros_like(
+                    signature_display,
+                    dtype=np.float32,
+                )
+
+            fraction += signature_display
+
+            level_summaries[
+                f"{level:.2f}"
+            ] = {
+                "rhohv": rho_stats,
+                "zdr": zdr_stats,
+                "mixed_phase_signature_pixels":
+                    int(np.count_nonzero(signature)),
+            }
+
+            del signature
+            del signature_display
+
+        else:
+
+            level_summaries[
+                f"{level:.2f}"
+            ] = {
+                "rhohv": rho_stats,
+                "zdr": zdr_stats,
+                "mixed_phase_signature_pixels": 0,
+            }
+
+        del rho
+        del zdr
+
+        gc.collect()
+
+    if fraction is None:
+
+        return (
+            np.zeros(
+                (350, 500),
+                dtype=np.float32,
+            ),
+            level_summaries,
+        )
+
+    fraction /= float(
+        len(LEVELS_KM)
     )
+
+    return (
+        fraction,
+        level_summaries,
+    )
+
+
+def make_diagnostic_image(
+    fields,
+    vertical_fraction,
+):
 
     fig, axes = plt.subplots(
         2,
-        2,
-        figsize=(14, 10),
+        3,
+        figsize=(15, 9),
         constrained_layout=True,
     )
 
     # ------------------------------------------------------------
-    # RHOHV
+    # Reflectivity
     # ------------------------------------------------------------
 
     ax = axes[0, 0]
 
-    im = ax.imshow(
-        rho_low,
-        origin="upper",
-        vmin=0.80,
-        vmax=1.02,
-        interpolation="nearest",
-        aspect="auto",
-    )
+    if "Reflectivity" in fields:
+
+        data = downsample(
+            fields["Reflectivity"]
+        )
+
+        finite = data[
+            np.isfinite(data)
+        ]
+
+        if finite.size:
+
+            im = ax.imshow(
+                data,
+                origin="upper",
+                vmin=float(
+                    np.percentile(
+                        finite,
+                        2,
+                    )
+                ),
+                vmax=float(
+                    np.percentile(
+                        finite,
+                        98,
+                    )
+                ),
+                interpolation="nearest",
+                aspect="auto",
+            )
+
+            fig.colorbar(
+                im,
+                ax=ax,
+                shrink=0.78,
+                label="dBZ",
+            )
 
     ax.set_title(
-        f"RHOHV {low:.2f} km"
-    )
-
-    ax.set_xlabel("Grid X")
-    ax.set_ylabel("Grid Y")
-
-    fig.colorbar(
-        im,
-        ax=ax,
-        shrink=0.82,
-        label="RHOHV",
+        "MRMS Reflectivity"
     )
 
     # ------------------------------------------------------------
-    # ZDR
+    # Precipitation flag
     # ------------------------------------------------------------
 
     ax = axes[0, 1]
 
-    im = ax.imshow(
-        zdr_low,
-        origin="upper",
-        vmin=-2,
-        vmax=6,
-        interpolation="nearest",
-        aspect="auto",
-    )
+    if "PrecipFlag" in fields:
+
+        data = downsample(
+            fields["PrecipFlag"]
+        )
+
+        im = ax.imshow(
+            data,
+            origin="upper",
+            vmin=0,
+            vmax=96,
+            interpolation="nearest",
+            aspect="auto",
+        )
+
+        fig.colorbar(
+            im,
+            ax=ax,
+            shrink=0.78,
+            label="Flag",
+        )
 
     ax.set_title(
-        f"ZDR {low:.2f} km"
-    )
-
-    ax.set_xlabel("Grid X")
-    ax.set_ylabel("Grid Y")
-
-    fig.colorbar(
-        im,
-        ax=ax,
-        shrink=0.82,
-        label="dB",
+        "MRMS Precipitation Flag"
     )
 
     # ------------------------------------------------------------
-    # Vertical mixed-signature fraction
+    # Precipitation rate
+    # ------------------------------------------------------------
+
+    ax = axes[0, 2]
+
+    if "PrecipRate" in fields:
+
+        data = downsample(
+            fields["PrecipRate"]
+        )
+
+        finite = data[
+            np.isfinite(data)
+        ]
+
+        if finite.size:
+
+            im = ax.imshow(
+                data,
+                origin="upper",
+                vmin=0,
+                vmax=max(
+                    1.0,
+                    float(
+                        np.percentile(
+                            finite,
+                            99,
+                        )
+                    ),
+                ),
+                interpolation="nearest",
+                aspect="auto",
+            )
+
+            fig.colorbar(
+                im,
+                ax=ax,
+                shrink=0.78,
+                label="Rate",
+            )
+
+    ax.set_title(
+        "MRMS Precipitation Rate"
+    )
+
+    # ------------------------------------------------------------
+    # Wet bulb
     # ------------------------------------------------------------
 
     ax = axes[1, 0]
 
+    if "WetBulbTemp" in fields:
+
+        data = downsample(
+            fields["WetBulbTemp"]
+        )
+
+        finite = data[
+            np.isfinite(data)
+        ]
+
+        if finite.size:
+
+            im = ax.imshow(
+                data,
+                origin="upper",
+                vmin=float(
+                    np.percentile(
+                        finite,
+                        1,
+                    )
+                ),
+                vmax=float(
+                    np.percentile(
+                        finite,
+                        99,
+                    )
+                ),
+                interpolation="nearest",
+                aspect="auto",
+            )
+
+            fig.colorbar(
+                im,
+                ax=ax,
+                shrink=0.78,
+                label="°C",
+            )
+
+    ax.set_title(
+        "MRMS Wet-Bulb Temperature"
+    )
+
+    # ------------------------------------------------------------
+    # Zero C height
+    # ------------------------------------------------------------
+
+    ax = axes[1, 1]
+
+    if "ZeroCHeight" in fields:
+
+        data = downsample(
+            fields["ZeroCHeight"]
+        )
+
+        finite = data[
+            np.isfinite(data)
+        ]
+
+        if finite.size:
+
+            im = ax.imshow(
+                data,
+                origin="upper",
+                vmin=float(
+                    np.percentile(
+                        finite,
+                        1,
+                    )
+                ),
+                vmax=float(
+                    np.percentile(
+                        finite,
+                        99,
+                    )
+                ),
+                interpolation="nearest",
+                aspect="auto",
+            )
+
+            fig.colorbar(
+                im,
+                ax=ax,
+                shrink=0.78,
+                label="m MSL",
+            )
+
+    ax.set_title(
+        "MRMS 0°C Height"
+    )
+
+    # ------------------------------------------------------------
+    # Vertical signature
+    # ------------------------------------------------------------
+
+    ax = axes[1, 2]
+
     im = ax.imshow(
-        mixed_fraction,
+        vertical_fraction,
         origin="upper",
         vmin=0,
         vmax=1,
@@ -513,65 +772,26 @@ def make_diagnostic_image(results: dict):
         aspect="auto",
     )
 
-    ax.set_title(
-        "Vertical Mixed-Phase Signature Fraction"
-    )
-
-    ax.set_xlabel("Grid X")
-    ax.set_ylabel("Grid Y")
-
     fig.colorbar(
         im,
         ax=ax,
-        shrink=0.82,
+        shrink=0.78,
         label="Fraction of levels",
     )
 
-    # ------------------------------------------------------------
-    # Level summary
-    # ------------------------------------------------------------
-
-    ax = axes[1, 1]
-
-    mixed_counts = [
-        results[level][
-            "mixed_count"
-        ]
-        for level in levels
-    ]
-
-    ax.plot(
-        levels,
-        mixed_counts,
-        marker="o",
-    )
-
     ax.set_title(
-        "Mixed-Phase Signature Pixel Count by Height"
-    )
-
-    ax.set_xlabel(
-        "Height (km)"
-    )
-
-    ax.set_ylabel(
-        "Pixels"
-    )
-
-    ax.grid(
-        True,
-        alpha=0.25,
+        "Vertical Mixed-Phase Signature"
     )
 
     fig.suptitle(
-        "WinterRadar Vertical Dual-Pol Diagnostic",
+        "WinterRadar Precipitation-Phase Diagnostics",
         fontsize=17,
         fontweight="bold",
     )
 
     output = (
         OUTPUT_DIR /
-        "vertical_dualpol_diagnostic.png"
+        "winter_mask_diagnostics.png"
     )
 
     fig.savefig(
@@ -583,48 +803,55 @@ def make_diagnostic_image(results: dict):
 
     plt.close(fig)
 
-    del mixed_fraction
-    del rho_low
-    del zdr_low
+    del fig
+    del axes
 
     gc.collect()
 
     print(
-        f"Wrote {output}"
+        f"Diagnostic image written: {output}"
     )
 
 
-def write_json(results: dict):
+def write_json(
+    fields,
+    metadata,
+    level_summaries,
+):
 
     summary = {
         "description": (
-            "Vertical MRMS RHOHV/ZDR diagnostic. "
-            "Each GRIB field is processed individually and "
-            "released before the next level is loaded. "
-            "The mixed-phase signature is diagnostic only and "
-            "is not a final precipitation-type classification."
+            "WinterRadar precipitation-phase diagnostic. "
+            "No final phase classification is performed."
         ),
-        "levels_km": LEVELS_KM,
-        "levels": {},
+        "mask_philosophy": {
+            "rain": "transparent",
+            "winter_precipitation": "masked",
+            "mixed_precipitation": "masked",
+            "no_precipitation": "transparent",
+        },
+        "fields": {},
+        "vertical_dualpol": {
+            "levels_km": LEVELS_KM,
+            "levels": level_summaries,
+        },
     }
 
-    for level in LEVELS_KM:
+    for name, data in fields.items():
 
-        result = results[level]
-
-        summary["levels"][
-            f"{level:.2f}"
-        ] = {
-            "shape": result["shape"],
-            "rhohv": result["rho_stats"],
-            "zdr": result["zdr_stats"],
-            "mixed_phase_signature_pixels":
-                result["mixed_count"],
+        summary["fields"][name] = {
+            "shape": list(data.shape),
+            "statistics": stats(data),
+            "units":
+                metadata[name].get(
+                    "units",
+                    "",
+                ),
         }
 
     output = (
         OUTPUT_DIR /
-        "vertical_dualpol_diagnostic.json"
+        "winter_mask_diagnostics.json"
     )
 
     output.write_text(
@@ -636,7 +863,7 @@ def write_json(results: dict):
     )
 
     print(
-        f"Wrote {output}"
+        f"Diagnostic JSON written: {output}"
     )
 
 
@@ -644,63 +871,48 @@ def main():
 
     print()
     print("=" * 72)
-    print("BUILDING VERTICAL DUAL-POL DIAGNOSTIC")
+    print("BUILDING WINTER PRECIPITATION DIAGNOSTIC")
     print("=" * 72)
-    print()
 
-    results = {}
+    fields = {}
+    metadata = {}
+    level_summaries = {}
 
     try:
 
-        for level in LEVELS_KM:
+        fields, metadata = load_main_fields()
 
-            results[level] = process_level(
-                level
-            )
-
-        print()
-        print("=" * 72)
-        print("VERTICAL DIAGNOSTIC SUMMARY")
-        print("=" * 72)
-
-        print(
-            "Levels:",
-            ", ".join(
-                f"{level:.2f} km"
-                for level in LEVELS_KM
-            )
-        )
-
-        total_signature = sum(
-            results[level]["mixed_count"]
-            for level in LEVELS_KM
-        )
-
-        print(
-            "Total level-signature pixels:",
-            f"{total_signature:,}"
+        vertical_fraction, level_summaries = (
+            vertical_signature()
         )
 
         make_diagnostic_image(
-            results
-        )
-
-        save_reduced_npz(
-            results
+            fields,
+            vertical_fraction,
         )
 
         write_json(
-            results
+            fields,
+            metadata,
+            level_summaries,
         )
 
         print()
         print("=" * 72)
-        print("VERTICAL DUAL-POL DIAGNOSTIC COMPLETE")
+        print("WINTERRADAR DIAGNOSTIC COMPLETE")
         print("=" * 72)
 
     finally:
 
-        results.clear()
+        fields.clear()
+        metadata.clear()
+        level_summaries.clear()
+
+        try:
+            del vertical_fraction
+        except Exception:
+            pass
+
         gc.collect()
 
 
