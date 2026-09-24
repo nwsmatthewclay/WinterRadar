@@ -96,29 +96,6 @@ jobs:
           set -euo pipefail
           python -u src/build_phase_diagnostics.py
 
-      - name: Project browser MRMS rasters to Web Mercator
-        run: |
-          set -euo pipefail
-          python -u src/project_mrms_webmercator.py
-
-      # Archive history after the live Web Mercator products are complete.
-      # History is deliberately non-critical so it can never take the live
-      # radar/Pages product offline. The collector discovers any timestamped
-      # MRMS frames missed while this workflow was queued or running.
-      - name: Archive 8-hour full-CONUS MRMS history
-        continue-on-error: true
-        working-directory: src
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -euo pipefail
-          python -u archive_mrms_history.py
-
       # Diagnostics are deliberately OUTSIDE the critical live-radar path.
       # They can fail without taking the current MRMS radar offline.
       - name: Download optional diagnostic 2-D fields
@@ -232,16 +209,28 @@ jobs:
               d.text((60, 300), label, fill=(80, 85, 90))
               img.save(path, optimize=True)
 
+          def map_placeholder(name):
+              # Map rasters must have the same full native MRMS geometry even
+              # when an optional research product fails. A small 1200x675
+              # diagnostic placeholder is not geographically valid and can
+              # trigger a browser decode/extent problem. Keep the fallback
+              # completely transparent but full size so Leaflet can load it
+              # safely without implying data that do not exist.
+              path = out / name
+              if path.exists() and path.stat().st_size > 0:
+                  return
+              img = Image.new("RGBA", (7000, 3500), (0, 0, 0, 0))
+              img.save(path, optimize=True)
+
           placeholder("mrms_diagnostics.png", "MRMS diagnostic temporarily unavailable")
           placeholder("mrms_vertical_dualpol.png", "MRMS vertical dual-pol diagnostic temporarily unavailable")
+          map_placeholder("phase_radar_fusion_overlay.png")
+          map_placeholder("phase_agreement_overlay.png")
+          map_placeholder("winter_precip_type.png")
+          map_placeholder("winter_phase_mask.png")
           placeholder("phase_radar_fusion.png", "Radar phase evidence fusion temporarily unavailable")
-          placeholder("phase_radar_fusion_overlay.png", "Radar phase evidence overlay temporarily unavailable")
-          placeholder("phase_radar_fusion_overlay_web.png", "Radar phase evidence Web Mercator overlay temporarily unavailable")
           placeholder("phase_agreement.png", "Phase agreement diagnostic temporarily unavailable")
-          placeholder("phase_agreement_overlay.png", "Phase agreement overlay temporarily unavailable")
-          placeholder("phase_agreement_overlay_web.png", "Phase agreement Web Mercator overlay temporarily unavailable")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
-          placeholder("winter_precip_type.png", "Precipitation-type composite temporarily unavailable")
           placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
           placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
 
@@ -253,6 +242,86 @@ jobs:
                       encoding="utf-8",
                   )
           PY
+
+      # Build every browser-facing national raster only after all scientific
+      # products have been generated. This prevents stale/partial Web Mercator
+      # copies from surviving from an earlier pipeline stage. Each source also
+      # gets a lossless WebP browser copy; the viewer uses WebP for the live
+      # raster overlays because it is smaller and reliably decodes in Chrome.
+      - name: Project all browser rasters to Web Mercator
+        run: |
+          set -euo pipefail
+          python -u src/project_mrms_webmercator.py
+
+      - name: Validate national browser raster assets
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json
+
+          out = Path("outputs")
+          names = [
+              "mrms_current_web.png",
+              "mrms_current_web.webp",
+              "winter_phase_mask_web.png",
+              "winter_phase_mask_web.webp",
+              "winter_precip_type_web.png",
+              "winter_precip_type_web.webp",
+              "phase_radar_fusion_overlay_web.png",
+              "phase_radar_fusion_overlay_web.webp",
+              "phase_agreement_overlay_web.png",
+              "phase_agreement_overlay_web.webp",
+          ]
+
+          sizes = {}
+          for name in names:
+              path = out / name
+              if not path.exists() or path.stat().st_size == 0:
+                  raise SystemExit(f"ERROR: missing browser raster: {path}")
+              with Image.open(path) as im:
+                  im.load()
+                  sizes[name] = {
+                      "size": list(im.size),
+                      "mode": im.mode,
+                      "format": im.format,
+                  }
+                  if im.width < 3000 or im.height < 1500:
+                      raise SystemExit(f"ERROR: browser raster is unexpectedly small: {name} {im.size}")
+                  if im.mode not in ("RGBA", "RGB"):
+                      raise SystemExit(f"ERROR: unexpected image mode for {name}: {im.mode}")
+
+          metadata = json.loads((out / "mrms_web.json").read_text(encoding="utf-8"))
+          layer_sizes = metadata.get("web_layer_sizes", {})
+          required = {"radar", "phase", "precip_type", "radar_phase_evidence", "phase_agreement"}
+          missing = sorted(required - set(layer_sizes))
+          if missing:
+              raise SystemExit(f"ERROR: mrms_web.json missing layer sizes: {missing}")
+
+          print("NATIONAL BROWSER RASTER QC PASSED")
+          for name, info in sizes.items():
+              print(f"  {name}: {info['size'][0]}x{info['size'][1]} {info['format']} {info['mode']} { (out/name).stat().st_size:,} bytes")
+          PY
+
+      # Archive history after all current browser rasters are complete.
+      # History is deliberately non-critical so it can never take the live
+      # radar/Pages product offline. The collector discovers any timestamped
+      # MRMS frames missed while this workflow was queued or running.
+      - name: Archive 8-hour full-CONUS MRMS history
+        continue-on-error: true
+        working-directory: src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u archive_mrms_history.py
+
 
       # GitHub Release assets are intentionally delivered as downloads with
       # application/octet-stream/attachment semantics. They are excellent
@@ -379,6 +448,7 @@ jobs:
           cp index.html site/index.html
           cp outputs/mrms_current.png site/outputs/mrms_current.png
           cp outputs/mrms_current_web.png site/outputs/mrms_current_web.png
+          cp outputs/mrms_current_web.webp site/outputs/mrms_current_web.webp
           if [ -s outputs/mrms_current_regional_web.png ]; then
             cp outputs/mrms_current_regional_web.png site/outputs/mrms_current_regional_web.png
           else
@@ -388,6 +458,7 @@ jobs:
           cp outputs/mrms_web.json site/outputs/mrms_web.json
           cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
           cp outputs/winter_phase_mask_web.png site/outputs/winter_phase_mask_web.png
+          cp outputs/winter_phase_mask_web.webp site/outputs/winter_phase_mask_web.webp
           if [ -s outputs/winter_phase_mask_regional_web.png ]; then
             cp outputs/winter_phase_mask_regional_web.png site/outputs/winter_phase_mask_regional_web.png
           else
@@ -395,6 +466,7 @@ jobs:
           fi
           cp outputs/winter_precip_type.png site/outputs/winter_precip_type.png
           cp outputs/winter_precip_type_web.png site/outputs/winter_precip_type_web.png
+          cp outputs/winter_precip_type_web.webp site/outputs/winter_precip_type_web.webp
           if [ -s outputs/winter_precip_type_regional_web.png ]; then
             cp outputs/winter_precip_type_regional_web.png site/outputs/winter_precip_type_regional_web.png
           else
@@ -405,10 +477,12 @@ jobs:
           cp outputs/phase_radar_fusion.png site/outputs/phase_radar_fusion.png
           cp outputs/phase_radar_fusion_overlay.png site/outputs/phase_radar_fusion_overlay.png
           cp outputs/phase_radar_fusion_overlay_web.png site/outputs/phase_radar_fusion_overlay_web.png
+          cp outputs/phase_radar_fusion_overlay_web.webp site/outputs/phase_radar_fusion_overlay_web.webp
           cp outputs/phase_radar_fusion.json site/outputs/phase_radar_fusion.json
           cp outputs/phase_agreement.png site/outputs/phase_agreement.png
           cp outputs/phase_agreement_overlay.png site/outputs/phase_agreement_overlay.png
           cp outputs/phase_agreement_overlay_web.png site/outputs/phase_agreement_overlay_web.png
+          cp outputs/phase_agreement_overlay_web.webp site/outputs/phase_agreement_overlay_web.webp
           cp outputs/phase_agreement.json site/outputs/phase_agreement.json
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
           cp outputs/phase_probability.png site/outputs/phase_probability.png
@@ -426,6 +500,11 @@ jobs:
 
           test -s site/outputs/winter_precip_type.png
           test -s site/outputs/winter_precip_type_web.png
+          test -s site/outputs/mrms_current_web.webp
+          test -s site/outputs/winter_phase_mask_web.webp
+          test -s site/outputs/winter_precip_type_web.webp
+          test -s site/outputs/phase_radar_fusion_overlay_web.webp
+          test -s site/outputs/phase_agreement_overlay_web.webp
           bash ./src/verify_core_outputs.sh site/outputs
 
           echo "=============================================="
