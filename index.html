@@ -2044,7 +2044,7 @@ function loadRadarFusionLayer() {
     removeMapOverlay(radarFusionOverlay);
 
     radarFusionOverlay = createImageOverlay(
-        "./outputs/phase_radar_fusion_overlay_web.webp?v=" + Date.now(),
+        "./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(),
         MRMS_NATIONAL_BOUNDS,
         overlayOpacity,
         575,
@@ -2055,8 +2055,33 @@ function loadRadarFusionLayer() {
     radarFusionOverlay.addTo(map);
     radarFusionOverlay.setOpacity(overlayOpacity);
 
+    let radarFusionRetried = false;
     radarFusionOverlay.on("error", function() {
-        console.warn("Full-CONUS radar phase evidence overlay is not available yet.");
+        if (!radarFusionRetried) {
+            radarFusionRetried = true;
+            console.warn("Radar phase evidence PNG did not decode; retrying once without cache.");
+            removeMapOverlay(radarFusionOverlay);
+            radarFusionOverlay = createImageOverlay(
+                "./outputs/phase_radar_fusion_overlay_web.png?retry=" + Date.now(),
+                MRMS_NATIONAL_BOUNDS,
+                overlayOpacity,
+                575,
+                true,
+                "winter-raster-sharp"
+            );
+            radarFusionOverlay.addTo(map);
+            radarFusionOverlay.setOpacity(overlayOpacity);
+            radarFusionOverlay.on("error", function() {
+                console.warn("Full-CONUS radar phase evidence overlay could not be decoded or loaded.");
+                document.getElementById("radarFusionToggle").checked = false;
+                removeMapOverlay(radarFusionOverlay);
+                radarFusionOverlay = null;
+                updateDynamicMapLegend();
+            });
+            return;
+        }
+
+        console.warn("Full-CONUS radar phase evidence overlay could not be decoded or loaded.");
         document.getElementById("radarFusionToggle").checked = false;
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
@@ -2080,7 +2105,7 @@ function loadPhaseAgreementLayer() {
     removeMapOverlay(phaseAgreementOverlay);
 
     phaseAgreementOverlay = createImageOverlay(
-        "./outputs/phase_agreement_overlay_web.webp?v=" + Date.now(),
+        "./outputs/phase_agreement_overlay_web.png?v=" + Date.now(),
         MRMS_NATIONAL_BOUNDS,
         overlayOpacity,
         585,
@@ -2091,8 +2116,33 @@ function loadPhaseAgreementLayer() {
     phaseAgreementOverlay.addTo(map);
     phaseAgreementOverlay.setOpacity(overlayOpacity);
 
+    let phaseAgreementRetried = false;
     phaseAgreementOverlay.on("error", function() {
-        console.warn("Full-CONUS phase agreement overlay is not available yet.");
+        if (!phaseAgreementRetried) {
+            phaseAgreementRetried = true;
+            console.warn("Phase agreement PNG did not decode; retrying once without cache.");
+            removeMapOverlay(phaseAgreementOverlay);
+            phaseAgreementOverlay = createImageOverlay(
+                "./outputs/phase_agreement_overlay_web.png?retry=" + Date.now(),
+                MRMS_NATIONAL_BOUNDS,
+                overlayOpacity,
+                585,
+                true,
+                "winter-raster-sharp"
+            );
+            phaseAgreementOverlay.addTo(map);
+            phaseAgreementOverlay.setOpacity(overlayOpacity);
+            phaseAgreementOverlay.on("error", function() {
+                console.warn("Full-CONUS phase agreement overlay could not be decoded or loaded.");
+                document.getElementById("phaseAgreementToggle").checked = false;
+                removeMapOverlay(phaseAgreementOverlay);
+                phaseAgreementOverlay = null;
+                updateDynamicMapLegend();
+            });
+            return;
+        }
+
+        console.warn("Full-CONUS phase agreement overlay could not be decoded or loaded.");
         document.getElementById("phaseAgreementToggle").checked = false;
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
