@@ -484,6 +484,7 @@ jobs:
           cp outputs/phase_agreement_overlay_web.png site/outputs/phase_agreement_overlay_web.png
           cp outputs/phase_agreement_overlay_web.webp site/outputs/phase_agreement_overlay_web.webp
           cp outputs/phase_agreement.json site/outputs/phase_agreement.json
+          cp outputs/phase_agreement_click.json site/outputs/phase_agreement_click.json
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
           cp outputs/phase_probability.png site/outputs/phase_probability.png
           cp outputs/phase_diagnostics.png site/outputs/phase_diagnostics.png
@@ -505,6 +506,8 @@ jobs:
           test -s site/outputs/winter_precip_type_web.png
           test -s site/outputs/phase_radar_fusion_overlay_web.png
           test -s site/outputs/phase_agreement_overlay_web.png
+          test -s site/outputs/phase_agreement.json
+          test -s site/outputs/phase_agreement_click.json
           bash ./src/verify_core_outputs.sh site/outputs
 
           echo "=============================================="
