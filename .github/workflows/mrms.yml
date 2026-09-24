@@ -41,14 +41,10 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install \
-            numpy \
-            requests \
-            Pillow \
-            xarray \
-            cfgrib \
-            matplotlib \
-            pygrib
+          # Keep CI dependencies synchronized with the repository requirements.
+          # The RAP phase engine needs pyproj for its surrounding ecosystem even
+          # though the production sampler now uses a local LCC transform.
+          pip install -r requirements.txt
 
       - name: Core syntax QC
         run: |
@@ -59,6 +55,8 @@ jobs:
             src/classifier.py \
             src/render.py \
             src/main.py \
+            src/download_rap_profile.py \
+            src/phase_profile.py \
             src/project_mrms_webmercator.py \
             src/build_phase_diagnostics.py \
             src/build_phase_radar_fusion.py \
