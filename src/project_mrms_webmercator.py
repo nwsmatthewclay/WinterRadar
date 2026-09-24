@@ -21,7 +21,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "outputs"
 
-WEB_VERSION = "1.3-webmercator-all-layers-png-primary"
+WEB_VERSION = "1.4-webmercator-png-browser-primary"
 MAX_LAT = 85.0511287798
 
 
@@ -84,10 +84,9 @@ def project_image(src_path: Path, dst_path: Path, bounds: tuple[float, float, fl
     projected = Image.fromarray(out, mode="RGBA")
     projected.save(dst_path, optimize=True)
 
-    # Browser-facing copy. WebP is substantially smaller than the equivalent
-    # transparent PNG and avoids browser decoder failures seen with some large
-    # national transparent PNG overlays. Lossless WebP preserves the RGBA
-    # raster exactly while remaining easy for Leaflet to decode.
+    # Also write a WebP copy for optional downstream use. The operational web
+    # viewer intentionally uses the PNG copy because very large transparent
+    # WebP rasters have produced browser EncodingError/decode failures.
     webp_path = dst_path.with_suffix(".webp")
     projected.save(
         webp_path,
