@@ -12,8 +12,9 @@ GitHub Actions workflow runs it:
    storage and determines which observations are missing.
 4. Downloads and renders only those missing observations.
 5. Stores native-resolution WebP frames in the appropriate daily release.
-6. Archives one full-CONUS winter-phase mask per 10-minute bucket, keeping the
-   history comfortably below GitHub's 1,000-asset-per-release limit.
+6. Archives one full-CONUS winter-phase mask and one full-CONUS precipitation-
+   type composite per 10-minute bucket, keeping the history comfortably below
+   GitHub's 1,000-asset-per-release limit.
 7. Builds outputs/mrms_history.json for the Pages viewer.
 
 The live radar path is never modified by this script. The workflow should run
@@ -72,6 +73,7 @@ MRMS_FILENAME_RE = re.compile(
 
 RADAR_ASSET_RE = re.compile(r"^radar_conus_(\d{8}-\d{6})\.webp$")
 PHASE_ASSET_RE = re.compile(r"^phase_conus_(\d{8}-\d{4})\.webp$")
+PRECIP_TYPE_ASSET_RE = re.compile(r"^preciptype_conus_(\d{8}-\d{4})\.webp$")
 HISTORY_RELEASE_RE = re.compile(r"^mrms-(\d{8})(?:-(\d+))?$")
 
 # GitHub enforces a hard 1,000-asset maximum per release. Keep the active
@@ -678,16 +680,19 @@ def history_release_sort_key(tag: str) -> tuple[int, int]:
 
 def gather_release_assets_many(
     releases: Iterable[ReleaseInfo],
-) -> tuple[dict[str, dict], dict[str, dict]]:
+) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
     radar_assets: dict[str, dict] = {}
     phase_assets: dict[str, dict] = {}
+    precip_type_assets: dict[str, dict] = {}
     for release in releases:
         for name, asset in release.assets.items():
             if RADAR_ASSET_RE.match(name):
                 radar_assets[name] = asset
             elif PHASE_ASSET_RE.match(name):
                 phase_assets[name] = asset
-    return radar_assets, phase_assets
+            elif PRECIP_TYPE_ASSET_RE.match(name):
+                precip_type_assets[name] = asset
+    return radar_assets, phase_assets, precip_type_assets
 
 
 def release_tag_for_date(date_value, part: int) -> str:
@@ -776,10 +781,37 @@ def choose_phase_asset(
     }
 
 
+def choose_precip_type_asset(
+    radar_time: datetime,
+    precip_type_assets: dict[str, dict],
+) -> dict | None:
+    candidates: list[tuple[datetime, dict]] = []
+    for name, asset in precip_type_assets.items():
+        match = PRECIP_TYPE_ASSET_RE.match(name)
+        if not match:
+            continue
+        bucket = datetime.strptime(match.group(1), "%Y%m%d-%H%M").replace(
+            tzinfo=timezone.utc
+        )
+        if bucket <= radar_time:
+            candidates.append((bucket, asset))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    bucket, asset = candidates[-1]
+    return {
+        "timestamp_utc": bucket.isoformat(),
+        "asset_name": asset["name"],
+        "url": asset["browser_download_url"],
+        "api_url": asset.get("url"),
+    }
+
+
 def build_manifest(
     observations: list[Observation],
     radar_assets: dict[str, dict],
     phase_assets: dict[str, dict],
+    precip_type_assets: dict[str, dict],
     now: datetime,
     bounds: tuple[float, float, float, float],
     releases: list[ReleaseInfo],
@@ -796,6 +828,9 @@ def build_manifest(
         if asset is None:
             continue
         phase = choose_phase_asset(obs.valid_time, phase_assets)
+        precip_type = choose_precip_type_asset(obs.valid_time, precip_type_assets)
+        # Backward-compatible fallback: older history releases used the phase
+        # asset slot for the composite. New snapshots are stored separately.
         frames.append(
             {
                 "timestamp_utc": obs.valid_time.isoformat(),
@@ -806,6 +841,10 @@ def build_manifest(
                 "phase_asset": phase["asset_name"] if phase else None,
                 "phase_api_url": phase.get("api_url") if phase else None,
                 "phase_timestamp_utc": phase["timestamp_utc"] if phase else None,
+                "precip_type_url": precip_type["url"] if precip_type else None,
+                "precip_type_asset": precip_type["asset_name"] if precip_type else None,
+                "precip_type_api_url": precip_type.get("api_url") if precip_type else None,
+                "precip_type_timestamp_utc": precip_type["timestamp_utc"] if precip_type else None,
             }
         )
 
@@ -826,6 +865,7 @@ def build_manifest(
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(frames),
         "phase_snapshot_count": len(phase_assets),
+        "precip_type_snapshot_count": len(precip_type_assets),
         "releases": releases_out,
         "frames": frames,
     }
@@ -888,7 +928,7 @@ def run_archive() -> None:
         all_history_releases.extend(releases_for_date)
     all_history_releases.sort(key=lambda rel: history_release_sort_key(rel.tag))
 
-    radar_assets, phase_assets = gather_release_assets_many(all_history_releases)
+    radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(all_history_releases)
     print(f"  History release partitions available: {len(all_history_releases)}")
     for date_value in sorted(release_index):
         labels = [f"{rel.tag} ({len(rel.assets)})" for rel in sorted(release_index[date_value], key=lambda rel: history_release_sort_key(rel.tag))]
@@ -896,6 +936,7 @@ def run_archive() -> None:
             print("  " + ", ".join(labels))
     print(f"  Archived radar assets already present: {len(radar_assets)}")
     print(f"  Archived phase snapshots already present: {len(phase_assets)}")
+    print(f"  Archived precipitation-type snapshots already present: {len(precip_type_assets)}")
 
     lats, lons = load_source_coordinates()
     crop = crop_indices(lats, lons, read_history_bounds(OUTPUT_DIR / "mrms_current.json"))
@@ -980,14 +1021,19 @@ def run_archive() -> None:
                 traceback.print_exc()
 
     # --------------------------------------------------------------
-    # Phase snapshot: one 10-minute bucket per interval.
+    # Phase + precipitation-type snapshots: one 10-minute bucket per interval.
     # --------------------------------------------------------------
-    phase_bucket = phase_bucket_for_timestamp(now)
-    phase_asset_name = f"phase_conus_{phase_bucket:%Y%m%d-%H%M}.webp"
-    if phase_asset_name not in phase_assets and (OUTPUT_DIR / "winter_phase_mask.png").exists():
+    snapshot_bucket = phase_bucket_for_timestamp(now)
+    phase_asset_name = f"phase_conus_{snapshot_bucket:%Y%m%d-%H%M}.webp"
+    precip_type_asset_name = f"preciptype_conus_{snapshot_bucket:%Y%m%d-%H%M}.webp"
+
+    phase_source = OUTPUT_DIR / "winter_phase_mask.png"
+    precip_type_source = OUTPUT_DIR / "winter_precip_type.png"
+
+    if phase_asset_name not in phase_assets and phase_source.exists():
         try:
             data = phase_png_to_webp(
-                OUTPUT_DIR / "winter_phase_mask.png",
+                phase_source,
                 (y0, y1, x0, x1),
                 crop_bounds,
                 row_map_cache,
@@ -1009,6 +1055,31 @@ def run_archive() -> None:
     else:
         print(f"  Phase snapshot already present: {phase_asset_name}")
 
+    if precip_type_asset_name not in precip_type_assets and precip_type_source.exists():
+        try:
+            data = phase_png_to_webp(
+                precip_type_source,
+                (y0, y1, x0, x1),
+                crop_bounds,
+                row_map_cache,
+            )
+            precip_release = ensure_upload_release(
+                store,
+                now.date(),
+                release_index,
+            )
+            asset = store.upload_asset(precip_release, precip_type_asset_name, data)
+            precip_release.assets[asset["name"]] = asset
+            precip_type_assets[asset["name"]] = asset
+            print(
+                f"  Uploaded precipitation-type snapshot {asset['name']} "
+                f"({len(data):,} bytes)"
+            )
+        except Exception as exc:
+            print(f"  WARNING: precipitation-type snapshot failed: {exc}")
+    else:
+        print(f"  Precipitation-type snapshot already present: {precip_type_asset_name}")
+
     # Re-fetch all active release partitions so the manifest reflects every
     # successful upload, including any overflow partition created above.
     refreshed_releases: list[ReleaseInfo] = []
@@ -1022,13 +1093,14 @@ def run_archive() -> None:
         refreshed_releases.extend(refreshed_for_date)
 
     refreshed_releases.sort(key=lambda rel: history_release_sort_key(rel.tag))
-    radar_assets, phase_assets = gather_release_assets_many(refreshed_releases)
+    radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(refreshed_releases)
     release_list = refreshed_releases
 
     manifest = build_manifest(
         observations=observations,
         radar_assets=radar_assets,
         phase_assets=phase_assets,
+        precip_type_assets=precip_type_assets,
         now=now,
         bounds=crop_bounds,
         releases=release_list,
@@ -1042,6 +1114,7 @@ def run_archive() -> None:
     print(f"  History manifest: {MRMS_HISTORY_FILE}")
     print(f"  History frames available: {manifest['frame_count']}")
     print(f"  Phase snapshots available: {manifest['phase_snapshot_count']}")
+    print(f"  Precipitation-type snapshots available: {manifest['precip_type_snapshot_count']}")
     print(f"  New radar frames archived this run: {archived_this_run}")
 
     cleanup_old_releases(store, now)
@@ -1060,6 +1133,7 @@ def self_test() -> None:
     assert len(obs) == 2
     assert obs[0].timestamp_key == "20260920-020241"
     assert obs[0].asset_name == "radar_conus_20260920-020241.webp"
+    assert PRECIP_TYPE_ASSET_RE.match("preciptype_conus_20260920-0230.webp")
 
     bounds = (20.005001, -129.995, 54.995, -60.005002)
     lats = np.linspace(54.995, 20.005, 3500)
