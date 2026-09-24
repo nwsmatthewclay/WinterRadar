@@ -8,7 +8,6 @@ import gc
 import os
 
 import numpy as np
-import xarray as xr
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -18,7 +17,7 @@ from config import DATA_DIR, OUTPUT_DIR, PRODUCTS  # noqa: E402
 from download_rap_profile import download_rap_profile, load_rap_profile, sample_profile_to_mrms  # noqa: E402
 from download_mrms import download_optional_live_products, download_required_live_products  # noqa: E402
 from phase_profile import classify_from_vertical_profile, probabilities_to_phase  # noqa: E402
-from read_mrms import get_values  # noqa: E402
+from read_mrms import get_values, get_valid_time  # noqa: E402
 from render import (  # noqa: E402
     reflectivity_to_rgba,
     result_to_phase_rgba,
@@ -69,23 +68,8 @@ def grid_bounds(lats: np.ndarray, lons: np.ndarray) -> list[float]:
 
 
 def get_mrms_valid_time(path: Path) -> str | None:
-    """Read MRMS valid time through cfgrib/xarray; pygrib is not needed."""
-    try:
-        ds = xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""})
-        try:
-            if "valid_time" in ds.coords:
-                value = np.asarray(ds.valid_time.values).reshape(-1)[0]
-            elif "time" in ds.coords:
-                value = np.asarray(ds.time.values).reshape(-1)[0]
-            else:
-                return None
-            dt = value.astype("datetime64[us]").astype(datetime).replace(tzinfo=timezone.utc)
-            return dt.isoformat()
-        finally:
-            ds.close()
-    except Exception as exc:
-        print(f"  Warning: could not read MRMS valid time: {exc}")
-        return None
+    """Read MRMS valid time without loading cfgrib/eccodes into the core process."""
+    return get_valid_time(path)
 
 
 def update_metadata(metadata_path: Path, lats: np.ndarray, lons: np.ndarray, mrms_time_utc: str | None) -> None:
