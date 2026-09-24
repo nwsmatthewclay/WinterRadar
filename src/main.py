@@ -25,7 +25,7 @@ from render import (  # noqa: E402
     write_metadata,
 )
 
-MAIN_VERSION = "9.2-rap-profile-phase-diagnostics"
+MAIN_VERSION = "9.3-rap-profile-phase-full-conus"
 PROFILE_CHUNK_ROWS = 40  # keep chunk boundaries aligned with the 10x diagnostic grid
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
@@ -231,7 +231,7 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         "rap_valid_time_utc": profile.get("valid_time_utc"),
         "rap_mrms_time_offset_minutes": age_minutes,
         "phase_domain": {
-            "west": -100.0, "east": -65.0, "south": 30.0, "north": 52.0,
+            "west": -130.0, "east": -60.0, "south": 20.0, "north": 55.0,
         },
         "max_probabilities_percent": max_prob,
         "mean_melting_energy_jkg": float(np.mean(mean_me)) if mean_me else None,
