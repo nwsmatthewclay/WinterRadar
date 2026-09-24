@@ -3,11 +3,10 @@ from __future__ import annotations
 """Fast, robust RAP pressure-level reader for WinterRadar phase analysis.
 
 The workflow downloads a small NOMADS RAP awp130 subset containing TMP, RH,
-and HGT on pressure levels.  This module deliberately avoids importing the
-Python eccodes binding into the core process because the core MRMS reader uses
-the system-linked pygrib binding.  Mixing those two native ecCodes bindings in
-one Python process can trigger ``double free or corruption`` on Linux CI.
-A vectorized psychrometric Newton solve derives wet-bulb temperature.
+and HGT on pressure levels.  This module deliberately avoids opening the
+entire GRIB with xarray/cfgrib or calling MetPy's iterative wet-bulb solver on
+every grid point.  ecCodes reads the filtered GRIB directly in one pass, and a
+vectorized psychrometric Newton solve derives wet-bulb temperature.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -17,6 +16,7 @@ import time
 
 import numpy as np
 import requests
+from pyproj import CRS, Transformer
 
 from config import DATA_DIR
 
@@ -132,14 +132,38 @@ def download_rap_profile(valid_time_utc: str) -> Path:
     raise RuntimeError(f"No usable RAP pressure-level subset found in the last 7 hours: {last_error}")
 
 
-def _grb_get(grb, key, default=None):
+def _get_string(gid, key: str) -> str | None:
     try:
-        return grb[key]
+        import eccodes
+        return str(eccodes.codes_get(gid, key))
     except Exception:
-        return default
+        return None
 
 
-def _projection_from_grb(grb) -> dict:
+def _get_float(gid, key: str) -> float | None:
+    try:
+        import eccodes
+        value = eccodes.codes_get(gid, key)
+        return float(value)
+    except Exception:
+        return None
+
+
+def _get_int(gid, key: str) -> int | None:
+    try:
+        import eccodes
+        value = eccodes.codes_get(gid, key)
+        return int(value)
+    except Exception:
+        return None
+
+
+def _safe_array(gid, key: str) -> np.ndarray:
+    import eccodes
+    return np.asarray(eccodes.codes_get_array(gid, key), dtype=np.float64)
+
+
+def _projection_from_gid(gid) -> dict:
     keys = (
         "gridType",
         "LaDInDegrees",
@@ -152,44 +176,44 @@ def _projection_from_grb(grb) -> dict:
         "Ny",
         "iScansNegatively",
         "jScansPositively",
-        "latitudeOfFirstGridPointInDegrees",
-        "longitudeOfFirstGridPointInDegrees",
     )
     out: dict[str, float | int | str] = {}
     for key in keys:
-        value = _grb_get(grb, key)
-        if value is not None:
+        try:
+            import eccodes
+            value = eccodes.codes_get(gid, key)
             out[f"GRIB_{key}"] = value
+        except Exception:
+            continue
     return out
 
 
-def _valid_time_from_grb(grb) -> str | None:
+def _valid_time_from_gid(gid) -> str | None:
+    import eccodes
+
+    # Prefer explicit validity keys when present.
     for date_key, time_key in (("validityDate", "validityTime"),):
         try:
-            date = int(grb[date_key])
-            hhmm = int(grb[time_key])
-            dt = datetime.strptime(
-                f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M"
-            ).replace(tzinfo=timezone.utc)
+            date = int(eccodes.codes_get(gid, date_key))
+            hhmm = int(eccodes.codes_get(gid, time_key))
+            dt = datetime.strptime(f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
             return dt.isoformat()
         except Exception:
             pass
 
     try:
-        date = int(grb["dataDate"])
-        hhmm = int(grb["dataTime"])
-        forecast = int(grb["forecastTime"])
-        dt = datetime.strptime(
-            f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M"
-        ).replace(tzinfo=timezone.utc)
+        date = int(eccodes.codes_get(gid, "dataDate"))
+        hhmm = int(eccodes.codes_get(gid, "dataTime"))
+        forecast = int(eccodes.codes_get(gid, "forecastTime"))
+        dt = datetime.strptime(f"{date:08d}{hhmm:04d}", "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
         return (dt + timedelta(hours=forecast)).isoformat()
     except Exception:
         return None
 
 
 def _decode_pressure_fields(path: Path) -> dict:
-    """Read TMP/RH/HGT from the filtered GRIB with one pygrib handle."""
-    import pygrib
+    """Read TMP/RH/HGT from the filtered GRIB in one sequential ecCodes pass."""
+    import eccodes
 
     wanted = {"TMP": TMP_NAMES, "RH": RH_NAMES, "HGT": HGT_NAMES}
     fields: dict[str, dict[float, np.ndarray]] = {k: {} for k in wanted}
@@ -199,70 +223,58 @@ def _decode_pressure_fields(path: Path) -> dict:
     shape = None
     n_messages = 0
 
-    print("  Reading RAP GRIB with pygrib (single pass)...", flush=True)
-    grbs = None
-    try:
-        grbs = pygrib.open(str(path))
-        for grb in grbs:
+    print("  Reading RAP GRIB with ecCodes (single pass)...", flush=True)
+    with path.open("rb") as fh:
+        while True:
+            gid = eccodes.codes_grib_new_from_file(fh)
+            if gid is None:
+                break
             n_messages += 1
-            type_of_level = str(_grb_get(grb, "typeOfLevel", "")).lower()
-            if type_of_level != "isobaricinhpa":
-                continue
+            try:
+                type_of_level = _get_string(gid, "typeOfLevel")
+                if type_of_level != "isobaricInhPa":
+                    continue
+                short_name = (_get_string(gid, "shortName") or "").lower()
+                level = _get_float(gid, "level")
+                if level is None:
+                    continue
 
-            short_name = str(_grb_get(grb, "shortName", "")).lower()
-            level = _grb_get(grb, "level")
-            if level is None:
-                continue
+                field_name = None
+                for name, candidates in wanted.items():
+                    if short_name in candidates:
+                        field_name = name
+                        break
+                if field_name is None:
+                    continue
 
-            field_name = None
-            for name, candidates in wanted.items():
-                if short_name in candidates:
-                    field_name = name
-                    break
-            if field_name is None:
-                continue
+                # Keep only requested pressure levels.
+                nearest = min(PRESSURE_LEVELS, key=lambda x: abs(x - level))
+                if abs(nearest - level) > 0.01:
+                    continue
 
-            nearest = min(PRESSURE_LEVELS, key=lambda x: abs(x - float(level)))
-            if abs(nearest - float(level)) > 0.01:
-                continue
+                values = _safe_array(gid, "values")
+                ni = _get_int(gid, "Ni")
+                nj = _get_int(gid, "Nj")
+                if ni is None or nj is None or ni * nj != values.size:
+                    raise RuntimeError(f"Unexpected RAP grid shape: Ni={ni}, Nj={nj}, values={values.size}")
+                values = values.reshape(nj, ni)
 
-            values = np.asarray(grb.values, dtype=np.float32).copy()
-            if values.ndim != 2:
-                raise RuntimeError(
-                    f"Unexpected RAP field shape for {field_name} {level}: {values.shape}"
-                )
+                missing = _get_float(gid, "missingValue")
+                if missing is not None and np.isfinite(missing):
+                    values[np.isclose(values, missing, rtol=0.0, atol=1e-6)] = np.nan
+                values[~np.isfinite(values)] = np.nan
 
-            missing = _grb_get(grb, "missingValue")
-            if missing is not None and np.isfinite(float(missing)):
-                values[np.isclose(values, float(missing), rtol=0.0, atol=1e-6)] = np.nan
-            values[~np.isfinite(values)] = np.nan
+                fields[field_name][nearest] = values
+                shape = values.shape
 
-            fields[field_name][nearest] = values
-            shape = values.shape
-
-            if lat is None:
-                projection = _projection_from_grb(grb)
-                valid_time = _valid_time_from_grb(grb)
-
-                raw_lat, raw_lon = grb.latlons()
-                raw_lat = np.asarray(raw_lat, dtype=np.float64)
-                raw_lon = np.asarray(raw_lon, dtype=np.float64)
-
-                if raw_lat.shape == shape and raw_lon.shape == shape:
-                    lat = raw_lat.copy()
-                    lon = raw_lon.copy()
-                else:
-                    print(
-                        f"  RAP coordinate arrays are non-native: lat={raw_lat.shape}, "
-                        f"lon={raw_lon.shape}; reconstructing {shape} Lambert grid.",
-                        flush=True,
-                    )
-                    lat, lon, _, _ = _build_regular_lambert_grid(shape, projection)
-
-                lon = np.where(lon > 180.0, lon - 360.0, lon)
-    finally:
-        if grbs is not None:
-            grbs.close()
+                if lat is None:
+                    lat = _safe_array(gid, "latitudes").reshape(shape)
+                    lon = _safe_array(gid, "longitudes").reshape(shape)
+                    lon = np.where(lon > 180.0, lon - 360.0, lon)
+                    projection = _projection_from_gid(gid)
+                    valid_time = _valid_time_from_gid(gid)
+            finally:
+                eccodes.codes_release(gid)
 
     print(f"  RAP GRIB messages inspected: {n_messages}", flush=True)
     if lat is None or lon is None or not shape:
@@ -271,15 +283,11 @@ def _decode_pressure_fields(path: Path) -> dict:
     missing_fields = [name for name, data in fields.items() if len(data) != len(PRESSURE_LEVELS)]
     if missing_fields:
         details = ", ".join(f"{name}: {sorted(data)}" for name, data in fields.items())
-        raise RuntimeError(
-            f"RAP pressure-level fields incomplete ({details}); missing {missing_fields}"
-        )
+        raise RuntimeError(f"RAP pressure-level fields incomplete ({details}); missing {missing_fields}")
 
     ordered = {}
     for name in wanted:
-        ordered[name] = np.stack(
-            [fields[name][lev] for lev in PRESSURE_LEVELS]
-        ).astype(np.float32)
+        ordered[name] = np.stack([fields[name][lev] for lev in PRESSURE_LEVELS]).astype(np.float32)
 
     return {
         "temperature_k": ordered["TMP"],
@@ -291,6 +299,7 @@ def _decode_pressure_fields(path: Path) -> dict:
         "projection": projection,
         "valid_time_utc": valid_time,
     }
+
 
 def _sat_vapor_pressure_water(temp_c: np.ndarray) -> np.ndarray:
     """Magnus saturation vapor pressure over water, hPa."""
@@ -338,139 +347,22 @@ def _wetbulb_vectorized(temp_c: np.ndarray, dewpoint_c: np.ndarray, pressure_hpa
     return tw.astype(np.float32)
 
 
-def _lambert_conformal_conic_xy(
-    longitude_deg: np.ndarray,
-    latitude_deg: np.ndarray,
-    projection: dict,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Project lon/lat to the spherical Lambert grid used by RAP.
-
-    This intentionally implements the small forward LCC calculation locally
-    instead of relying on pyproj's Transformer.transform().  Some pyproj/PROJ
-    builds have intermittently interpreted large NumPy coordinate arrays as
-    mixed-dimensional input and raised:
-        "x, y, z, and time must be same size if included."
-    The RAP grid is a regular spherical Lambert grid, so the forward equation
-    is deterministic and avoids that failure mode entirely.
-    """
-    grid_type = str(projection.get("GRIB_gridType", "")).lower()
+def _make_transformer(projection: dict) -> Transformer:
+    grid_type = projection.get("GRIB_gridType")
     if grid_type != "lambert":
         raise RuntimeError(f"Expected Lambert RAP grid, got {grid_type!r}")
-
     lat_0 = projection.get("GRIB_LaDInDegrees")
     lon_0 = projection.get("GRIB_LoVInDegrees")
     lat_1 = projection.get("GRIB_Latin1InDegrees")
     lat_2 = projection.get("GRIB_Latin2InDegrees")
     if None in (lat_0, lon_0, lat_1, lat_2):
         raise RuntimeError("RAP Lambert projection metadata is incomplete.")
-
-    lon = np.asarray(longitude_deg, dtype=np.float64)
-    lat = np.asarray(latitude_deg, dtype=np.float64)
-    if lon.shape != lat.shape:
-        raise RuntimeError(
-            f"RAP projection coordinate shape mismatch: lon={lon.shape}, lat={lat.shape}"
-        )
-
-    # RAP's Lambert grid uses a spherical Earth with radius 6371229 m.
-    radius = 6371229.0
-    phi0 = np.deg2rad(float(lat_0))
-    phi1 = np.deg2rad(float(lat_1))
-    phi2 = np.deg2rad(float(lat_2))
-    lam0 = np.deg2rad(float(lon_0))
-
-    def _t(phi):
-        # tan(pi/4 + phi/2) is well behaved for the RAP CONUS domain.
-        return np.tan(np.pi / 4.0 + phi / 2.0)
-
-    if abs(float(lat_1) - float(lat_2)) < 1.0e-8:
-        n = np.sin(phi1)
-    else:
-        n = np.log(np.cos(phi1) / np.cos(phi2)) / np.log(_t(phi2) / _t(phi1))
-
-    if not np.isfinite(n) or abs(n) < 1.0e-12:
-        raise RuntimeError(f"Invalid RAP Lambert projection exponent: {n!r}")
-
-    f = np.cos(phi1) * (_t(phi1) ** n) / n
-    rho0 = radius * f / (_t(phi0) ** n)
-
-    phi = np.deg2rad(lat)
-    lam = np.deg2rad(lon)
-    rho = radius * f / (_t(phi) ** n)
-    theta = n * (lam - lam0)
-
-    x = rho * np.sin(theta)
-    y = rho0 - rho * np.cos(theta)
-    return x, y
-
-
-
-def _build_regular_lambert_grid(shape: tuple[int, int], projection: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Build RAP grid coordinates from GRIB geometry when coordinate arrays are malformed.
-
-    NOMADS/ecCodes can occasionally expose the filtered RAP latitude/longitude
-    arrays with a reduced or broadcast shape even though the decoded field is
-    a regular Lambert grid.  The GRIB projection metadata contains everything
-    needed to reconstruct the exact regular grid, so use that as the
-    authoritative geometry rather than trusting a malformed coordinate array.
-    """
-    ny, nx = int(shape[0]), int(shape[1])
-    dx = projection.get("GRIB_DxInMetres")
-    dy = projection.get("GRIB_DyInMetres")
-    first_lat = projection.get("GRIB_latitudeOfFirstGridPointInDegrees")
-    first_lon = projection.get("GRIB_longitudeOfFirstGridPointInDegrees")
-    if None in (dx, dy, first_lat, first_lon):
-        raise RuntimeError(
-            "RAP Lambert grid geometry is incomplete: "
-            f"Dx={dx!r}, Dy={dy!r}, first_lat={first_lat!r}, first_lon={first_lon!r}"
-        )
-
-    # Project the first grid point using the same spherical LCC equations used
-    # for all subsequent sampling.
-    first_x, first_y = _lambert_conformal_conic_xy(
-        np.asarray([float(first_lon)], dtype=np.float64),
-        np.asarray([float(first_lat)], dtype=np.float64),
-        projection,
+    crs = CRS.from_proj4(
+        f"+proj=lcc +lat_1={lat_1} +lat_2={lat_2} +lat_0={lat_0} +lon_0={lon_0} "
+        "+a=6371229 +b=6371229 +units=m"
     )
-    x0 = float(np.asarray(first_x).reshape(-1)[0])
-    y0 = float(np.asarray(first_y).reshape(-1)[0])
+    return Transformer.from_crs("EPSG:4326", crs, always_xy=True)
 
-    i_negative = bool(int(projection.get("GRIB_iScansNegatively", 0)))
-    j_positive = bool(int(projection.get("GRIB_jScansPositively", 1)))
-    x_step = -float(dx) if i_negative else float(dx)
-    y_step = float(dy) if j_positive else -float(dy)
-
-    x_axis = x0 + x_step * np.arange(nx, dtype=np.float64)
-    y_axis = y0 + y_step * np.arange(ny, dtype=np.float64)
-    xx, yy = np.meshgrid(x_axis, y_axis)
-
-    # Invert the spherical LCC so the profile retains useful geographic
-    # coordinates for diagnostics/debugging. Sampling itself uses xx/yy.
-    lat_0 = float(projection["GRIB_LaDInDegrees"])
-    lon_0 = float(projection["GRIB_LoVInDegrees"])
-    lat_1 = float(projection["GRIB_Latin1InDegrees"])
-    lat_2 = float(projection["GRIB_Latin2InDegrees"])
-    radius = 6371229.0
-    phi0 = np.deg2rad(lat_0)
-    phi1 = np.deg2rad(lat_1)
-    phi2 = np.deg2rad(lat_2)
-    lam0 = np.deg2rad(lon_0)
-
-    def _t(phi):
-        return np.tan(np.pi / 4.0 + phi / 2.0)
-
-    if abs(lat_1 - lat_2) < 1.0e-8:
-        n = np.sin(phi1)
-    else:
-        n = np.log(np.cos(phi1) / np.cos(phi2)) / np.log(_t(phi2) / _t(phi1))
-    f = np.cos(phi1) * (_t(phi1) ** n) / n
-    rho0 = radius * f / (_t(phi0) ** n)
-    rho = np.sign(n) * np.sqrt(xx * xx + (rho0 - yy) * (rho0 - yy))
-    rho = np.maximum(rho, 1.0e-6)
-    theta = np.arctan2(xx, rho0 - yy)
-    t = np.power(radius * f / rho, 1.0 / n)
-    lat = 2.0 * np.arctan(t) - np.pi / 2.0
-    lon = lam0 + theta / n
-    return np.rad2deg(lat), np.rad2deg(lon), xx, yy
 
 def load_rap_profile(path: Path) -> dict:
     """Load RAP TMP/RH/HGT and derive DPT, wet-bulb, and RH-ice."""
@@ -493,11 +385,22 @@ def load_rap_profile(path: Path) -> dict:
     rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
 
     # Cache projected RAP coordinates so sample_profile_to_mrms does not
-    # perform a projection for every MRMS chunk. The regular projected grid is
-    # reconstructed directly from GRIB geometry; this avoids any dependency on
-    # the shape of ecCodes latitude/longitude arrays.
-    rap_shape = temp_c.shape[1:]
-    _, _, hx, hy = _build_regular_lambert_grid(rap_shape, data["projection"])
+    # transform the RAP grid again for every MRMS chunk.
+    transformer = _make_transformer(data["projection"])
+
+    # pyproj may interpret large 2-D coordinate arrays as mixed-dimensional
+    # input and raise: "x, y, z, and time must be same size if included."
+    # Flatten the paired lon/lat arrays explicitly, transform them as a simple
+    # x/y vector, then restore the RAP grid shape. This is the same safe pattern
+    # used when sampling the RAP grid onto MRMS below.
+    rap_shape = data["longitude"].shape
+    hx_flat, hy_flat = transformer.transform(
+        np.asarray(data["longitude"], dtype=np.float64).ravel(),
+        np.asarray(data["latitude"], dtype=np.float64).ravel(),
+    )
+    hx = np.asarray(hx_flat, dtype=np.float64).reshape(rap_shape)
+    hy = np.asarray(hy_flat, dtype=np.float64).reshape(rap_shape)
+
     x_axis = hx[0, :].astype(np.float64)
     y_axis = hy[:, 0].astype(np.float64)
 
@@ -530,57 +433,98 @@ def load_rap_profile(path: Path) -> dict:
 
 
 def _nearest_index(sorted_values: np.ndarray, values: np.ndarray) -> np.ndarray:
-    idx = np.searchsorted(sorted_values, values)
-    idx = np.clip(idx, 1, len(sorted_values) - 1)
+    """Return nearest indices for a monotonic coordinate axis."""
+    axis = np.asarray(sorted_values, dtype=np.float64)
+    vals = np.asarray(values, dtype=np.float64)
+    if axis.size < 2:
+        return np.zeros(vals.shape, dtype=np.int64)
+    idx = np.searchsorted(axis, vals)
+    idx = np.clip(idx, 1, axis.size - 1)
     left = idx - 1
     right = idx
-    choose_right = np.abs(values - sorted_values[right]) < np.abs(values - sorted_values[left])
+    choose_right = np.abs(vals - axis[right]) < np.abs(vals - axis[left])
     return np.where(choose_right, right, left).astype(np.int64)
 
 
 def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) -> dict:
-    """Nearest-neighbor sample RAP profile fields onto an MRMS chunk."""
+    """Nearest-neighbor sample RAP pressure-level fields onto an MRMS chunk.
+
+    RAP is a regular Lambert grid.  Use its projected grid spacing directly
+    rather than assuming that the first row/column are perfectly represented
+    by searchsorted bounds.  This is particularly important for the expanded
+    full-CONUS RAP subset, where the projected coordinate arrays are large and
+    the outer MRMS grid extends beyond the RAP subset.
+    """
     lat = np.asarray(lats, dtype=np.float64)
     lon = np.asarray(lons, dtype=np.float64)
-    if lat.ndim == 1:
-        lat2, lon2 = lat[:, None], lon[None, :]
-    else:
+    if lat.ndim == 1 and lon.ndim == 1:
+        lat2, lon2 = np.broadcast_arrays(lat[:, None], lon[None, :])
+    elif lat.ndim == 2 and lon.ndim == 2:
+        if lat.shape != lon.shape:
+            raise RuntimeError(f"RAP sampling coordinate shape mismatch: lat={lat.shape}, lon={lon.shape}")
         lat2, lon2 = lat, lon
+    else:
+        lat2, lon2 = np.broadcast_arrays(lat, lon)
 
-    # Reuse cached RAP projection coordinates.
+    transformer = _make_transformer(profile["projection"])
     hx = np.asarray(profile.get("_projected_x"), dtype=np.float64)
     hy = np.asarray(profile.get("_projected_y"), dtype=np.float64)
     x_axis = np.asarray(profile.get("_x_axis"), dtype=np.float64)
     y_axis = np.asarray(profile.get("_y_axis"), dtype=np.float64)
 
-    x_rev = x_axis[0] > x_axis[-1]
-    y_rev = y_axis[0] > y_axis[-1]
-    x_sorted = x_axis[::-1] if x_rev else x_axis
-    y_sorted = y_axis[::-1] if y_rev else y_axis
+    if hx.ndim != 2 or hy.ndim != 2:
+        raise RuntimeError(f"RAP projected coordinate arrays must be 2-D: x={hx.shape}, y={hy.shape}")
+    if x_axis.size != hx.shape[1] or y_axis.size != hy.shape[0]:
+        raise RuntimeError(
+            f"RAP projected axis mismatch: x_axis={x_axis.shape}, y_axis={y_axis.shape}, grid={hx.shape}"
+        )
 
-    # Project the MRMS target coordinates with the same local spherical LCC
-    # equation used for the RAP grid. This avoids the intermittent pyproj
-    # mixed-dimensional-array failure and keeps source/target coordinates in
-    # exactly the same projection space.
-    target_shape = lon2.shape
-    x, y = _lambert_conformal_conic_xy(lon2, lat2, profile["projection"])
-    x = np.asarray(x, dtype=np.float64).reshape(target_shape)
-    y = np.asarray(y, dtype=np.float64).reshape(target_shape)
-    ix_sorted = _nearest_index(x_sorted, x)
-    iy_sorted = _nearest_index(y_sorted, y)
-    ix = (len(x_axis) - 1 - ix_sorted) if x_rev else ix_sorted
-    iy = (len(y_axis) - 1 - iy_sorted) if y_rev else iy_sorted
+    # The RAP Lambert grid is regular in projected x/y.  Derive the spacing
+    # from the full axes and use the actual grid origin, preserving scan
+    # direction.  This avoids the zero-valid-cell failure that can occur when
+    # projected bounds are compared against a malformed/reversed axis.
+    dx_values = np.diff(x_axis)
+    dy_values = np.diff(y_axis)
+    dx = float(np.nanmedian(dx_values[np.isfinite(dx_values) & (np.abs(dx_values) > 0)]))
+    dy = float(np.nanmedian(dy_values[np.isfinite(dy_values) & (np.abs(dy_values) > 0)]))
+    if not np.isfinite(dx) or not np.isfinite(dy):
+        raise RuntimeError("RAP projected grid spacing could not be determined")
 
+    x_flat, y_flat = transformer.transform(lon2.ravel(), lat2.ravel())
+    x = np.asarray(x_flat, dtype=np.float64).reshape(lat2.shape)
+    y = np.asarray(y_flat, dtype=np.float64).reshape(lat2.shape)
+
+    x0 = float(x_axis[0])
+    y0 = float(y_axis[0])
+    ix = np.rint((x - x0) / dx).astype(np.int64)
+    iy = np.rint((y - y0) / dy).astype(np.int64)
+
+    # Accept a target point when its projected coordinate is within half a RAP
+    # grid cell of the available subset.  This is a geometric validity test,
+    # not merely an array-index clipping test.
+    half_dx = abs(dx) * 0.51
+    half_dy = abs(dy) * 0.51
+    x_min = min(float(x_axis.min()), float(x_axis.max())) - half_dx
+    x_max = max(float(x_axis.min()), float(x_axis.max())) + half_dx
+    y_min = min(float(y_axis.min()), float(y_axis.max())) - half_dy
+    y_max = max(float(y_axis.min()), float(y_axis.max())) + half_dy
     valid = (
         np.isfinite(x) & np.isfinite(y)
-        & (x >= min(x_axis.min(), x_axis.max())) & (x <= max(x_axis.min(), x_axis.max()))
-        & (y >= min(y_axis.min(), y_axis.max())) & (y <= max(y_axis.min(), y_axis.max()))
+        & (x >= x_min) & (x <= x_max)
+        & (y >= y_min) & (y <= y_max)
+        & (ix >= 0) & (ix < x_axis.size)
+        & (iy >= 0) & (iy < y_axis.size)
     )
+
+    # Keep invalid indices safe for NumPy advanced indexing; invalid samples
+    # are masked immediately afterward.
+    ix_safe = np.clip(ix, 0, x_axis.size - 1)
+    iy_safe = np.clip(iy, 0, y_axis.size - 1)
 
     out: dict[str, np.ndarray] = {}
     for key in ("wetbulb_c", "temperature_c", "rh_ice_pct", "height_m"):
         src = np.asarray(profile[key])
-        sampled = src[:, iy, ix].astype(np.float32, copy=False)
+        sampled = src[:, iy_safe, ix_safe].astype(np.float32, copy=False)
         sampled[:, ~valid] = np.nan
         out[key] = sampled
 
