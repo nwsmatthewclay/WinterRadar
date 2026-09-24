@@ -1022,6 +1022,32 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
     }
 }
 
+/* MAP EXPORT UI */
+.export-button { background:#173b52; color:#fff; border-color:#173b52; }
+.export-modal-backdrop { position:fixed; inset:0; z-index:5000; display:none; background:rgba(8,17,24,.58); backdrop-filter:blur(2px); }
+.export-modal-backdrop.open { display:block; }
+.export-modal { position:absolute; top:18px; right:18px; width:360px; max-width:calc(100vw - 36px); max-height:calc(100vh - 36px); overflow-y:auto; background:#fff; border:1px solid #cbd4da; border-radius:10px; box-shadow:0 16px 50px rgba(0,0,0,.28); padding:15px; }
+.export-modal h2 { margin:0; font-size:17px; color:#17232b; }
+.export-modal .export-help { margin:5px 0 13px; color:#65737c; font-size:11px; line-height:1.4; }
+.export-modal .export-section { margin-top:12px; padding-top:11px; border-top:1px solid #e3e8eb; }
+.export-modal .export-section-title { margin-bottom:7px; color:#4f5e67; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
+.export-layer-row { display:flex; align-items:center; gap:8px; padding:5px 0; font-size:12px; }
+.export-layer-row input { accent-color:#173b52; }
+.export-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.export-field label { display:block; margin-bottom:4px; color:#596771; font-size:10px; font-weight:700; }
+.export-field select,.export-field input { width:100%; box-sizing:border-box; padding:7px 8px; border:1px solid #cbd4da; border-radius:5px; background:#fff; font-size:12px; }
+.export-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
+.export-actions button { padding:9px 10px; border-radius:6px; border:1px solid #b8c4cb; font-size:12px; font-weight:800; cursor:pointer; }
+.export-actions .primary { background:#173b52; color:#fff; border-color:#173b52; }
+.export-actions .secondary { background:#f4f6f7; color:#30414c; }
+.export-close { position:absolute; top:10px; right:10px; width:28px; height:28px; border:0; background:transparent; color:#65737c; font-size:20px; cursor:pointer; }
+.export-status { min-height:18px; margin-top:10px; color:#53636d; font-size:10px; line-height:1.4; }
+.export-status.error { color:#9b2f2f; }
+#map.export-capture-mode .leaflet-control-container,#map.export-capture-mode .layer-box,#map.export-capture-mode #loading,#map.export-capture-mode .radar-time { display:none !important; }
+#map.export-capture-mode .map-legend { display:block !important; }
+.export-mode-note { margin-top:8px; padding:7px 8px; border-radius:5px; background:#eef4f7; color:#41545f; font-size:10px; line-height:1.35; }
+@media (max-width:600px) { .export-modal { top:8px; right:8px; width:calc(100vw - 16px); max-width:none; max-height:calc(100vh - 16px); } }
+
 @media (max-width: 600px) {
     .container { width: calc(100% - 8px); }
 
@@ -1056,6 +1082,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
     <div class="top-actions">
         <div class="status">Auto-refresh every 5 min</div>
+        <button class="button export-button" type="button" onclick="openExportModal()">Export</button>
         <button class="button" type="button" onclick="refreshData()">Refresh</button>
     </div>
 </header>
@@ -1473,7 +1500,32 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
 </main>
 
+<div id="exportModalBackdrop" class="export-modal-backdrop" aria-hidden="true">
+<div id="exportModal" class="export-modal" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
+<button class="export-close" type="button" onclick="closeExportModal()" aria-label="Close export">×</button>
+<h2 id="exportModalTitle">Export Map</h2>
+<div class="export-help">Pan and zoom the map behind this panel to set the exact data frame. The export contains only the map and embedded legend.</div>
+<div class="export-section"><div class="export-section-title">Format</div><div class="export-grid">
+<div class="export-field"><label for="exportFormat">Output</label><select id="exportFormat" onchange="updateExportFormatUI()"><option value="png">PNG — current frame</option><option value="gif">GIF — history loop</option></select></div>
+<div class="export-field"><label for="exportScale">Resolution</label><select id="exportScale"><option value="1">1× — map size</option><option value="1.5">1.5×</option><option value="2">2×</option></select></div></div></div>
+<div class="export-section"><div class="export-section-title">Data layers</div>
+<label class="export-layer-row"><input id="exportRadar" type="checkbox" checked><span>MRMS Radar Data</span></label>
+<label class="export-layer-row"><input id="exportPrecipType" type="checkbox" checked><span>Precipitation Type Composite</span></label>
+<label class="export-layer-row"><input id="exportPhase" type="checkbox"><span>Winter Phase Mask</span></label>
+<label class="export-layer-row"><input id="exportRadarFusion" type="checkbox"><span>Radar Phase Evidence</span></label>
+<label class="export-layer-row"><input id="exportAgreement" type="checkbox"><span>Phase Agreement</span></label>
+<div class="export-mode-note">Basemap and NWS boundary layers remain part of the map view. Dashboard headers, controls, history controls, and other page content are not exported.</div></div>
+<div id="exportGifOptions" class="export-section" style="display:none;"><div class="export-section-title">GIF loop</div><div class="export-grid">
+<div class="export-field"><label for="exportFrameCount">Frames (max 20)</label><input id="exportFrameCount" type="number" min="2" max="20" value="10"></div>
+<div class="export-field"><label for="exportDelay">Loop speed</label><select id="exportDelay"><option value="100">0.10 s</option><option value="200">0.20 s</option><option value="350" selected>0.35 s</option><option value="500">0.50 s</option><option value="750">0.75 s</option><option value="1000">1.00 s</option></select></div></div>
+<div id="exportHistoryInfo" class="export-mode-note">GIF uses archived MRMS history and preserves the current map extent.</div></div>
+<div class="export-actions"><button class="secondary" type="button" onclick="closeExportModal()">Cancel</button><button id="exportStartButton" class="primary" type="button" onclick="startMapExport()">Export PNG</button></div>
+<div id="exportStatus" class="export-status" aria-live="polite"></div>
+</div></div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
 
 <script>
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
@@ -3730,6 +3782,26 @@ function closeLayerPanelWhenClickingOutside(event) {
     }
 }
 
+
+/* MAP / GIF EXPORT */
+let exportModalOpen=false;
+let exportBusy=false;
+function setExportStatus(message,error=false){const el=document.getElementById("exportStatus");if(el){el.textContent=message||"";el.classList.toggle("error",!!error);}}
+function openExportModal(){if(exportBusy)return;exportModalOpen=true;const b=document.getElementById("exportModalBackdrop");b.classList.add("open");b.setAttribute("aria-hidden","false");[["exportRadar","radarToggle"],["exportPrecipType","precipTypeToggle"],["exportPhase","phaseToggle"],["exportRadarFusion","radarFusionToggle"],["exportAgreement","phaseAgreementToggle"]].forEach(([a,b])=>{document.getElementById(a).checked=!!document.getElementById(b)?.checked;});updateExportFormatUI();setExportStatus("Pan and zoom the map behind this panel to set the export frame.");}
+function closeExportModal(){if(exportBusy)return;exportModalOpen=false;const b=document.getElementById("exportModalBackdrop");b.classList.remove("open");b.setAttribute("aria-hidden","true");document.getElementById("map")?.classList.remove("export-capture-mode");}
+function updateExportFormatUI(){const gif=document.getElementById("exportFormat")?.value==="gif", opts=document.getElementById("exportGifOptions"), btn=document.getElementById("exportStartButton"), f=document.getElementById("exportRadarFusion"), a=document.getElementById("exportAgreement");if(opts)opts.style.display=gif?"block":"none";if(btn)btn.textContent=gif?"Export GIF":"Export PNG";if(f){f.disabled=gif;if(gif)f.checked=false;}if(a){a.disabled=gif;if(gif)a.checked=false;}const info=document.getElementById("exportHistoryInfo");if(info&&gif)info.textContent=historyFrames.length?historyFrames.length+" archived frames available. Up to 20 frames ending at the current history frame will be used.":"History frames are not loaded yet. Open History first.";}
+function exportSelectedLayers(){return{radar:!!document.getElementById("exportRadar")?.checked,precipType:!!document.getElementById("exportPrecipType")?.checked,phase:!!document.getElementById("exportPhase")?.checked,radarFusion:!!document.getElementById("exportRadarFusion")?.checked,agreement:!!document.getElementById("exportAgreement")?.checked};}
+function snapshotLayerCheckboxes(){return{radar:!!document.getElementById("radarToggle")?.checked,precipType:!!document.getElementById("precipTypeToggle")?.checked,phase:!!document.getElementById("phaseToggle")?.checked,radarFusion:!!document.getElementById("radarFusionToggle")?.checked,agreement:!!document.getElementById("phaseAgreementToggle")?.checked};}
+function restoreLayerCheckboxes(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}}
+function waitForMapImages(timeoutMs=3000){const t=Date.now();return new Promise(resolve=>{(function check(){const p=Array.from(document.querySelectorAll("#map img")).filter(i=>!i.complete||i.naturalWidth===0);if(!p.length||Date.now()-t>=timeoutMs)return resolve();setTimeout(check,60);})();});}
+async function applyExportLayerSelection(s){[["radarToggle",s.radar],["precipTypeToggle",s.precipType],["phaseToggle",s.phase],["radarFusionToggle",s.radarFusion],["phaseAgreementToggle",s.agreement]].forEach(([id,v])=>{const e=document.getElementById(id);if(e)e.checked=v;});toggleRadar(s.radar);togglePrecipType(s.precipType);togglePhase(s.phase);if(!historyMode){toggleRadarFusion(s.radarFusion);togglePhaseAgreement(s.agreement);}await waitForMapImages(3000);}
+async function captureExportFrame(){const el=document.getElementById("map");if(!el||typeof html2canvas!=="function")throw new Error("Map export library is not available.");el.classList.add("export-capture-mode");await waitForMapImages(3000);if(document.fonts?.ready){try{await document.fonts.ready;}catch(e){}}const scale=Math.max(1,Math.min(2,Number(document.getElementById("exportScale")?.value||1)));try{return await html2canvas(el,{backgroundColor:"#fff",useCORS:true,allowTaint:false,scale,logging:false,imageTimeout:10000,width:el.clientWidth,height:el.clientHeight,onclone:d=>d.getElementById("map")?.classList.add("export-capture-mode")});}finally{el.classList.remove("export-capture-mode");}}
+function downloadCanvasPNG(c){const a=document.createElement("a"),stamp=new Date().toISOString().replace(/[:.]/g,"-");a.download="winterradar-map-"+stamp+".png";a.href=c.toDataURL("image/png");a.click();}
+async function exportPNG(){const selected=exportSelectedLayers(),prev=snapshotLayerCheckboxes();try{setExportStatus("Preparing selected layers…");await applyExportLayerSelection(selected);downloadCanvasPNG(await captureExportFrame());setExportStatus("PNG exported.");}finally{restoreLayerCheckboxes(prev);document.getElementById("map")?.classList.remove("export-capture-mode");}}
+async function exportGIF(){if(typeof GIF!=="function")throw new Error("GIF encoder is not available.");if(!historyFrames.length)throw new Error("No history frames are loaded. Open History and try again.");const selected=exportSelectedLayers(),prev=snapshotLayerCheckboxes(),prevMode=historyMode,prevIndex=historyIndex,count=Math.min(20,Math.max(2,Number(document.getElementById("exportFrameCount")?.value||10)),historyFrames.length),delay=Math.max(50,Number(document.getElementById("exportDelay")?.value||350)),end=historyIndex>=0?historyIndex:historyFrames.length-1,start=Math.max(0,end-count+1),indices=Array.from({length:end-start+1},(_,i)=>start+i);try{historyMode=true;stopHistoryPlayback();removeMapOverlay(radarFusionOverlay);radarFusionOverlay=null;removeMapOverlay(phaseAgreementOverlay);phaseAgreementOverlay=null;await applyExportLayerSelection({radar:selected.radar,precipType:selected.precipType,phase:selected.phase,radarFusion:false,agreement:false});const canvases=[];for(let n=0;n<indices.length;n++){setExportStatus("Capturing frame "+(n+1)+" of "+indices.length+"…");renderHistoryFrame(indices[n],false);await waitForMapImages(4500);await new Promise(r=>setTimeout(r,180));canvases.push(await captureExportFrame());}const first=canvases[0],gif=new GIF({workers:2,quality:8,width:first.width,height:first.height,workerScript:"https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js"});canvases.forEach(c=>gif.addFrame(c,{copy:true,delay}));await new Promise((resolve,reject)=>{gif.on("progress",p=>setExportStatus("Encoding GIF… "+Math.round(p*100)+"%"));gif.on("finished",blob=>{const a=document.createElement("a"),stamp=new Date().toISOString().replace(/[:.]/g,"-");a.download="winterradar-loop-"+stamp+".gif";a.href=URL.createObjectURL(blob);a.click();setTimeout(()=>URL.revokeObjectURL(a.href),30000);resolve();});gif.on("abort",()=>reject(new Error("GIF encoding was aborted.")));gif.render();});setExportStatus("GIF exported with "+indices.length+" frames at "+delay+" ms/frame.");}finally{restoreLayerCheckboxes(prev);if(prevMode&&historyFrames.length){historyMode=true;historyIndex=Math.max(0,Math.min(prevIndex,historyFrames.length-1));renderHistoryFrame(historyIndex,false);}else if(!prevMode){historyMode=false;loadCurrentRadarOverlay(true);loadCurrentPhaseOverlay(true);loadCurrentPrecipTypeOverlay(true);}}}
+async function startMapExport(){if(exportBusy)return;exportBusy=true;const b=document.getElementById("exportStartButton");if(b)b.disabled=true;try{await((document.getElementById("exportFormat")?.value||"png")==="gif"?exportGIF():exportPNG());}catch(e){console.error("Map export failed:",e);setExportStatus("Export failed: "+(e?.message||e),true);}finally{exportBusy=false;if(b)b.disabled=false;document.getElementById("map")?.classList.remove("export-capture-mode");}}
+document.getElementById("exportModalBackdrop")?.addEventListener("click",e=>{if(e.target===e.currentTarget&&!exportBusy)closeExportModal();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&exportModalOpen&&!exportBusy)closeExportModal();});
 
 initializeMap();
 refreshData();
