@@ -301,6 +301,11 @@ jobs:
               if phase_name and phase_api:
                   assets[phase_name] = phase_api
 
+              precip_type_name = frame.get("precip_type_asset")
+              precip_type_api = frame.get("precip_type_api_url")
+              if precip_type_name and precip_type_api:
+                  assets[precip_type_name] = precip_type_api
+
           print(f"History frames in manifest: {len(frames)}")
           print(f"Unique history assets to stage: {len(assets)}")
           if not assets:
