@@ -16,7 +16,6 @@ import time
 
 import numpy as np
 import requests
-from pyproj import CRS, Transformer
 
 from config import DATA_DIR
 
@@ -347,21 +346,69 @@ def _wetbulb_vectorized(temp_c: np.ndarray, dewpoint_c: np.ndarray, pressure_hpa
     return tw.astype(np.float32)
 
 
-def _make_transformer(projection: dict) -> Transformer:
-    grid_type = projection.get("GRIB_gridType")
+def _lambert_conformal_conic_xy(
+    longitude_deg: np.ndarray,
+    latitude_deg: np.ndarray,
+    projection: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project lon/lat to the spherical Lambert grid used by RAP.
+
+    This intentionally implements the small forward LCC calculation locally
+    instead of relying on pyproj's Transformer.transform().  Some pyproj/PROJ
+    builds have intermittently interpreted large NumPy coordinate arrays as
+    mixed-dimensional input and raised:
+        "x, y, z, and time must be same size if included."
+    The RAP grid is a regular spherical Lambert grid, so the forward equation
+    is deterministic and avoids that failure mode entirely.
+    """
+    grid_type = str(projection.get("GRIB_gridType", "")).lower()
     if grid_type != "lambert":
         raise RuntimeError(f"Expected Lambert RAP grid, got {grid_type!r}")
+
     lat_0 = projection.get("GRIB_LaDInDegrees")
     lon_0 = projection.get("GRIB_LoVInDegrees")
     lat_1 = projection.get("GRIB_Latin1InDegrees")
     lat_2 = projection.get("GRIB_Latin2InDegrees")
     if None in (lat_0, lon_0, lat_1, lat_2):
         raise RuntimeError("RAP Lambert projection metadata is incomplete.")
-    crs = CRS.from_proj4(
-        f"+proj=lcc +lat_1={lat_1} +lat_2={lat_2} +lat_0={lat_0} +lon_0={lon_0} "
-        "+a=6371229 +b=6371229 +units=m"
-    )
-    return Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+
+    lon = np.asarray(longitude_deg, dtype=np.float64)
+    lat = np.asarray(latitude_deg, dtype=np.float64)
+    if lon.shape != lat.shape:
+        raise RuntimeError(
+            f"RAP projection coordinate shape mismatch: lon={lon.shape}, lat={lat.shape}"
+        )
+
+    # RAP's Lambert grid uses a spherical Earth with radius 6371229 m.
+    radius = 6371229.0
+    phi0 = np.deg2rad(float(lat_0))
+    phi1 = np.deg2rad(float(lat_1))
+    phi2 = np.deg2rad(float(lat_2))
+    lam0 = np.deg2rad(float(lon_0))
+
+    def _t(phi):
+        # tan(pi/4 + phi/2) is well behaved for the RAP CONUS domain.
+        return np.tan(np.pi / 4.0 + phi / 2.0)
+
+    if abs(float(lat_1) - float(lat_2)) < 1.0e-8:
+        n = np.sin(phi1)
+    else:
+        n = np.log(np.cos(phi1) / np.cos(phi2)) / np.log(_t(phi2) / _t(phi1))
+
+    if not np.isfinite(n) or abs(n) < 1.0e-12:
+        raise RuntimeError(f"Invalid RAP Lambert projection exponent: {n!r}")
+
+    f = np.cos(phi1) * (_t(phi1) ** n) / n
+    rho0 = radius * f / (_t(phi0) ** n)
+
+    phi = np.deg2rad(lat)
+    lam = np.deg2rad(lon)
+    rho = radius * f / (_t(phi) ** n)
+    theta = n * (lam - lam0)
+
+    x = rho * np.sin(theta)
+    y = rho0 - rho * np.cos(theta)
+    return x, y
 
 
 def load_rap_profile(path: Path) -> dict:
@@ -385,21 +432,14 @@ def load_rap_profile(path: Path) -> dict:
     rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
 
     # Cache projected RAP coordinates so sample_profile_to_mrms does not
-    # transform the RAP grid again for every MRMS chunk.
-    transformer = _make_transformer(data["projection"])
-
-    # pyproj may interpret large 2-D coordinate arrays as mixed-dimensional
-    # input and raise: "x, y, z, and time must be same size if included."
-    # Flatten the paired lon/lat arrays explicitly, transform them as a simple
-    # x/y vector, then restore the RAP grid shape. This is the same safe pattern
-    # used when sampling the RAP grid onto MRMS below.
+    # perform a projection for every MRMS chunk.  Use the local spherical LCC
+    # implementation above rather than pyproj Transformer.transform().
     rap_shape = data["longitude"].shape
-    hx_flat, hy_flat = transformer.transform(
-        np.asarray(data["longitude"], dtype=np.float64).ravel(),
-        np.asarray(data["latitude"], dtype=np.float64).ravel(),
+    hx, hy = _lambert_conformal_conic_xy(
+        data["longitude"], data["latitude"], data["projection"]
     )
-    hx = np.asarray(hx_flat, dtype=np.float64).reshape(rap_shape)
-    hy = np.asarray(hy_flat, dtype=np.float64).reshape(rap_shape)
+    hx = np.asarray(hx, dtype=np.float64).reshape(rap_shape)
+    hy = np.asarray(hy, dtype=np.float64).reshape(rap_shape)
 
     x_axis = hx[0, :].astype(np.float64)
     y_axis = hy[:, 0].astype(np.float64)
@@ -451,7 +491,6 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
         lat2, lon2 = lat, lon
 
     # Reuse cached RAP projection coordinates.
-    transformer = _make_transformer(profile["projection"])
     hx = np.asarray(profile.get("_projected_x"), dtype=np.float64)
     hy = np.asarray(profile.get("_projected_y"), dtype=np.float64)
     x_axis = np.asarray(profile.get("_x_axis"), dtype=np.float64)
@@ -462,16 +501,14 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
     x_sorted = x_axis[::-1] if x_rev else x_axis
     y_sorted = y_axis[::-1] if y_rev else y_axis
 
-    # pyproj can raise a size-mismatch ProjError when very large 2-D arrays
-    # are passed directly through a transformer (especially when a source/grid
-    # CRS carries dimensional metadata). Flattening the coordinate arrays makes
-    # the transform unambiguously 2-D x/y input, then restore the MRMS chunk
-    # shape. This preserves the exact geographic sampling while avoiding the
-    # intermittent "x, y, z, and time must be same size" failure.
+    # Project the MRMS target coordinates with the same local spherical LCC
+    # equation used for the RAP grid. This avoids the intermittent pyproj
+    # mixed-dimensional-array failure and keeps source/target coordinates in
+    # exactly the same projection space.
     target_shape = lon2.shape
-    x_flat, y_flat = transformer.transform(lon2.ravel(), lat2.ravel())
-    x = np.asarray(x_flat, dtype=np.float64).reshape(target_shape)
-    y = np.asarray(y_flat, dtype=np.float64).reshape(target_shape)
+    x, y = _lambert_conformal_conic_xy(lon2, lat2, profile["projection"])
+    x = np.asarray(x, dtype=np.float64).reshape(target_shape)
+    y = np.asarray(y, dtype=np.float64).reshape(target_shape)
     ix_sorted = _nearest_index(x_sorted, x)
     iy_sorted = _nearest_index(y_sorted, y)
     ix = (len(x_axis) - 1 - ix_sorted) if x_rev else ix_sorted
