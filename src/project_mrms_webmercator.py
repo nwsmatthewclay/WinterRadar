@@ -21,7 +21,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "outputs"
 
-WEB_VERSION = "1.2-webmercator-all-layers-webp"
+WEB_VERSION = "1.3-webmercator-all-layers-png-primary"
 MAX_LAT = 85.0511287798
 
 
