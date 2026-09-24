@@ -42,13 +42,16 @@ PHASE_COLORS = {
 # precipitation type with a compact intensity ramp similar to common
 # radar precipitation-type displays:
 #
-#   Rain  -> yellow / orange / red
+#   Rain  -> exact MRMS BR HiRes reflectivity palette
 #   Snow  -> light blue / blue / deep blue
-#   Ice   -> pink / magenta / purple
+#   Ice   -> light red / red / deep red
 #   Mixed -> lavender / violet / purple
 #
-# Reflectivity controls the shade within each phase ramp, while the phase
-# classification controls the hue family.
+# Reflectivity controls the shade within each winter phase ramp, while the
+# phase classification controls the hue family. The composite is intentionally
+# a complete national precipitation mosaic: liquid rain keeps the standard
+# MRMS reflectivity colors, while winter precipitation receives phase-specific
+# colors.
 # ----------------------------------------------------------------------
 
 TYPE_RAMP_LEVELS = np.arange(5.0, 100.0, 5.0, dtype=np.float32)
@@ -79,16 +82,14 @@ def _ramp_from_anchors(anchors):
     ], axis=1)
 
 TYPE_RAMP_COLORS = {
-    # Rain: EXACT BR HiRes palette, sampled at the composite intensity levels.
-    "rain": BR_HIRES_COLORS.copy(),
-    # Other types use the same MRMS dBZ intensity scale but their own hue family.
+    # Winter types use the same MRMS dBZ intensity scale but their own hue family.
     "snow": _ramp_from_anchors([
         (5, 115, 205, 235), (25, 65, 165, 238), (45, 25, 95, 225),
         (65, 10, 40, 185), (85, 35, 25, 130), (95, 120, 70, 190),
     ]),
     "ice": _ramp_from_anchors([
-        (5, 245, 180, 215), (25, 232, 120, 195), (45, 210, 55, 170),
-        (65, 160, 25, 140), (85, 100, 20, 110), (95, 130, 45, 155),
+        (5, 255, 205, 215), (25, 250, 145, 160), (45, 235, 80, 95),
+        (65, 205, 35, 55), (85, 165, 15, 30), (95, 125, 10, 20),
     ]),
     "mixed": _ramp_from_anchors([
         (5, 220, 190, 248), (25, 190, 135, 240), (45, 155, 85, 225),
@@ -139,9 +140,10 @@ def result_to_precip_type_rgba(
     existing phase engine supplies result.phase.  Reflectivity is used only
     to choose the shade/intensity inside each phase's color family.
 
-    CLEAR pixels remain transparent.  Rain, snow, sleet, FZRA, and MIXED
-    precipitation all receive visible colors.  UNKNOWN remains a neutral
-    gray overlay so data limitations are visible without implying a phase.
+    CLEAR pixels remain transparent. Rain, snow, sleet, FZRA, and MIXED
+    precipitation all receive visible colors. UNKNOWN remains a neutral gray
+    so the national mosaic still shows where precipitation exists without
+    implying a precise winter phase.
     """
     dbz = np.asarray(reflectivity, dtype=np.float32)
     if dbz.shape != result.phase.shape:
@@ -153,10 +155,16 @@ def result_to_precip_type_rgba(
     rgba = np.zeros((*result.phase.shape, 4), dtype=np.uint8)
     precip = np.isfinite(dbz) & (dbz >= 5.0)
 
-    # Liquid rain.
+    # Liquid rain uses the exact BR HiRes palette. This makes the composite
+    # self-contained at national scale while remaining visually consistent
+    # with the standalone MRMS reflectivity layer.
     rain_mask = precip & (result.phase == RAIN)
     if np.any(rain_mask):
-        sample = np.clip(np.nan_to_num(dbz[rain_mask], nan=BR_HIRES_LEVELS[0]), BR_HIRES_LEVELS[0], BR_HIRES_LEVELS[-1])
+        sample = np.clip(
+            dbz[rain_mask],
+            BR_HIRES_LEVELS[0],
+            BR_HIRES_LEVELS[-1],
+        )
         idx = np.searchsorted(BR_HIRES_LEVELS, sample, side="right") - 1
         idx = np.clip(idx, 0, len(BR_HIRES_COLORS) - 1)
         rgba[..., :3][rain_mask] = BR_HIRES_COLORS[idx].astype(np.uint8)
@@ -192,9 +200,10 @@ def result_to_precip_type_rgba(
         alpha=alpha,
     )
 
-    # Unknown/uncertain precipitation gets a quieter gray.
+    # Unknown/uncertain precipitation gets a quieter gray, but remains visible
+    # so the national mosaic does not appear to have unexplained holes.
     unknown = precip & (result.phase == UNKNOWN)
-    rgba[unknown] = (145, 150, 155, min(alpha, 180))
+    rgba[unknown] = (145, 150, 155, min(alpha, 190))
 
     return rgba
 
