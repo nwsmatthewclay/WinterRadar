@@ -419,6 +419,16 @@ html, body {
 
 .layer-panel.open { display: block; }
 
+.layer-menu-note {
+    margin: 0 0 7px;
+    padding: 6px 7px;
+    border-left: 3px solid #2d84bd;
+    background: #f3f7fa;
+    color: #63737d;
+    font-size: 8px;
+    line-height: 1.3;
+}
+
 .layer-title {
     margin-bottom: 6px;
     color: #6b7781;
@@ -1138,15 +1148,15 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div id="legendPrecipType" class="map-legend-section">
-                    <div class="map-legend-label">Precipitation Type Composite</div>
+                <div id="legendPrecipType" class="map-legend-section" hidden>
+                    <div class="map-legend-label">National Precipitation Type Composite</div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-ice"></span><span>Ice (sleet / FZRA)</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
-                    <div class="map-legend-note">Rain is transparent in this composite; use the MRMS reflectivity layer for rain intensity.</div>
+                    <div class="map-legend-note">National mosaic: rain uses the MRMS reflectivity palette; winter precipitation uses phase-specific colors and reflectivity-based intensity.</div>
                 </div>
 
-                <div id="legendPhase" class="map-legend-section">
+                <div id="legendPhase" class="map-legend-section" hidden>
                     <div class="map-legend-label">Winter Phase Mask</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch snow"></span>Snow</div>
@@ -1157,7 +1167,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div id="legendRadarFusion" class="map-legend-section">
+                <div id="legendRadarFusion" class="map-legend-section" hidden>
                     <div class="map-legend-label">Radar Phase Evidence</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch radar-melting"></span>Melting-layer evidence</div>
@@ -1167,7 +1177,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div id="legendAgreement" class="map-legend-section">
+                <div id="legendAgreement" class="map-legend-section" hidden>
                     <div class="map-legend-label">Phase Agreement</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch agree"></span>Consistent</div>
@@ -1193,6 +1203,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                 <div id="layerPanel" class="layer-panel">
 
                     <div class="layer-title">Map layers</div>
+                    <div class="layer-menu-note">Scientific raster products use the full-CONUS national MRMS mosaic.</div>
 
                     <label class="layer-row">
                         <input
@@ -1208,7 +1219,6 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                         <input
                             id="precipTypeToggle"
                             type="checkbox"
-                            checked
                             onchange="togglePrecipType(this.checked)"
                         >
                         <span>Precipitation Type Composite</span>
@@ -1654,14 +1664,12 @@ let currentBounds = BTV_BOUNDS.slice();
 const referenceRequestSerial = { county: 0, zone: 0 };
 let dynamicReferenceRefreshTimer = null;
 
-// High-zoom live radar display. The full-CONUS MRMS raster remains the
-// scientific source of record. At close zoom we use a 2x nearest-neighbor
-// regional presentation so the browser is not forced to enlarge the tiny
-// BTV portion of a 7000-pixel-wide CONUS image.
-const RADAR_CLOSE_ZOOM = 8;
-const RADAR_CLOSE_BOUNDS = [
-    [40.95, -77.50],
-    [46.15, -68.40]
+// All scientific live raster layers use the same full-CONUS MRMS mosaic.
+// Regional presentation copies are intentionally not used because their sparse
+// coverage can make a national layer look partially populated when zoomed in.
+const MRMS_NATIONAL_BOUNDS = [
+    [20.005001, -129.995],
+    [54.995, -60.005002]
 ];
 let radarDisplayMode = null;
 let phaseDisplayMode = null;
@@ -1681,6 +1689,24 @@ const quickPlaces = [
 
 
 function initializeMap() {
+
+    // Start clean: only the MRMS reflectivity layer is enabled on page load.
+    // Keep the legend synchronized immediately so the other legend sections
+    // never flash on screen while the live data are loading.
+    const startupLayerDefaults = [
+        ["radarToggle", true],
+        ["precipTypeToggle", false],
+        ["phaseToggle", false],
+        ["radarFusionToggle", false],
+        ["phaseAgreementToggle", false]
+    ];
+
+    startupLayerDefaults.forEach(function(pair) {
+        const checkbox = document.getElementById(pair[0]);
+        if (checkbox) checkbox.checked = pair[1];
+    });
+
+    updateDynamicMapLegend();
 
     map = L.map("map", {
         zoomControl: true,
@@ -1763,70 +1789,29 @@ function createImageOverlay(
 }
 
 
-function shouldUseRadarCloseup() {
-    if (!map || !currentBounds) {
-        return false;
-    }
-
-    if (Number(map.getZoom()) < RADAR_CLOSE_ZOOM) {
-        return false;
-    }
-
-    const center = map.getCenter();
-    return center.lat >= RADAR_CLOSE_BOUNDS[0][0] &&
-        center.lat <= RADAR_CLOSE_BOUNDS[1][0] &&
-        center.lng >= RADAR_CLOSE_BOUNDS[0][1] &&
-        center.lng <= RADAR_CLOSE_BOUNDS[1][1];
-}
-
-
 function radarDisplaySpec() {
-    if (shouldUseRadarCloseup()) {
-        return {
-            mode: "close",
-            url: "./outputs/mrms_current_regional_web.png?v=" + Date.now(),
-            bounds: RADAR_CLOSE_BOUNDS
-        };
-    }
-
     return {
-        mode: "full",
+        mode: "national",
         url: "./outputs/mrms_current_web.png?v=" + Date.now(),
-        bounds: currentBounds
+        bounds: MRMS_NATIONAL_BOUNDS
     };
 }
 
 
 function phaseDisplaySpec() {
-    if (shouldUseRadarCloseup()) {
-        return {
-            mode: "close",
-            url: "./outputs/winter_phase_mask_regional_web.png?v=" + Date.now(),
-            bounds: RADAR_CLOSE_BOUNDS
-        };
-    }
-
     return {
-        mode: "full",
+        mode: "national",
         url: "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
-        bounds: currentBounds
+        bounds: MRMS_NATIONAL_BOUNDS
     };
 }
 
 
 function precipTypeDisplaySpec() {
-    if (shouldUseRadarCloseup()) {
-        return {
-            mode: "close",
-            url: "./outputs/winter_precip_type_regional_web.png?v=" + Date.now(),
-            bounds: RADAR_CLOSE_BOUNDS
-        };
-    }
-
     return {
-        mode: "full",
+        mode: "national",
         url: "./outputs/winter_precip_type_web.png?v=" + Date.now(),
-        bounds: currentBounds
+        bounds: MRMS_NATIONAL_BOUNDS
     };
 }
 
@@ -1866,29 +1851,19 @@ function loadCurrentPrecipTypeOverlay(force = false) {
     precipTypeOverlay.setOpacity(overlayOpacity);
 
     precipTypeOverlay.on("error", function() {
-        if (precipTypeDisplayMode === "close") {
-            console.warn("Regional sharp precipitation-type composite unavailable; using full-CONUS composite.");
-            precipTypeDisplayMode = null;
-            loadCurrentPrecipTypeOverlay(true);
-        } else {
-            console.warn("Precipitation-type composite is not available yet.");
-            document.getElementById("precipTypeToggle").checked = false;
-            removeMapOverlay(precipTypeOverlay);
-            precipTypeOverlay = null;
-        }
+        console.warn("Full-CONUS precipitation-type composite is not available yet.");
+        document.getElementById("precipTypeToggle").checked = false;
+        removeMapOverlay(precipTypeOverlay);
+        precipTypeOverlay = null;
+        precipTypeDisplayMode = null;
+        updateDynamicMapLegend();
     });
 }
 
 
 function refreshPrecipTypeResolutionOnView() {
-    if (historyMode || !precipTypeOverlay || !document.getElementById("precipTypeToggle")?.checked) {
-        return;
-    }
-
-    const desiredMode = shouldUseRadarCloseup() ? "close" : "full";
-    if (desiredMode !== precipTypeDisplayMode) {
-        loadCurrentPrecipTypeOverlay();
-    }
+    // The live composite is always the full national MRMS mosaic.
+    return;
 }
 
 
@@ -1932,24 +1907,20 @@ function loadCurrentPhaseOverlay(force = false) {
             phaseDisplayMode = null;
             loadCurrentPhaseOverlay(true);
         } else {
-            console.warn("Winter phase mask is not available yet.");
+            console.warn("Full-CONUS winter phase mask is not available yet.");
             document.getElementById("phaseToggle").checked = false;
             removeMapOverlay(phaseOverlay);
             phaseOverlay = null;
+            phaseDisplayMode = null;
+            updateDynamicMapLegend();
         }
     });
 }
 
 
 function refreshPhaseResolutionOnView() {
-    if (historyMode || !phaseOverlay || !document.getElementById("phaseToggle")?.checked) {
-        return;
-    }
-
-    const desiredMode = shouldUseRadarCloseup() ? "close" : "full";
-    if (desiredMode !== phaseDisplayMode) {
-        loadCurrentPhaseOverlay();
-    }
+    // The live phase mask is always the full national MRMS mosaic.
+    return;
 }
 
 
@@ -1988,27 +1959,19 @@ function loadCurrentRadarOverlay(force = false) {
     radarOverlay.setOpacity(overlayOpacity);
 
     radarOverlay.on("error", function() {
-        // The close-up is an optimization only. If that optional browser
-        // raster is unavailable, immediately fall back to the full-CONUS
-        // radar so the live product never disappears.
-        if (radarDisplayMode === "close") {
-            console.warn("Regional sharp MRMS raster unavailable; using full-CONUS raster.");
-            radarDisplayMode = null;
-            loadCurrentRadarOverlay(true);
-        }
+        console.warn("Full-CONUS MRMS raster is not available yet.");
+        document.getElementById("radarToggle").checked = false;
+        removeMapOverlay(radarOverlay);
+        radarOverlay = null;
+        radarDisplayMode = null;
+        updateDynamicMapLegend();
     });
 }
 
 
 function refreshRadarResolutionOnView() {
-    if (historyMode || !radarOverlay || !document.getElementById("radarToggle")?.checked) {
-        return;
-    }
-
-    const desiredMode = shouldUseRadarCloseup() ? "close" : "full";
-    if (desiredMode !== radarDisplayMode) {
-        loadCurrentRadarOverlay();
-    }
+    // The live MRMS reflectivity layer is always the full national mosaic.
+    return;
 }
 
 
@@ -2082,7 +2045,7 @@ function loadRadarFusionLayer() {
 
     radarFusionOverlay = createImageOverlay(
         "./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(),
-        currentBounds,
+        MRMS_NATIONAL_BOUNDS,
         overlayOpacity,
         575,
         true,
@@ -2093,10 +2056,11 @@ function loadRadarFusionLayer() {
     radarFusionOverlay.setOpacity(overlayOpacity);
 
     radarFusionOverlay.on("error", function() {
-        console.warn("Radar phase evidence overlay is not available yet.");
+        console.warn("Full-CONUS radar phase evidence overlay is not available yet.");
         document.getElementById("radarFusionToggle").checked = false;
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
+        updateDynamicMapLegend();
     });
 }
 
@@ -2117,7 +2081,7 @@ function loadPhaseAgreementLayer() {
 
     phaseAgreementOverlay = createImageOverlay(
         "./outputs/phase_agreement_overlay_web.png?v=" + Date.now(),
-        currentBounds,
+        MRMS_NATIONAL_BOUNDS,
         overlayOpacity,
         585,
         true,
@@ -2128,10 +2092,11 @@ function loadPhaseAgreementLayer() {
     phaseAgreementOverlay.setOpacity(overlayOpacity);
 
     phaseAgreementOverlay.on("error", function() {
-        console.warn("Phase agreement overlay is not available yet.");
+        console.warn("Full-CONUS phase agreement overlay is not available yet.");
         document.getElementById("phaseAgreementToggle").checked = false;
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
+        updateDynamicMapLegend();
     });
 }
 
@@ -3092,13 +3057,15 @@ async function refreshHistoryManifest() {
 
         const hours = Number(manifest.history_hours || 8);
         const phaseCount = Number(manifest.phase_snapshot_count || 0);
+        const precipTypeCount = Number(manifest.precip_type_snapshot_count || 0);
         const note = document.getElementById("historyNote");
 
         if (note) {
             note.textContent =
                 historyFrames.length + " archived full-CONUS MRMS frames covering up to " +
                 hours + " hours. " + phaseCount +
-                " phase snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
+                " phase snapshots and " + precipTypeCount +
+                " precipitation-type snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
         }
 
         if (!historyFrames.length) {
@@ -3146,18 +3113,29 @@ function cancelPendingHistoryLayers() {
 function historyAssetUrl(frame, kind) {
     if (!frame) return null;
 
-    const assetName = kind === "phase"
-        ? frame.phase_asset
-        : frame.radar_asset;
+    let assetName = null;
+    let directUrl = null;
+
+    if (kind === "phase") {
+        assetName = frame.phase_asset;
+        directUrl = frame.phase_url;
+    } else if (kind === "precipType") {
+        // New manifests archive the composite separately. For older manifests,
+        // fall back to the legacy phase asset so existing history remains viewable.
+        assetName = frame.precip_type_asset || frame.phase_asset;
+        directUrl = frame.precip_type_url || frame.phase_url;
+    } else {
+        assetName = frame.radar_asset;
+        directUrl = frame.radar_url;
+    }
 
     // Archived frames are copied into the GitHub Pages deployment. Using a
-    // same-origin URL avoids GitHub Release's browser download/attachment
-    // behavior and lets the browser render WebP normally.
+    // same-origin URL lets the browser render WebP normally.
     if (assetName) {
         return "./history/" + encodeURIComponent(assetName);
     }
 
-    return kind === "phase" ? frame.phase_url : frame.radar_url;
+    return directUrl;
 }
 
 
@@ -3328,13 +3306,15 @@ async function refreshHistoryManifest() {
 
         const hours = Number(manifest.history_hours || 8);
         const phaseCount = Number(manifest.phase_snapshot_count || 0);
+        const precipTypeCount = Number(manifest.precip_type_snapshot_count || 0);
         const note = document.getElementById("historyNote");
 
         if (note) {
             note.textContent =
                 historyFrames.length + " archived full-CONUS MRMS frames covering up to " +
                 hours + " hours. " + phaseCount +
-                " phase snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
+                " phase snapshots and " + precipTypeCount +
+                " precipitation-type snapshots are available; each radar frame uses the latest snapshot at or before its observation time.";
         }
 
         if (!historyFrames.length) {
@@ -3418,9 +3398,12 @@ function renderHistoryFrame(index, fitView) {
         radarOverlay = null;
     }
 
-    if (document.getElementById("precipTypeToggle")?.checked && frame.phase_url) {
+    if (
+        document.getElementById("precipTypeToggle")?.checked &&
+        (frame.precip_type_url || frame.precip_type_asset || frame.phase_url || frame.phase_asset)
+    ) {
         loadHistoricalOverlay({
-            nativeUrl: historyAssetUrl(frame, "phase"),
+            nativeUrl: historyAssetUrl(frame, "precipType"),
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 540,
@@ -3446,7 +3429,7 @@ function renderHistoryFrame(index, fitView) {
                 pendingHistoryPrecipType = null;
                 console.warn(
                     "Historical precipitation-type composite failed to load:",
-                    historyAssetUrl(frame, "phase")
+                    historyAssetUrl(frame, "precipType")
                 );
             }
         }).catch(function() {});
@@ -3456,7 +3439,10 @@ function renderHistoryFrame(index, fitView) {
         precipTypeDisplayMode = null;
     }
 
-    if (document.getElementById("phaseToggle").checked && frame.phase_url) {
+    if (
+        document.getElementById("phaseToggle").checked &&
+        (frame.phase_url || frame.phase_asset)
+    ) {
         loadHistoricalOverlay({
             nativeUrl: historyAssetUrl(frame, "phase"),
             bounds: bounds,
@@ -3924,7 +3910,7 @@ function exportLegendItems(selected) {
     }
     if (selected.precipType) {
         items.push({type:"swatches", label:"Precipitation Type Composite", swatches:[
-            ["Snow","#3aa7ff"],["Sleet","#b84de0"],
+            ["Rain (MRMS dBZ)","#1d6fb8"],["Snow","#3aa7ff"],["Sleet","#b84de0"],
             ["Freezing Rain","#e13958"],["Mixed","#9b73df"]
         ]});
     }
