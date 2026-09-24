@@ -184,9 +184,6 @@ html, body {
     image-rendering: pixelated !important;
 }
 
-.map-legend[hidden] { display: none !important; }
-.map-legend-section[hidden] { display: none !important; }
-
 .map-legend {
     position: absolute;
     top: 48px;
@@ -1099,7 +1096,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
             <div class="map-legend" aria-label="WinterRadar map legend">
                 <div class="map-legend-title">Map Legend</div>
 
-                <div class="map-legend-section" id="legendRadarSection">
+                <div class="map-legend-section">
                     <div class="map-legend-label">MRMS Reflectivity (dBZ)</div>
                     <div class="reflectivity-gradient" aria-label="MRMS reflectivity color scale from 5 to 95 plus dBZ"></div>
                     <div class="reflectivity-label-row">
@@ -1107,7 +1104,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section" id="legendPrecipTypeSection">
+                <div class="map-legend-section">
                     <div class="map-legend-label">Precipitation Type Composite</div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-rain"></span><span>Rain</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
@@ -1115,7 +1112,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
                 </div>
 
-                <div class="map-legend-section" id="legendPhaseSection">
+                <div class="map-legend-section">
                     <div class="map-legend-label">Winter Phase Mask</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch snow"></span>Snow</div>
@@ -1126,7 +1123,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section" id="legendRadarFusionSection">
+                <div class="map-legend-section">
                     <div class="map-legend-label">Radar Phase Evidence</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch radar-melting"></span>Melting-layer evidence</div>
@@ -1136,7 +1133,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     </div>
                 </div>
 
-                <div class="map-legend-section" id="legendAgreementSection">
+                <div class="map-legend-section">
                     <div class="map-legend-label">Phase Agreement</div>
                     <div class="map-legend-items">
                         <div class="map-legend-item"><span class="map-legend-swatch agree"></span>Consistent</div>
@@ -1524,19 +1521,8 @@ const NWS_LAYER_CONFIG = {
 // so the map remains responsive while still showing every applicable
 // boundary in view.
 const NWS_DYNAMIC_LAYERS = {
-    // Restrict all working boundary requests to the visible map extent.
-    // This avoids loading the full national CWA geometry at startup.
-    cwa: true,
     county: true,
     zone: true
-};
-
-let dynamicReferenceRefreshTimer = null;
-const referenceRequestSerial = {
-    cwa: 0,
-    county: 0,
-    zone: 0,
-    state: 0
 };
 
 
@@ -1596,6 +1582,12 @@ const referenceLoaded = {
 
 let currentBounds = BTV_BOUNDS.slice();
 
+// Dynamic NWS boundary requests can overlap while the user pans/zooms.
+// Keep only the newest request eligible to install, and debounce moveend so
+// a quick map gesture does not generate a burst of redundant API calls.
+const referenceRequestSerial = { county: 0, zone: 0 };
+let dynamicReferenceRefreshTimer = null;
+
 // High-zoom live radar display. The full-CONUS MRMS raster remains the
 // scientific source of record. At close zoom we use a 2x nearest-neighbor
 // regional presentation so the browser is not forced to enlarge the tiny
@@ -1654,7 +1646,22 @@ function initializeMap() {
         refreshRadarResolutionOnView();
         refreshPhaseResolutionOnView();
         refreshPrecipTypeResolutionOnView();
-        scheduleDynamicReferenceRefresh();
+
+        if (dynamicReferenceRefreshTimer) {
+            clearTimeout(dynamicReferenceRefreshTimer);
+        }
+
+        dynamicReferenceRefreshTimer = setTimeout(function() {
+            ["county", "zone"].forEach(function(name) {
+                const checkbox = document.getElementById(
+                    name === "county" ? "countyToggle" : "zoneToggle"
+                );
+
+                if (checkbox && checkbox.checked) {
+                    refreshDynamicReferenceLayer(name);
+                }
+            });
+        }, 250);
     });
 }
 
@@ -1800,7 +1807,6 @@ function loadCurrentPrecipTypeOverlay(force = false) {
         } else {
             console.warn("Precipitation-type composite is not available yet.");
             document.getElementById("precipTypeToggle").checked = false;
-            updateMapLegendVisibility();
             removeMapOverlay(precipTypeOverlay);
             precipTypeOverlay = null;
         }
@@ -2023,7 +2029,6 @@ function loadRadarFusionLayer() {
     radarFusionOverlay.on("error", function() {
         console.warn("Radar phase evidence overlay is not available yet.");
         document.getElementById("radarFusionToggle").checked = false;
-        updateMapLegendVisibility();
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
     });
@@ -2059,34 +2064,9 @@ function loadPhaseAgreementLayer() {
     phaseAgreementOverlay.on("error", function() {
         console.warn("Phase agreement overlay is not available yet.");
         document.getElementById("phaseAgreementToggle").checked = false;
-        updateMapLegendVisibility();
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
     });
-}
-
-
-function updateMapLegendVisibility() {
-    const mappings = [
-        ["legendRadarSection", "radarToggle"],
-        ["legendPrecipTypeSection", "precipTypeToggle"],
-        ["legendPhaseSection", "phaseToggle"],
-        ["legendRadarFusionSection", "radarFusionToggle"],
-        ["legendAgreementSection", "phaseAgreementToggle"]
-    ];
-
-    let anyVisible = false;
-    mappings.forEach(function(pair) {
-        const section = document.getElementById(pair[0]);
-        const checkbox = document.getElementById(pair[1]);
-        if (!section) return;
-        const visible = !!checkbox && checkbox.checked;
-        section.hidden = !visible;
-        if (visible) anyVisible = true;
-    });
-
-    const legend = document.querySelector(".map-legend");
-    if (legend) legend.hidden = !anyVisible;
 }
 
 
@@ -2103,7 +2083,6 @@ function togglePhaseAgreement(enabled) {
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
     }
-    updateMapLegendVisibility();
 }
 
 
@@ -2120,7 +2099,6 @@ function toggleRadarFusion(enabled) {
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
     }
-    updateMapLegendVisibility();
 }
 
 
@@ -2140,7 +2118,6 @@ function toggleRadar(enabled) {
         radarOverlay = null;
         radarDisplayMode = null;
     }
-    updateMapLegendVisibility();
 }
 
 
@@ -2160,7 +2137,6 @@ function togglePrecipType(enabled) {
         precipTypeOverlay = null;
         precipTypeDisplayMode = null;
     }
-    updateMapLegendVisibility();
 }
 
 
@@ -2180,23 +2156,24 @@ function togglePhase(enabled) {
         phaseOverlay = null;
         phaseDisplayMode = null;
     }
-    updateMapLegendVisibility();
 }
 
 
 async function toggleReferenceLayer(name, enabled) {
 
-    const checkbox = document.getElementById(layerCheckboxId(name));
-
     if (!enabled) {
-        // Invalidate in-flight requests so a late response cannot turn the
-        // layer back on after the user disabled it.
-        referenceRequestSerial[name]++;
 
-        if (referenceLayers[name] && map.hasLayer(referenceLayers[name])) {
+        if (NWS_DYNAMIC_LAYERS[name]) {
+            referenceRequestSerial[name] += 1;
+        }
+
+        if (
+            referenceLayers[name] &&
+            map.hasLayer(referenceLayers[name])
+        ) {
             map.removeLayer(referenceLayers[name]);
         }
-        if (checkbox) checkbox.checked = false;
+
         return;
     }
 
@@ -2207,12 +2184,28 @@ async function toggleReferenceLayer(name, enabled) {
             await refreshDynamicReferenceLayer(name);
         }
 
-        if (referenceLayers[name] && !map.hasLayer(referenceLayers[name])) {
-            referenceLayers[name].addTo(map);
+        const layer = referenceLayers[name];
+
+        if (layer && !map.hasLayer(layer)) {
+            layer.addTo(map);
         }
+
     } catch (error) {
         console.error("Unable to enable NWS " + name + " layer:", error);
-        if (checkbox) checkbox.checked = false;
+
+        const checkbox = document.getElementById(
+            name === "county"
+                ? "countyToggle"
+                : name === "zone"
+                    ? "zoneToggle"
+                    : name === "state"
+                        ? "stateToggle"
+                        : "cwaToggle"
+        );
+
+        if (checkbox) {
+            checkbox.checked = false;
+        }
     }
 }
 
@@ -2230,155 +2223,200 @@ function getMapExtent4326() {
 }
 
 
-function boundaryGeneralizationDegrees(name) {
-    const zoom = map ? Number(map.getZoom()) : 7;
-    if (zoom >= 10) return 0.0025;
-    if (zoom >= 8) return 0.005;
-    if (zoom >= 6) return 0.01;
-    return 0.02;
-}
-
-
-function layerCheckboxId(name) {
-    return name === "county"
-        ? "countyToggle"
-        : name === "zone"
-            ? "zoneToggle"
-            : name === "state"
-                ? "stateToggle"
-                : "cwaToggle";
-}
-
-
 async function fetchNWSGeoJSON(name, extent) {
 
     const config = NWS_LAYER_CONFIG[name];
-    if (!config) throw new Error("Unknown NWS layer: " + name);
 
-    const url = NWS_FEATURE_BASE + "/" + config.id + "/query";
+    if (!config) {
+        throw new Error("Unknown NWS layer: " + name);
+    }
+
+    const url =
+        NWS_FEATURE_BASE +
+        "/" + config.id + "/query";
+
     const baseParams = new URLSearchParams();
 
     baseParams.set("where", "1=1");
     baseParams.set("outFields", config.fields);
     baseParams.set("returnGeometry", "true");
     baseParams.set("outSR", "4326");
-    baseParams.set("inSR", "4326");
     baseParams.set("f", "geojson");
     baseParams.set("returnExceededLimitFeatures", "true");
-    baseParams.set("maxAllowableOffset", String(boundaryGeneralizationDegrees(name)));
-    baseParams.set("resultRecordCount", "250");
+    // Stay below the service's common max-record limit and explicitly page
+    // through larger county/zone responses so boundaries are not silently
+    // truncated when the current extent contains many features.
+    baseParams.set("resultRecordCount", "1000");
 
     if (extent) {
-        baseParams.set("geometry", [extent.west, extent.south, extent.east, extent.north].join(","));
+        baseParams.set(
+            "geometry",
+            [
+                extent.west,
+                extent.south,
+                extent.east,
+                extent.north
+            ].join(",")
+        );
         baseParams.set("geometryType", "esriGeometryEnvelope");
+        baseParams.set("inSR", "4326");
         baseParams.set("spatialRel", "esriSpatialRelIntersects");
     }
 
-    const features = [];
-    let resultOffset = 0;
+    const allFeatures = [];
+    let offset = 0;
+    let page = 0;
 
-    for (let page = 0; page < 20; page++) {
+    while (true) {
         const params = new URLSearchParams(baseParams);
-        params.set("resultOffset", String(resultOffset));
+        params.set("resultOffset", String(offset));
 
-        const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-        const timeoutId = controller ? window.setTimeout(() => controller.abort(), 10000) : null;
+        const response = await fetch(
+            url + "?" + params.toString(),
+            { cache: "no-store" }
+        );
 
-        try {
-            const response = await fetch(
-                url + "?" + params.toString(),
-                controller ? { cache: "no-store", signal: controller.signal } : { cache: "no-store" }
+        if (!response.ok) {
+            throw new Error(
+                "NWS layer " + name + " request failed: " + response.status
             );
-            if (!response.ok) {
-                throw new Error("NWS layer " + name + " request failed: " + response.status);
-            }
+        }
 
-            const pageGeoJSON = await response.json();
-            if (pageGeoJSON.error) {
-                throw new Error("NWS layer " + name + " returned an error: " + JSON.stringify(pageGeoJSON.error));
-            }
+        const geojson = await response.json();
 
-            const pageFeatures = Array.isArray(pageGeoJSON.features) ? pageGeoJSON.features : [];
-            features.push(...pageFeatures);
+        if (geojson.error) {
+            throw new Error(
+                "NWS layer " + name + " returned an error: " +
+                JSON.stringify(geojson.error)
+            );
+        }
 
-            const exceeded = pageGeoJSON.exceededTransferLimit === true;
-            if (!pageFeatures.length || (!exceeded && pageFeatures.length < 250)) {
-                break;
-            }
+        const features = Array.isArray(geojson.features)
+            ? geojson.features
+            : [];
 
-            resultOffset += pageFeatures.length;
-        } finally {
-            if (timeoutId) window.clearTimeout(timeoutId);
+        allFeatures.push(...features);
+        page += 1;
+
+        const exceeded = Boolean(geojson.exceededTransferLimit);
+        if (!exceeded || features.length === 0) {
+            break;
+        }
+
+        offset += features.length;
+
+        // Safety valve against a misbehaving service returning the same page.
+        if (page >= 50) {
+            console.warn(
+                "NWS " + name + " pagination reached 50 pages; stopping."
+            );
+            break;
         }
     }
 
-    return { type: "FeatureCollection", features: features };
+    return {
+        type: "FeatureCollection",
+        features: allFeatures
+    };
 }
 
 
 function installReferenceGeoJSON(name, geojson) {
-    if (referenceLayers[name] && map.hasLayer(referenceLayers[name])) {
+
+    if (
+        referenceLayers[name] &&
+        map.hasLayer(referenceLayers[name])
+    ) {
         map.removeLayer(referenceLayers[name]);
     }
 
-    referenceLayers[name] = L.geoJSON(geojson, {
-        style: NWS_STYLES[name],
-        interactive: false
-    });
+    referenceLayers[name] = L.geoJSON(
+        geojson,
+        {
+            style: NWS_STYLES[name],
+            interactive: false
+        }
+    );
 
-    if (referenceLayers[name]) referenceLayers[name].addTo(map);
+    if (referenceLayers[name]) {
+        referenceLayers[name].addTo(map);
+    }
 }
 
 
 async function loadReferenceLayer(name) {
-    if (referenceLoaded[name]) return;
 
-    const extent = NWS_DYNAMIC_LAYERS[name] ? getMapExtent4326() : null;
-    const requestId = ++referenceRequestSerial[name];
+    if (referenceLoaded[name]) {
+        return;
+    }
+
+    // Counties and public forecast zones are loaded for the current map
+    // extent. CWA and state layers load all features.
+    const extent = NWS_DYNAMIC_LAYERS[name]
+        ? getMapExtent4326()
+        : null;
+
     const geojson = await fetchNWSGeoJSON(name, extent);
 
-    if (requestId !== referenceRequestSerial[name]) return;
-
     installReferenceGeoJSON(name, geojson);
+
     referenceLoaded[name] = true;
 
-    console.info("Loaded NWS " + name + " layer: " + ((geojson.features || []).length) + " features");
+    console.info(
+        "Loaded NWS " + name + " layer: " +
+        ((geojson.features || []).length) + " features"
+    );
 }
 
 
 async function refreshDynamicReferenceLayer(name) {
-    if (!NWS_DYNAMIC_LAYERS[name]) return;
 
-    const checkbox = document.getElementById(layerCheckboxId(name));
-    if (!checkbox || !checkbox.checked) return;
-
-    const requestId = ++referenceRequestSerial[name];
-    const geojson = await fetchNWSGeoJSON(name, getMapExtent4326());
-
-    if (requestId !== referenceRequestSerial[name]) return;
-    if (!checkbox.checked) return;
-
-    installReferenceGeoJSON(name, geojson);
-    referenceLoaded[name] = true;
-    console.info("Refreshed NWS " + name + " layer: " + ((geojson.features || []).length) + " features");
-}
-
-
-function scheduleDynamicReferenceRefresh() {
-    if (dynamicReferenceRefreshTimer !== null) {
-        window.clearTimeout(dynamicReferenceRefreshTimer);
+    if (!NWS_DYNAMIC_LAYERS[name]) {
+        return;
     }
 
-    dynamicReferenceRefreshTimer = window.setTimeout(function() {
-        dynamicReferenceRefreshTimer = null;
-        ["cwa", "county", "zone"].forEach(function(name) {
-            const checkbox = document.getElementById(layerCheckboxId(name));
-            if (!checkbox || !checkbox.checked) return;
-            refreshDynamicReferenceLayer(name).catch(function(error) {
-                console.warn("NWS " + name + " boundary refresh failed:", error);
-            });
-        });
-    }, 500);
+    const checkbox = document.getElementById(
+        name === "county" ? "countyToggle" : "zoneToggle"
+    );
+
+    if (!checkbox || !checkbox.checked) {
+        return;
+    }
+
+    const requestId = ++referenceRequestSerial[name];
+    const extent = getMapExtent4326();
+
+    try {
+        const geojson = await fetchNWSGeoJSON(name, extent);
+
+        // A newer pan/zoom request may have completed while this request was
+        // in flight. Never replace the newest map with an older response.
+        if (requestId !== referenceRequestSerial[name]) {
+            return;
+        }
+
+        const currentCheckbox = document.getElementById(
+            name === "county" ? "countyToggle" : "zoneToggle"
+        );
+        if (!currentCheckbox || !currentCheckbox.checked) {
+            return;
+        }
+
+        installReferenceGeoJSON(name, geojson);
+        referenceLoaded[name] = true;
+
+        console.info(
+            "Refreshed NWS " + name + " layer for current map extent: " +
+            ((geojson.features || []).length) + " features"
+        );
+    } catch (error) {
+        if (requestId === referenceRequestSerial[name]) {
+            console.error(
+                "Unable to refresh NWS " + name + " layer:",
+                error
+            );
+        }
+    }
 }
 
 
@@ -3694,7 +3732,6 @@ function closeLayerPanelWhenClickingOutside(event) {
 
 
 initializeMap();
-updateMapLegendVisibility();
 refreshData();
 refreshHistoryManifest();
 
