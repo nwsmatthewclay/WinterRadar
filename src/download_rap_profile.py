@@ -493,11 +493,25 @@ def load_rap_profile(path: Path) -> dict:
     rh_ice = np.clip(100.0 * e_actual / np.maximum(e_ice, 0.01), 0.0, 150.0).astype(np.float32)
 
     # Cache projected RAP coordinates so sample_profile_to_mrms does not
-    # perform a projection for every MRMS chunk. The regular projected grid is
-    # reconstructed directly from GRIB geometry; this avoids any dependency on
-    # the shape of ecCodes latitude/longitude arrays.
+    # perform a projection for every MRMS chunk. Prefer the latitude/longitude
+    # coordinates actually returned by pygrib when they have the decoded field
+    # shape. Those coordinates are authoritative for a filtered NOMADS subset
+    # and avoid subtle scan-direction/first-grid-point offsets. Only rebuild
+    # the Lambert grid when pygrib returned malformed/broadcast coordinates.
     rap_shape = temp_c.shape[1:]
-    _, _, hx, hy = _build_regular_lambert_grid(rap_shape, data["projection"])
+    raw_lat = np.asarray(data["latitude"], dtype=np.float64)
+    raw_lon = np.asarray(data["longitude"], dtype=np.float64)
+    if raw_lat.shape == rap_shape and raw_lon.shape == rap_shape:
+        hx, hy = _lambert_conformal_conic_xy(
+            raw_lon,
+            raw_lat,
+            data["projection"],
+        )
+    else:
+        _, _, hx, hy = _build_regular_lambert_grid(
+            rap_shape,
+            data["projection"],
+        )
     x_axis = hx[0, :].astype(np.float64)
     y_axis = hy[:, 0].astype(np.float64)
 
@@ -571,10 +585,25 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
     ix = (len(x_axis) - 1 - ix_sorted) if x_rev else ix_sorted
     iy = (len(y_axis) - 1 - iy_sorted) if y_rev else iy_sorted
 
+    # Require the selected grid point itself to be close to the target
+    # projected coordinate. This guards against accepting a clipped/offset
+    # nearest index when a filtered RAP subset does not actually cover an MRMS
+    # target point. Half a RAP grid spacing is the natural nearest-neighbor
+    # acceptance radius, with a small tolerance for floating-point projection
+    # roundoff.
+    selected_x = x_axis[ix]
+    selected_y = y_axis[iy]
+    dx = float(np.nanmedian(np.abs(np.diff(x_sorted)))) if len(x_sorted) > 1 else np.nan
+    dy = float(np.nanmedian(np.abs(np.diff(y_sorted)))) if len(y_sorted) > 1 else np.nan
+    x_tolerance = 0.51 * dx if np.isfinite(dx) and dx > 0 else np.inf
+    y_tolerance = 0.51 * dy if np.isfinite(dy) and dy > 0 else np.inf
+
     valid = (
         np.isfinite(x) & np.isfinite(y)
         & (x >= min(x_axis.min(), x_axis.max())) & (x <= max(x_axis.min(), x_axis.max()))
         & (y >= min(y_axis.min(), y_axis.max())) & (y <= max(y_axis.min(), y_axis.max()))
+        & (np.abs(x - selected_x) <= x_tolerance)
+        & (np.abs(y - selected_y) <= y_tolerance)
     )
 
     out: dict[str, np.ndarray] = {}
