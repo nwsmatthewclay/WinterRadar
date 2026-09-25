@@ -92,9 +92,9 @@ HISTORY_FALLBACK_BOUNDS = [
 ]
 
 # Archive all observed ~2-minute MRMS frames for the most recent 8 hours.
-# Phase masks are bucketed to one per 10 minutes.
+# Phase masks are bucketed to one per 5 minutes, matching the workflow cadence.
 HISTORY_HOURS = 8
-PHASE_BUCKET_MINUTES = 10
+PHASE_BUCKET_MINUTES = 5
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
     os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "40")
 )
@@ -1152,8 +1152,8 @@ def self_test() -> None:
     payload = rgba_to_webp_bytes(projected, quality=82)
     assert payload[:4] == b"RIFF"
 
-    stamp = floor_time(datetime(2026, 9, 20, 7, 37, tzinfo=timezone.utc), 10)
-    assert stamp.minute == 30
+    stamp = floor_time(datetime(2026, 9, 20, 7, 37, tzinfo=timezone.utc), 5)
+    assert stamp.minute == 35
 
     print("MRMS HISTORY SELF-TEST PASSED")
 
