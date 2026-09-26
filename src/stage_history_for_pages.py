@@ -18,7 +18,7 @@ TOKEN = os.environ.get("GITHUB_TOKEN", "")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
-UA = "WinterRadar/1.0 (Pages history staging)"
+UA = "WinterRadar/1.1 (Pages history staging)"
 
 
 def api_url(path: str) -> str:
