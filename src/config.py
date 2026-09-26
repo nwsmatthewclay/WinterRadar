@@ -144,3 +144,10 @@ def field_info(product: str) -> dict:
             "no_coverage": (),
         },
     )
+
+
+# Vertical dual-polarization MRMS CAPPI products.
+VERTICAL_DUALPOL_LEVELS_KM = [0.50, 1.00, 1.50, 2.00, 2.50, 3.00, 3.50, 4.00]
+VERTICAL_DUALPOL_PRODUCTS = {"rhohv": "MergedRhoHV", "zdr": "MergedZdr"}
+MRMS_3D_RHOHV_BASE = "https://mrms.ncep.noaa.gov/3DRhoHV"
+MRMS_3D_ZDR_BASE = "https://mrms.ncep.noaa.gov/3DZdr"
