@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -48,10 +48,7 @@ jobs:
             xarray \
             cfgrib \
             matplotlib \
-            pygrib \
-            scipy \
-            metpy \
-            pyproj
+            pygrib
 
       - name: Core syntax QC
         run: |
@@ -62,13 +59,11 @@ jobs:
             src/classifier.py \
             src/render.py \
             src/main.py \
-            src/download_rap_profile.py \
-            src/phase_profile.py \
             src/project_mrms_webmercator.py \
             src/build_phase_diagnostics.py \
             src/build_phase_radar_fusion.py \
-            src/archive_mrms_history.py \
-            src/build_history_precip_type.py
+            src/publish_live_history.py \
+            src/stage_history_for_pages.py
 
       - name: Run core MRMS processing
         working-directory: src
@@ -92,24 +87,25 @@ jobs:
           bash ./src/verify_core_outputs.sh
 
       - name: Build phase probability and QC diagnostics
+        continue-on-error: true
         env:
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
         run: |
-          # This is a reporting/QC product, not part of the critical radar path.
-          # Never allow a diagnostic failure to prevent Web Mercator, history, or Pages.
-          set +e
+          set -euo pipefail
           python -u src/build_phase_diagnostics.py
-          rc=$?
-          if [ "$rc" -ne 0 ]; then
-            echo "WARNING: phase diagnostics failed with exit code $rc; continuing with core radar products."
-          else
-            echo "Phase diagnostics completed successfully."
-          fi
-          exit 0
 
+      - name: Project browser MRMS rasters to Web Mercator
+        run: |
+          set -euo pipefail
+          python -u src/project_mrms_webmercator.py
+
+      # Archive history after the live Web Mercator products are complete.
+      # History is deliberately non-critical so it can never take the live
+      # radar/Pages product offline. The collector discovers any timestamped
+      # MRMS frames missed while this workflow was queued or running.
       - name: Download optional diagnostic 2-D fields
         continue-on-error: true
         working-directory: src
@@ -248,144 +244,25 @@ jobs:
       # persistent storage for Actions, but not reliable <img> sources in the
       # browser. Stage the archived WebP frames into the Pages deployment so
       # the history viewer can load them same-origin with image/webp.
-      # Archive history only after ALL current-scan diagnostic products and
-      # their fallbacks exist. This ordering is intentional: Web Mercator
-      # needs the phase-fusion overlay when that product is available.
-      - name: Project browser MRMS rasters to Web Mercator
-        run: |
-          set -euo pipefail
-          python -u src/project_mrms_webmercator.py
-
-      # Archive history after the live Web Mercator products are complete.
-      # History is deliberately non-critical so it can never take the live
-      # radar/Pages product offline. The collector discovers any timestamped
-      # MRMS frames missed while this workflow was queued or running.
-
-      # History is deliberately non-critical so it can never take the live
-      # radar/Pages product offline. The collector discovers any timestamped
-      # MRMS frames missed while this workflow was queued or running.
-      - name: Archive 8-hour full-CONUS MRMS history
-        continue-on-error: true
-        working-directory: src
+      - name: Publish latest live frame to GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
         run: |
           set -euo pipefail
-          python -u archive_mrms_history.py
+          python -u src/publish_live_history.py
 
-      # Diagnostics are deliberately OUTSIDE the critical live-radar path.
-      # They can fail without taking the current MRMS radar offline.
-      - name: Stage archived MRMS history for Pages
+      # Release assets are the persistent history store. This downloads only
+      # the already-archived 3-hour WebP history into Pages so the browser can
+      # load the files same-origin. It does not contact NOAA for history.
+      - name: Stage 3-hour MRMS history for Pages
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          rm -rf site_history_tmp
-          mkdir -p site_history_tmp
-
-          python - <<'PY'
-          import concurrent.futures
-          import json
-          import os
-          from pathlib import Path
-          from urllib.parse import quote
-
-          import requests
-
-          manifest_path = Path("outputs/mrms_history.json")
-          history_dir = Path("site_history_tmp")
-          history_dir.mkdir(parents=True, exist_ok=True)
-
-          if not manifest_path.exists() or manifest_path.stat().st_size == 0:
-              print("No MRMS history manifest found; skipping history staging.")
-              raise SystemExit(0)
-
-          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-          frames = manifest.get("frames", [])
-
-          assets = {}
-          for frame in frames:
-              radar_name = frame.get("radar_asset")
-              radar_api = frame.get("radar_api_url")
-              if radar_name and radar_api:
-                  assets[radar_name] = radar_api
-
-              phase_name = frame.get("phase_asset")
-              phase_api = frame.get("phase_api_url")
-              if phase_name and phase_api:
-                  assets[phase_name] = phase_api
-
-              precip_type_name = frame.get("precip_type_asset")
-              precip_type_api = frame.get("precip_type_api_url")
-              if precip_type_name and precip_type_api:
-                  assets[precip_type_name] = precip_type_api
-
-          print(f"History frames in manifest: {len(frames)}")
-          print(f"Unique history assets to stage: {len(assets)}")
-          if not assets:
-              print("No stageable history assets are present yet.")
-              raise SystemExit(0)
-
-          token = os.environ.get("GITHUB_TOKEN", "")
-          session = requests.Session()
-          session.headers.update({
-              "Accept": "application/octet-stream",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2026-03-10",
-              "User-Agent": "WinterRadar/1.1 (Pages history staging)",
-          })
-
-          def download(item):
-              name, api_url = item
-              target = history_dir / name
-              if target.exists() and target.stat().st_size > 0:
-                  return name, True, "cached"
-
-              last_error = None
-              for attempt in range(1, 4):
-                  try:
-                      response = session.get(api_url, timeout=(20, 120), allow_redirects=True)
-                      response.raise_for_status()
-                      data = response.content
-                      if len(data) < 64 or not data[:4] == b"RIFF" or data[8:12] != b"WEBP":
-                          raise RuntimeError(f"unexpected payload ({len(data):,} bytes; not WebP)")
-                      target.write_bytes(data)
-                      return name, True, f"{len(data):,} bytes"
-                  except Exception as exc:
-                      last_error = exc
-              return name, False, str(last_error)
-
-          failures = []
-          completed = 0
-          items = sorted(assets.items())
-
-          with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
-              futures = [pool.submit(download, item) for item in items]
-              for future in concurrent.futures.as_completed(futures):
-                  name, ok, info = future.result()
-                  completed += 1
-                  if not ok:
-                      failures.append((name, info))
-                  if completed % 50 == 0 or completed == len(items):
-                      print(f"  Staged {completed}/{len(items)} history assets")
-
-          if failures:
-              print(f"History staging failures: {len(failures)}")
-              for name, error in failures[:10]:
-                  print(f"  FAILED {name}: {error}")
-              if len(failures) > 10:
-                  print(f"  ... plus {len(failures) - 10} more")
-              raise SystemExit(1)
-
-          print("MRMS history staging complete.")
-          PY
+          python -u src/stage_history_for_pages.py
 
       - name: Assemble Pages site
         run: |
@@ -445,6 +322,10 @@ jobs:
             printf '%s\n' '{"version":"1.0-history","frame_count":0,"phase_snapshot_count":0,"frames":[]}' > site/outputs/mrms_history.json
           fi
 
+          if [ -s outputs/mrms_archive_status.json ]; then
+            cp outputs/mrms_archive_status.json site/outputs/mrms_archive_status.json
+          fi
+
           test -s site/outputs/winter_precip_type.png
           test -s site/outputs/winter_precip_type_web.png
           bash ./src/verify_core_outputs.sh site/outputs
@@ -456,7 +337,7 @@ jobs:
           echo "History assets staged: $(find site/history -type f 2>/dev/null | wc -l)"
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@v4
         with:
           path: ./site
 
