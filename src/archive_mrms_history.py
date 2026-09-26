@@ -7,7 +7,7 @@ MRMS product. This module is a secondary history collector. Each time the
 GitHub Actions workflow runs it:
 
 1. Reads NOAA's timestamped MergedReflectivityQCComposite directory.
-2. Finds all observations from the previous 24 hours.
+2. Finds all observations from the previous 3 hours.
 3. Looks at the two daily GitHub Releases used by WinterRadar as persistent
    storage and determines which observations are missing.
 4. Downloads and renders only those missing observations.
@@ -79,33 +79,33 @@ HISTORY_RELEASE_RE = re.compile(r"^mrms-(\d{8})(?:-(\d+))?$")
 
 # GitHub enforces a hard 1,000-asset maximum per release. Keep the active
 # partition below that ceiling so a phase snapshot can never consume the
-# final slot and block radar uploads. The normal 8-hour CONUS archive fits comfortably within the release limit,
+# final slot and block radar uploads. The normal 3-hour CONUS archive fits comfortably within the release limit,
 # but partitioning also recovers cleanly from older releases that already
 # reached the limit.
 MAX_ASSETS_PER_RELEASE = 950
 
 # Full-CONUS history extent. Recent radar observations are retained for
-# 8 hours so the viewer has broad national context without the storage
-# cost of a 24-hour full-CONUS archive.
+# 3 hours so the viewer has broad national context without the storage
+# cost of a multi-hour full-CONUS archive.
 HISTORY_FALLBACK_BOUNDS = [
     [20.005001, -129.995],
     [54.995, -60.005002],
 ]
 
-# Archive all observed ~2-minute MRMS frames for the most recent 8 hours.
+# Archive all observed ~2-minute MRMS frames for the most recent 3 hours.
 # Every archived radar observation gets its own precipitation-type composite.
 # RAP environmental profiles are reused by valid hour; they do not force radar
 # observations to wait for a new model cycle.
-HISTORY_HOURS = 8
+HISTORY_HOURS = 3
 PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
 # Keep each archive invocation short enough for the 5-minute workflow.
 # Newest observations are always included; only a small number of older
 # observations are processed as catch-up work.
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "6")
+    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "8")
 )
 MAX_NEW_PHASE_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "24")
+    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "16")
 )
 # Older history frames were created with the previous 3500-pixel downsampling
 # cap. Inspect a limited number of existing assets each run and repair only a
@@ -119,7 +119,7 @@ MAX_LOWRES_INSPECTIONS_PER_RUN = int(
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
-USER_AGENT = "WinterRadar/1.2 (MRMS 8-hour full-CONUS history collector)"
+USER_AGENT = "WinterRadar/1.2 (MRMS 3-hour full-CONUS history collector)"
 GITHUB_API_VERSION = "2026-03-10"
 HISTORY_DEBUG = os.environ.get("MRMS_HISTORY_DEBUG", "0") == "1"
 
@@ -210,9 +210,9 @@ class GitHubReleaseStore:
     def create_release(self, tag: str) -> ReleaseInfo:
         payload = {
             "tag_name": tag,
-            "name": f"WinterRadar MRMS 8-Hour CONUS History — {tag.removeprefix('mrms-')}",
+            "name": f"WinterRadar MRMS 3-Hour CONUS History — {tag.removeprefix('mrms-')}",
             "body": (
-                "Automated 8-hour WinterRadar MRMS CONUS observation archive. "
+                "Automated 3-hour WinterRadar MRMS CONUS observation archive. "
                 "Radar frames are timestamped observations; phase masks are "
                 "10-minute snapshots used by the time-history viewer."
             ),
@@ -315,6 +315,16 @@ class GitHubReleaseStore:
         response.raise_for_status()
         with Image.open(io.BytesIO(response.content)) as image:
             return tuple(int(value) for value in image.size)
+
+    def download_asset_bytes(self, asset: dict) -> bytes:
+        url = str(asset.get("url") or "")
+        if not url:
+            raise RuntimeError(f"History asset has no API URL: {asset.get('name')}")
+        headers = dict(self.headers)
+        headers["Accept"] = "application/octet-stream"
+        response = self.session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return response.content
 
     def delete_release(self, release_id: int) -> None:
         self._request("DELETE", f"/releases/{release_id}")
@@ -935,7 +945,7 @@ def build_manifest(
         "version": "1.0-history",
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
-        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 8 hours at full-CONUS coverage.",
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 3 hours at full-CONUS coverage.",
         "bounds": [bounds[0], bounds[1], bounds[2], bounds[3]],
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(frames),
@@ -1169,9 +1179,48 @@ def repair_low_resolution_precip_type_assets(
 
     return repaired
 
+def load_live_watermark(store: GitHubReleaseStore, releases: list[ReleaseInfo]) -> datetime | None:
+    """Return the newest successfully published live MRMS timestamp, if present."""
+    candidates: list[tuple[datetime, str]] = []
+    for release in releases:
+        asset = release.assets.get("mrms_live_latest.json")
+        if not asset:
+            continue
+        try:
+            payload = json.loads(store.download_asset_bytes(asset).decode("utf-8"))
+            text = payload.get("mrms_time_utc")
+            if text:
+                dt = datetime.fromisoformat(str(text).replace("Z", "+00:00")).astimezone(timezone.utc)
+                candidates.append((dt, release.tag))
+        except Exception as exc:
+            print(f"  Warning: could not read live watermark from {release.tag}: {exc}")
+    if not candidates:
+        print("  Live watermark: none found; archive will use current MRMS time as the upper bound.")
+        return None
+    candidates.sort()
+    dt, tag = candidates[-1]
+    print(f"  Live watermark: {dt.isoformat()} ({tag})")
+    return dt
+
+
+def upload_or_replace_json_asset(
+    store: GitHubReleaseStore,
+    release: ReleaseInfo,
+    name: str,
+    payload: dict,
+) -> dict:
+    data = json.dumps(payload, indent=2).encode("utf-8")
+    existing = release.assets.get(name)
+    if existing:
+        store.delete_asset(existing)
+        release.assets.pop(name, None)
+    asset = store.upload_asset(release, name, data, content_type="application/json")
+    release.assets[name] = asset
+    return asset
+
 def run_archive() -> None:
     print("=" * 72)
-    print("WINTER RADAR — MRMS 8-HOUR MERGED COMPOSITE HISTORY ARCHIVE")
+    print("WINTER RADAR — MRMS 3-HOUR MERGED COMPOSITE HISTORY ARCHIVE")
     print("=" * 72)
 
     now = utc_now()
@@ -1198,7 +1247,7 @@ def run_archive() -> None:
     history_dates = {now.date(), previous_day.date()}
 
     # Load every MRMS history release partition covering the two dates in the
-    # rolling 8-hour window. A date may have a base release plus one or more
+    # rolling 3-hour window. A date may have a base release plus one or more
     # overflow partitions once the 1,000-asset GitHub limit is reached.
     release_index: dict[object, list[ReleaseInfo]] = {date_value: [] for date_value in history_dates}
     for meta in store.list_history_releases():
@@ -1227,6 +1276,25 @@ def run_archive() -> None:
     all_history_releases.sort(key=lambda rel: history_release_sort_key(rel.tag))
 
     radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(all_history_releases)
+    radar_assets_before_count = len(radar_assets)
+    phase_assets_before_count = len(phase_assets)
+    precip_type_assets_before_count = len(precip_type_assets)
+    live_watermark = load_live_watermark(store, all_history_releases)
+    archive_upper = live_watermark if live_watermark is not None else now - timedelta(minutes=7)
+    recent_observations = [
+        obs for obs in recent_observations
+        if obs.valid_time <= archive_upper + timedelta(minutes=1)
+    ]
+    if live_watermark is not None:
+        print(
+            f"  Archive upper bound from live workflow: {live_watermark.isoformat()} "
+            f"({len(recent_observations)} observations eligible)"
+        )
+    else:
+        print(
+            f"  No live watermark yet; holding newest ~7 minutes for the live workflow "
+            f"({len(recent_observations)} observations eligible)"
+        )
     print(f"  History release partitions available: {len(all_history_releases)}")
     for date_value in sorted(release_index):
         labels = [f"{rel.tag} ({len(rel.assets)})" for rel in sorted(release_index[date_value], key=lambda rel: history_release_sort_key(rel.tag))]
@@ -1282,7 +1350,7 @@ def run_archive() -> None:
     missing.sort(key=lambda item: item.valid_time)
 
     if missing:
-        # Keep the history viewer current while also backfilling the 8-hour
+        # Keep the history viewer current while also backfilling the 3-hour
         # archive. The per-run cap is intentionally small: a full-CONUS
         # 3500x7000 decode is expensive, and the workflow runs every 5 min. A pure oldest-first queue can leave the viewer many hours
         # behind while the initial backlog is being filled. Split each run
@@ -1519,6 +1587,78 @@ def run_archive() -> None:
     print(f"  Phase snapshots available: {manifest['phase_snapshot_count']}")
     print(f"  Precipitation-type snapshots available: {manifest['precip_type_snapshot_count']}")
     print(f"  New radar frames archived this run: {archived_this_run}")
+
+    # Refresh again after all uploads so the persisted manifest and status are
+    # authoritative. The daily release remains comfortably below GitHub's
+    # 1,000-asset release limit for a 3-hour rolling window.
+    status_releases = refreshed_releases
+    stored_times = sorted(
+        ts for ts in existing_radar_timestamps(radar_assets)
+        if cutoff <= ts <= now + timedelta(minutes=1)
+    )
+    unresolved_radar = [obs for obs in recent_observations if obs.asset_name not in radar_assets]
+    unresolved_phase = [
+        obs for obs in recent_observations
+        if f"phase_conus_{obs.timestamp_key}.webp" not in phase_assets
+    ]
+    unresolved_precip = [
+        obs for obs in recent_observations
+        if f"preciptype_conus_{obs.timestamp_key}.webp" not in precip_type_assets
+    ]
+    recent_files = [
+        {
+            "asset_name": obs.asset_name,
+            "timestamp_utc": obs.valid_time.isoformat(),
+        }
+        for obs in recent_observations[-20:]
+        if obs.asset_name in radar_assets
+    ]
+    status = {
+        "generated_at_utc": now.isoformat(),
+        "history_hours": HISTORY_HOURS,
+        "live_watermark_utc": live_watermark.isoformat() if live_watermark else None,
+        "mrms_observations_in_window": len(recent_observations),
+        "radar_assets_before": radar_assets_before_count,
+        "phase_assets_before": phase_assets_before_count,
+        "precip_type_assets_before": precip_type_assets_before_count,
+        "radar_missing_before": len(missing),
+        "radar_uploaded_this_run": archived_this_run,
+        "radar_remaining_missing": len(unresolved_radar),
+        "phase_remaining_missing": len(unresolved_phase),
+        "precip_type_remaining_missing": len(unresolved_precip),
+        "oldest_stored_utc": stored_times[0].isoformat() if stored_times else None,
+        "newest_stored_utc": stored_times[-1].isoformat() if stored_times else None,
+        "status": "OK" if not unresolved_radar else "BACKFILL_IN_PROGRESS",
+        "recent_files": recent_files,
+        "release_tags": [release.tag for release in status_releases],
+        "manifest_path": str(MRMS_HISTORY_FILE),
+    }
+
+    # Persist both the manifest and a small status record in the daily release
+    # so the next live Pages build can retrieve them without needing the archive
+    # runner's ephemeral filesystem.
+    target_release = ensure_upload_release(store, now.date(), release_index)
+    upload_or_replace_json_asset(store, target_release, "mrms_history.json", manifest)
+    upload_or_replace_json_asset(store, target_release, "mrms_archive_status.json", status)
+
+    print("\n  ============================================================")
+    print("  MRMS ARCHIVE STATUS")
+    print("  ============================================================")
+    print(f"  Archive window:       {HISTORY_HOURS} hours")
+    print(f"  Live watermark:       {status['live_watermark_utc'] or 'NONE'}")
+    print(f"  MRMS observations:    {status['mrms_observations_in_window']}")
+    print(f"  Radar stored before:  {status['radar_assets_before']}")
+    print(f"  Radar missing:        {status['radar_missing_before']}")
+    print(f"  Radar uploaded:       {status['radar_uploaded_this_run']}")
+    print(f"  Radar still missing:  {status['radar_remaining_missing']}")
+    print(f"  Phase still missing:  {status['phase_remaining_missing']}")
+    print(f"  Precip still missing: {status['precip_type_remaining_missing']}")
+    print(f"  Oldest stored:        {status['oldest_stored_utc'] or 'NONE'}")
+    print(f"  Newest stored:        {status['newest_stored_utc'] or 'NONE'}")
+    print(f"  Status:               {status['status']}")
+    print("  ============================================================")
+    for item in recent_files:
+        print(f"  {item['timestamp_utc']}  {item['asset_name']}")
 
     cleanup_old_releases(store, now)
 
