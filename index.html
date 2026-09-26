@@ -1916,40 +1916,60 @@ function createImageOverlay(
 
 function loadRasterWithFallback(urls, bounds, opacity, zIndex, className, onReady, onFailure) {
     let attempt = 0;
+    let cancelled = false;
     let active = null;
 
     function next() {
+        if (cancelled) return;
         if (attempt >= urls.length) {
             if (typeof onFailure === "function") onFailure();
             return;
         }
 
         const url = urls[attempt++];
-        active = createImageOverlay(url, bounds, 0, zIndex, false, className || "");
+        const tester = new Image();
 
-        // Attach handlers BEFORE addTo(). This avoids losing load/error events
-        // for cached or very-fast GitHub Pages responses.
-        active.on("load", function() {
-            if (!active) return;
-            active.setOpacity(opacity);
-            if (typeof onReady === "function") onReady(active, url);
-        });
-        active.on("error", function() {
-            const failed = active;
-            active = null;
-            removeMapOverlay(failed);
+        // All WinterRadar raster assets are same-origin GitHub Pages files.
+        // Do not force a crossOrigin request here; that can cause otherwise
+        // valid cached/static images to fail in the browser.
+        tester.onload = function() {
+            if (cancelled) return;
+
+            active = createImageOverlay(
+                url,
+                bounds,
+                opacity,
+                zIndex,
+                false,
+                className || ""
+            );
+            active.addTo(map);
+
+            if (typeof onReady === "function") {
+                onReady(active, url);
+            }
+        };
+
+        tester.onerror = function() {
+            if (cancelled) return;
             next();
-        });
-        active.addTo(map);
+        };
+
+        // Explicitly bypass the browser cache for the current-cycle products.
+        // This prevents a stale failed response from poisoning a layer retry.
+        tester.src = url;
     }
 
     next();
+
     return function cancel() {
-        removeMapOverlay(active);
-        active = null;
+        cancelled = true;
+        if (active) {
+            removeMapOverlay(active);
+            active = null;
+        }
     };
 }
-
 
 function radarDisplaySpec() {
     return {
@@ -1991,8 +2011,9 @@ function loadCurrentPrecipTypeOverlay(force = false) {
     removeMapOverlay(precipTypeOverlay);
     precipTypeOverlay = null;
     precipTypeDisplayMode = spec.mode;
+    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
     loadRasterWithFallback(
-        ["./outputs/winter_precip_type_web.png?v=" + Date.now(), "./outputs/winter_precip_type_web.webp?v=" + Date.now()],
+        ["./outputs/winter_precip_type_web.png?v=" + stamp, "./outputs/winter_precip_type_web.webp?v=" + stamp],
         spec.bounds, overlayOpacity, 540, "winter-raster-sharp",
         function(layer) { precipTypeOverlay = layer; },
         function() { console.warn("Precipitation-type raster could not be loaded from PNG or WebP."); precipTypeOverlay = null; precipTypeDisplayMode = null; updateDynamicMapLegend(); }
@@ -2020,8 +2041,9 @@ function loadCurrentPhaseOverlay(force = false) {
     removeMapOverlay(phaseOverlay);
     phaseOverlay = null;
     phaseDisplayMode = spec.mode;
+    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
     loadRasterWithFallback(
-        ["./outputs/winter_phase_mask_web.png?v=" + Date.now(), "./outputs/winter_phase_mask_web.webp?v=" + Date.now()],
+        ["./outputs/winter_phase_mask_web.png?v=" + stamp, "./outputs/winter_phase_mask_web.webp?v=" + stamp],
         spec.bounds, overlayOpacity, 550, "winter-raster-sharp",
         function(layer) { phaseOverlay = layer; },
         function() { console.warn("Winter phase mask raster could not be loaded from PNG or WebP."); phaseOverlay = null; phaseDisplayMode = null; updateDynamicMapLegend(); }
@@ -2128,8 +2150,9 @@ function loadRadarFusionLayer() {
     }
     removeMapOverlay(radarFusionOverlay);
     radarFusionOverlay = null;
+    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
     loadRasterWithFallback(
-        ["./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(), "./outputs/phase_radar_fusion_overlay_web.webp?v=" + Date.now()],
+        ["./outputs/phase_radar_fusion_overlay_web.png?v=" + stamp, "./outputs/phase_radar_fusion_overlay_web.webp?v=" + stamp],
         MRMS_NATIONAL_BOUNDS, overlayOpacity, 575, "winter-raster-sharp",
         function(layer) { radarFusionOverlay = layer; },
         function() { console.warn("Radar phase evidence overlay could not be loaded from PNG or WebP."); radarFusionOverlay = null; updateDynamicMapLegend(); }
@@ -2146,8 +2169,9 @@ function loadPhaseAgreementLayer() {
     }
     removeMapOverlay(phaseAgreementOverlay);
     phaseAgreementOverlay = null;
+    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
     loadRasterWithFallback(
-        ["./outputs/phase_agreement_overlay_web.png?v=" + Date.now(), "./outputs/phase_agreement_overlay_web.webp?v=" + Date.now()],
+        ["./outputs/phase_agreement_overlay_web.png?v=" + stamp, "./outputs/phase_agreement_overlay_web.webp?v=" + stamp],
         MRMS_NATIONAL_BOUNDS, overlayOpacity, 585, "winter-raster-sharp",
         function(layer) { phaseAgreementOverlay = layer; },
         function() { console.warn("Phase agreement overlay could not be loaded from PNG or WebP."); phaseAgreementOverlay = null; updateDynamicMapLegend(); }
