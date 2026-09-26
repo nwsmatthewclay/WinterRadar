@@ -43,13 +43,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install \
             numpy \
-            scipy \
             requests \
             Pillow \
             xarray \
             cfgrib \
             matplotlib \
-            pygrib
+            pygrib \
+            scipy
 
       - name: Core syntax QC
         run: |
@@ -235,9 +235,9 @@ jobs:
                   )
           PY
 
-      # Project all browser rasters only after every diagnostic/fusion source
-      # has been created (or replaced by a fallback). The projection script
-      # expects these source PNGs to exist on a fresh GitHub runner.
+      # Project browser rasters only after every diagnostic/fusion source has
+      # been created (or replaced by a fallback). The projection script expects
+      # these source PNGs to exist on a fresh GitHub runner.
       - name: Project browser MRMS rasters to Web Mercator
         run: |
           set -euo pipefail
