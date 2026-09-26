@@ -186,7 +186,7 @@ html, body {
 
 .map-legend {
     position: absolute;
-    bottom: 30px;
+    bottom: 78px;
     left: 9px;
     z-index: 1260;
     width: min(295px, calc(100% - 18px));
@@ -665,6 +665,7 @@ html, body {
 
 @media (max-width: 700px) {
     .map-legend {
+        bottom: 66px;
         width: 260px;
         max-height: 255px;
     }
@@ -2037,33 +2038,38 @@ function loadCurrentPhaseOverlay(force = false) {
         return;
     }
 
-    const url = "./outputs/winter_phase_mask_web.png?v=" +
-        encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
+    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
+    const urls = [
+        "./outputs/winter_phase_mask_web.png?v=" + stamp,
+        "./outputs/winter_phase_mask_web.webp?v=" + stamp
+    ];
 
-    // Install the Leaflet layer immediately.  Do not gate layer creation on a
-    // second Image() test: that created a race where the checkbox could be on
-    // while the Leaflet layer object never became the active layer.
     removeMapOverlay(phaseOverlay);
-    phaseOverlay = L.imageOverlay(url, MRMS_NATIONAL_BOUNDS, {
-        opacity: overlayOpacity,
-        interactive: false,
-        zIndex: 550,
-        className: "winter-raster-sharp"
-    });
+    phaseOverlay = null;
     phaseDisplayMode = "national";
-    phaseOverlay.addTo(map);
-    phaseOverlay.once("error", function() {
-        console.warn("Winter phase mask PNG failed; retrying WebP.");
-        removeMapOverlay(phaseOverlay);
-        const webp = "./outputs/winter_phase_mask_web.webp?v=" +
-            encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
-        phaseOverlay = L.imageOverlay(webp, MRMS_NATIONAL_BOUNDS, {
-            opacity: overlayOpacity,
-            interactive: false,
-            zIndex: 550,
-            className: "winter-raster-sharp"
-        }).addTo(map);
-    });
+
+    // Use the same preflight/fallback loader as the other scientific raster
+    // products. This prevents GitHub Pages/cache timing from firing an image
+    // error before Leaflet has attached its handler.
+    loadRasterWithFallback(
+        urls,
+        MRMS_NATIONAL_BOUNDS,
+        overlayOpacity,
+        550,
+        "winter-raster-sharp",
+        function(layer, url) {
+            phaseOverlay = layer;
+            console.info("Winter phase mask loaded:", url);
+        },
+        function() {
+            phaseOverlay = null;
+            phaseDisplayMode = null;
+            console.warn("Winter phase mask failed to load from PNG and WebP.");
+            const checkbox = document.getElementById("phaseToggle");
+            if (checkbox) checkbox.checked = false;
+            updateDynamicMapLegend();
+        }
+    );
 }
 
 
