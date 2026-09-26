@@ -9,34 +9,11 @@ OUTPUT_DIR = BASE_DIR / "outputs"
 # Official operational MRMS 2-D archive used by the project.
 MRMS_BASE = "https://mrms.ncep.noaa.gov/2D"
 
-# Operational MRMS 3-D dual-polarization CAPPI archives.
-# These were previously used successfully by the WinterRadar downloader, but
-# the constants were dropped from config.py during the core cleanup.
-MRMS_3D_RHOHV_BASE = "https://mrms.ncep.noaa.gov/3DRhoHV"
-MRMS_3D_ZDR_BASE = "https://mrms.ncep.noaa.gov/3DZdr"
-
-# Vertical dual-pol diagnostic levels retained from the working implementation.
-VERTICAL_DUALPOL_LEVELS_KM = (
-    0.50,
-    1.00,
-    1.50,
-    2.00,
-    2.50,
-    3.00,
-    3.50,
-    4.00,
-)
-
-VERTICAL_DUALPOL_PRODUCTS = {
-    "rhohv": "MergedRhoHV",
-    "zdr": "MergedZdr",
-}
-
 # Keep the complete product catalog for compatibility with the diagnostic
 # scripts already in the repository.  The live map does NOT download all of
 # these products; see LIVE_PRODUCTS and OPTIONAL_DIAGNOSTIC_PRODUCTS below.
 PRODUCTS = {
-    "reflectivity": "ReflectivityAtLowestAltitude",
+    "reflectivity": "MergedReflectivityComposite",
     "precip_flag": "PrecipFlag",
     "precip_rate": "PrecipRate",
     "rhohv": "MergedRhoHV",
@@ -79,6 +56,11 @@ OPTIONAL_DIAGNOSTIC_PRODUCTS = {
 
 # Product-specific units and MRMS sentinel values.
 FIELD_INFO = {
+    "MergedReflectivityComposite": {
+        "units": "dBZ",
+        "missing": (-99.0,),
+        "no_coverage": (-999.0,),
+    },
     "ReflectivityAtLowestAltitude": {
         "units": "dBZ",
         "missing": (-99.0,),
