@@ -94,20 +94,24 @@ HISTORY_FALLBACK_BOUNDS = [
 ]
 
 # Retain all observed ~2-minute MRMS frames for the most recent 3 hours,
-# but process only one 30-minute historical chunk per invocation.
+# but process only one 15-minute historical chunk per invocation.
 # Every archived radar observation gets its own precipitation-type composite.
 # RAP environmental profiles are reused by valid hour; they do not force radar
 # observations to wait for a new model cycle.
 HISTORY_HOURS = 3
-ARCHIVE_WINDOW_MINUTES = 30
+ARCHIVE_WINDOW_MINUTES = 15
 PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
+
+# A 15-minute MRMS window normally contains about 6–8 observations.
+# Keep a generous ceiling so an unusually dense interval cannot silently
+# truncate the archive chunk.
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "16")
+    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "10")
 )
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
-USER_AGENT = "WinterRadar/1.3 (MRMS 3-hour retention / 30-minute archive collector)"
+USER_AGENT = "WinterRadar/1.4 (MRMS 3-hour retention / 15-minute archive collector)"
 GITHUB_API_VERSION = "2026-03-10"
 HISTORY_DEBUG = os.environ.get("MRMS_HISTORY_DEBUG", "0") == "1"
 
