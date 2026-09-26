@@ -7,13 +7,14 @@ MRMS product. This module is a secondary history collector. Each time the
 GitHub Actions workflow runs it:
 
 1. Reads NOAA's timestamped MergedReflectivityQCComposite directory.
-2. Finds all observations from the previous 3 hours.
+2. Finds all observations from the previous 24 hours.
 3. Looks at the two daily GitHub Releases used by WinterRadar as persistent
    storage and determines which observations are missing.
 4. Downloads and renders only those missing observations.
 5. Stores native-resolution WebP frames in the appropriate daily release.
-6. Archives exact per-scan full-CONUS winter-phase masks and precipitation-type
-   composites, with an oldest-first backfill for historical radar frames.
+6. Archives one full-CONUS winter-phase mask and one full-CONUS precipitation-
+   type composite per 10-minute bucket, keeping the history comfortably below
+   GitHub's 1,000-asset-per-release limit.
 7. Builds outputs/mrms_history.json for the Pages viewer.
 
 The live radar path is never modified by this script. The workflow should run
@@ -86,40 +87,27 @@ MAX_ASSETS_PER_RELEASE = 950
 
 # Full-CONUS history extent. Recent radar observations are retained for
 # 3 hours so the viewer has broad national context without the storage
-# cost of a multi-hour full-CONUS archive.
+# cost of a longer full-CONUS archive.
 HISTORY_FALLBACK_BOUNDS = [
     [20.005001, -129.995],
     [54.995, -60.005002],
 ]
 
-# Archive all observed ~2-minute MRMS frames for the most recent 3 hours.
+# Retain all observed ~2-minute MRMS frames for the most recent 3 hours,
+# but process only one 30-minute historical chunk per invocation.
 # Every archived radar observation gets its own precipitation-type composite.
 # RAP environmental profiles are reused by valid hour; they do not force radar
 # observations to wait for a new model cycle.
 HISTORY_HOURS = 3
+ARCHIVE_WINDOW_MINUTES = 30
 PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
-# Keep each archive invocation short enough for the 5-minute workflow.
-# Newest observations are always included; only a small number of older
-# observations are processed as catch-up work.
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "8")
-)
-MAX_NEW_PHASE_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "16")
-)
-# Older history frames were created with the previous 3500-pixel downsampling
-# cap. Inspect a limited number of existing assets each run and repair only a
-# few low-resolution frames so the normal archive remains under the time target.
-MAX_LOWRES_REPAIRS_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_LOWRES_REPAIRS_PER_RUN", "3")
-)
-MAX_LOWRES_INSPECTIONS_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_LOWRES_INSPECTIONS_PER_RUN", "20")
+    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "16")
 )
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
-USER_AGENT = "WinterRadar/1.2 (MRMS 3-hour full-CONUS history collector)"
+USER_AGENT = "WinterRadar/1.3 (MRMS 3-hour retention / 30-minute archive collector)"
 GITHUB_API_VERSION = "2026-03-10"
 HISTORY_DEBUG = os.environ.get("MRMS_HISTORY_DEBUG", "0") == "1"
 
@@ -210,9 +198,9 @@ class GitHubReleaseStore:
     def create_release(self, tag: str) -> ReleaseInfo:
         payload = {
             "tag_name": tag,
-            "name": f"WinterRadar MRMS 3-Hour CONUS History — {tag.removeprefix('mrms-')}",
+            "name": f"WinterRadar MRMS 8-Hour CONUS History — {tag.removeprefix('mrms-')}",
             "body": (
-                "Automated 3-hour WinterRadar MRMS CONUS observation archive. "
+                "Automated 8-hour WinterRadar MRMS CONUS observation archive. "
                 "Radar frames are timestamped observations; phase masks are "
                 "10-minute snapshots used by the time-history viewer."
             ),
@@ -260,13 +248,28 @@ class GitHubReleaseStore:
             page += 1
         return assets
 
+    def delete_asset(self, asset: dict) -> None:
+        response = self.session.delete(
+            self._url(f"/releases/assets/{int(asset['id'])}"),
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code not in (204, 404):
+            detail = response.text[:500].replace("\n", " ")
+            raise RuntimeError(f"GitHub asset delete failed for {asset.get('name')}: HTTP {response.status_code}: {detail}")
+
     def upload_asset(
         self,
         release: ReleaseInfo,
         asset_name: str,
         data: bytes,
         content_type: str = "image/webp",
+        replace: bool = False,
     ) -> dict:
+        if asset_name in release.assets and not replace:
+            return release.assets[asset_name]
+        if asset_name in release.assets and replace:
+            self.delete_asset(release.assets[asset_name])
+            release.assets.pop(asset_name, None)
         params = {"name": asset_name}
         headers = dict(self.headers)
         headers["Content-Type"] = content_type
@@ -290,41 +293,6 @@ class GitHubReleaseStore:
                 f"HTTP {response.status_code}: {detail}"
             )
         return response.json()
-
-    def delete_asset(self, asset: dict) -> None:
-        asset_id = int(asset["id"])
-        response = self.session.delete(
-            self._url(f"/releases/assets/{asset_id}"),
-            timeout=REQUEST_TIMEOUT,
-        )
-        if response.status_code not in (204, 404):
-            detail = response.text[:500].replace("\n", " ")
-            raise RuntimeError(
-                f"GitHub asset deletion failed for {asset.get('name', asset_id)}: "
-                f"HTTP {response.status_code}: {detail}"
-            )
-
-    def download_asset_dimensions(self, asset: dict) -> tuple[int, int]:
-        """Download an existing WebP just far enough to inspect its dimensions."""
-        url = str(asset.get("url") or "")
-        if not url:
-            raise RuntimeError(f"History asset has no API URL: {asset.get('name')}")
-        headers = dict(self.headers)
-        headers["Accept"] = "application/octet-stream"
-        response = self.session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        with Image.open(io.BytesIO(response.content)) as image:
-            return tuple(int(value) for value in image.size)
-
-    def download_asset_bytes(self, asset: dict) -> bytes:
-        url = str(asset.get("url") or "")
-        if not url:
-            raise RuntimeError(f"History asset has no API URL: {asset.get('name')}")
-        headers = dict(self.headers)
-        headers["Accept"] = "application/octet-stream"
-        response = self.session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.content
 
     def delete_release(self, release_id: int) -> None:
         self._request("DELETE", f"/releases/{release_id}")
@@ -550,7 +518,8 @@ def phase_png_to_webp(
     crop: tuple[int, int, int, int],
     crop_bounds: tuple[float, float, float, float],
     row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
-) -> bytes:
+    keep_grib: bool = False,
+) -> tuple[bytes, Path | None]:
     y0, y1, x0, x1 = crop
     with Image.open(path) as im:
         rgba = np.asarray(im.convert("RGBA"))[y0:y1, x0:x1]
@@ -609,7 +578,7 @@ def download_and_render_observation(
     row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
     keep_grib: bool = False,
 ) -> tuple[bytes, Path | None]:
-    """Download one MRMS frame, render WebP, and optionally preserve the GRIB for per-scan phase processing."""
+    """Download one MRMS frame, decode it from a real file, and return WebP bytes."""
     print(f"    Downloading {observation.filename}")
 
     # ecCodes requires a real file descriptor. Keep both the compressed MRMS
@@ -816,6 +785,31 @@ def cleanup_old_releases(store: GitHubReleaseStore, today: datetime) -> None:
             print(f"    Warning: could not remove tag {tag}: {exc}")
 
 
+def read_live_watermark(store: GitHubReleaseStore, release: ReleaseInfo | None) -> datetime | None:
+    """Read the live workflow completion watermark from GitHub Release storage."""
+    if release is None:
+        return None
+    asset = release.assets.get("mrms_live_latest.json")
+    if not asset:
+        return None
+    try:
+        response = store.session.get(
+            str(asset.get("url")),
+            headers={**store.headers, "Accept": "application/octet-stream"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if not response.ok:
+            return None
+        payload = response.json()
+        text = payload.get("mrms_time_utc")
+        if not text:
+            return None
+        return datetime.fromisoformat(str(text).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except Exception as exc:
+        print(f"  WARNING: unable to read live watermark: {type(exc).__name__}: {exc}")
+        return None
+
+
 def choose_phase_asset(
     radar_time: datetime,
     phase_assets: dict[str, dict],
@@ -945,7 +939,7 @@ def build_manifest(
         "version": "1.0-history",
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
-        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 3 hours at full-CONUS coverage.",
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 3 hours at full-CONUS coverage. Each run processes only one 30-minute historical chunk.",
         "bounds": [bounds[0], bounds[1], bounds[2], bounds[3]],
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(frames),
@@ -956,275 +950,13 @@ def build_manifest(
     }
 
 
-def release_for_asset(
-    release_index: dict[object, list[ReleaseInfo]],
-    asset_name: str,
-) -> ReleaseInfo | None:
-    for releases in release_index.values():
-        for release in releases:
-            if asset_name in release.assets:
-                return release
-    return None
-
-
-def repair_low_resolution_radar_assets(
-    store: GitHubReleaseStore,
-    release_index: dict[object, list[ReleaseInfo]],
-    radar_assets: dict[str, dict],
-    recent_observations: list[Observation],
-    session: requests.Session,
-    expected_shape: tuple[int, int],
-    crop: tuple[int, int, int, int],
-    crop_bounds: tuple[float, float, float, float],
-    row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
-) -> int:
-    """Replace old downsampled radar WebPs with native-resolution versions.
-
-    The first archive implementation capped history images at 3500 pixels wide.
-    New frames are native-width, so the viewer can contain a mixture. We repair
-    only a few frames per run and inspect only a small oldest-first window.
-    """
-    if MAX_LOWRES_REPAIRS_PER_RUN <= 0 or MAX_LOWRES_INSPECTIONS_PER_RUN <= 0:
-        return 0
-
-    candidates = [
-        (obs.valid_time, obs)
-        for obs in recent_observations
-        if obs.asset_name in radar_assets
-    ]
-    candidates.sort(key=lambda item: item[0])
-    candidates = candidates[:MAX_LOWRES_INSPECTIONS_PER_RUN]
-
-    repaired = 0
-    target_width = crop[3] - crop[2]
-    print(
-        f"  Checking up to {len(candidates)} existing radar frames for legacy "
-        f"low resolution (target width {target_width}px; max repairs {MAX_LOWRES_REPAIRS_PER_RUN})"
-    )
-
-    for _timestamp, obs in candidates:
-        if repaired >= MAX_LOWRES_REPAIRS_PER_RUN:
-            break
-        asset = radar_assets.get(obs.asset_name)
-        if not asset:
-            continue
-        try:
-            width, height = store.download_asset_dimensions(asset)
-            if width >= int(target_width * 0.95):
-                continue
-            print(
-                f"    Legacy low-resolution frame detected: {obs.asset_name} "
-                f"({width}x{height}); rebuilding at {target_width}px wide"
-            )
-
-            data = download_and_render_observation(
-                session,
-                obs,
-                expected_shape,
-                crop,
-                crop_bounds,
-                row_map_cache,
-                keep_grib=False,
-            )[0]
-
-            release = release_for_asset(release_index, obs.asset_name)
-            if release is None:
-                raise RuntimeError(f"Could not locate release containing {obs.asset_name}")
-
-            # GitHub release assets cannot be overwritten in-place. Delete the
-            # old low-resolution asset, then upload the same timestamp/name at
-            # native resolution. If the upload fails, the next run will detect
-            # the missing frame and repair it again.
-            store.delete_asset(asset)
-            release.assets.pop(obs.asset_name, None)
-            radar_assets.pop(obs.asset_name, None)
-
-            replacement = store.upload_asset(release, obs.asset_name, data)
-            release.assets[replacement["name"]] = replacement
-            radar_assets[replacement["name"]] = replacement
-            repaired += 1
-            print(
-                f"      Replaced {obs.asset_name} with native-resolution "
-                f"WebP ({len(data):,} bytes)"
-            )
-        except Exception as exc:
-            print(
-                f"    WARNING: low-resolution repair failed for {obs.asset_name}: "
-                f"{type(exc).__name__}: {exc}"
-            )
-
-    print(f"  Low-resolution radar frames repaired this run: {repaired}")
-    return repaired
-
-
-
-def repair_low_resolution_precip_type_assets(
-    store: GitHubReleaseStore,
-    release_index: dict[object, list[ReleaseInfo]],
-    precip_type_assets: dict[str, dict],
-    recent_observations: list[Observation],
-    session: requests.Session,
-    expected_shape: tuple[int, int],
-    crop: tuple[int, int, int, int],
-    crop_bounds: tuple[float, float, float, float],
-    row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
-) -> int:
-    """Repair legacy low-resolution precipitation-type composite assets."""
-    if MAX_LOWRES_REPAIRS_PER_RUN <= 0 or MAX_LOWRES_INSPECTIONS_PER_RUN <= 0:
-        return 0
-
-    candidates = []
-    for name, asset in precip_type_assets.items():
-        match = PRECIP_TYPE_ASSET_RE.match(name)
-        if not match:
-            continue
-        stamp_text = match.group(1)
-        fmt = "%Y%m%d-%H%M%S" if len(stamp_text) == 15 else "%Y%m%d-%H%M"
-        try:
-            stamp = datetime.strptime(stamp_text, fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-        candidates.append((stamp, name, asset))
-
-    candidates.sort(key=lambda item: item[0])
-    candidates = candidates[:MAX_LOWRES_INSPECTIONS_PER_RUN]
-    if not candidates:
-        return 0
-
-    target_width = crop[3] - crop[2]
-    print(
-        f"  Checking up to {len(candidates)} existing precipitation-type composites "
-        f"for legacy low resolution (target width {target_width}px; "
-        f"max repairs {MAX_LOWRES_REPAIRS_PER_RUN})"
-    )
-
-    repaired = 0
-    recent_by_time = sorted(recent_observations, key=lambda item: item.valid_time)
-
-    for stamp, asset_name, asset in candidates:
-        if repaired >= MAX_LOWRES_REPAIRS_PER_RUN:
-            break
-        try:
-            width, height = store.download_asset_dimensions(asset)
-            if width >= int(target_width * 0.95):
-                continue
-
-            obs = min(
-                recent_by_time,
-                key=lambda item: abs((item.valid_time - stamp).total_seconds()),
-                default=None,
-            )
-            if obs is None or abs((obs.valid_time - stamp).total_seconds()) > 180:
-                print(f"    WARNING: no nearby MRMS scan found for {asset_name}; leaving unchanged")
-                continue
-
-            print(
-                f"    Legacy low-resolution composite detected: {asset_name} "
-                f"({width}x{height}); rebuilding from {obs.timestamp_key} at native resolution"
-            )
-
-            _radar_data, grib_path = download_and_render_observation(
-                session,
-                obs,
-                expected_shape,
-                crop,
-                crop_bounds,
-                row_map_cache,
-                keep_grib=True,
-            )
-            if grib_path is None:
-                raise RuntimeError("Native-resolution GRIB was not preserved")
-
-            helper_output = Path(tempfile.mkdtemp(prefix="winterradar_repair_"))
-            try:
-                helper = ROOT / "src" / "build_history_precip_type.py"
-                if not helper.exists():
-                    helper = ROOT / "build_history_precip_type.py"
-                import subprocess
-                subprocess.run(
-                    ["python", str(helper), "--output-dir", str(helper_output), str(grib_path)],
-                    check=True,
-                )
-                generated = helper_output / f"preciptype_conus_{obs.timestamp_key}.webp"
-                if not generated.exists():
-                    raise RuntimeError(f"Native composite was not generated: {generated.name}")
-                data = generated.read_bytes()
-            finally:
-                grib_path.unlink(missing_ok=True)
-                shutil.rmtree(helper_output, ignore_errors=True)
-
-            release = release_for_asset(release_index, asset_name)
-            if release is None:
-                raise RuntimeError(f"Could not locate release containing {asset_name}")
-
-            store.delete_asset(asset)
-            release.assets.pop(asset_name, None)
-            precip_type_assets.pop(asset_name, None)
-            replacement = store.upload_asset(release, asset_name, data)
-            release.assets[replacement["name"]] = replacement
-            precip_type_assets[replacement["name"]] = replacement
-            repaired += 1
-            print(
-                f"      Replaced {asset_name} with native-resolution composite "
-                f"({len(data):,} bytes)"
-            )
-        except Exception as exc:
-            print(
-                f"      WARNING: unable to repair composite {asset_name}: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            if HISTORY_DEBUG:
-                import traceback
-                traceback.print_exc()
-
-    return repaired
-
-def load_live_watermark(store: GitHubReleaseStore, releases: list[ReleaseInfo]) -> datetime | None:
-    """Return the newest successfully published live MRMS timestamp, if present."""
-    candidates: list[tuple[datetime, str]] = []
-    for release in releases:
-        asset = release.assets.get("mrms_live_latest.json")
-        if not asset:
-            continue
-        try:
-            payload = json.loads(store.download_asset_bytes(asset).decode("utf-8"))
-            text = payload.get("mrms_time_utc")
-            if text:
-                dt = datetime.fromisoformat(str(text).replace("Z", "+00:00")).astimezone(timezone.utc)
-                candidates.append((dt, release.tag))
-        except Exception as exc:
-            print(f"  Warning: could not read live watermark from {release.tag}: {exc}")
-    if not candidates:
-        print("  Live watermark: none found; archive will use current MRMS time as the upper bound.")
-        return None
-    candidates.sort()
-    dt, tag = candidates[-1]
-    print(f"  Live watermark: {dt.isoformat()} ({tag})")
-    return dt
-
-
-def upload_or_replace_json_asset(
-    store: GitHubReleaseStore,
-    release: ReleaseInfo,
-    name: str,
-    payload: dict,
-) -> dict:
-    data = json.dumps(payload, indent=2).encode("utf-8")
-    existing = release.assets.get(name)
-    if existing:
-        store.delete_asset(existing)
-        release.assets.pop(name, None)
-    asset = store.upload_asset(release, name, data, content_type="application/json")
-    release.assets[name] = asset
-    return asset
-
 def run_archive() -> None:
     print("=" * 72)
-    print("WINTER RADAR — MRMS 3-HOUR MERGED COMPOSITE HISTORY ARCHIVE")
+    print("WINTER RADAR — MRMS 3-HOUR RETENTION / 30-MINUTE ARCHIVE")
     print("=" * 72)
 
     now = utc_now()
-    cutoff = now - timedelta(hours=HISTORY_HOURS)
+    retention_cutoff = now - timedelta(hours=HISTORY_HOURS)
 
     token = os.environ.get("GITHUB_TOKEN", "")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -1234,20 +966,20 @@ def run_archive() -> None:
     session.headers.update({"User-Agent": USER_AGENT})
 
     observations = fetch_mrms_directory(session)
-    recent_observations = [
+    retention_observations = [
         obs for obs in observations
-        if cutoff <= obs.valid_time <= now + timedelta(minutes=1)
+        if retention_cutoff <= obs.valid_time <= now + timedelta(minutes=1)
     ]
     print(
         f"  MRMS observations in previous {HISTORY_HOURS} hours: "
-        f"{len(recent_observations)}"
+        f"{len(retention_observations)}"
     )
 
     previous_day = now - timedelta(days=1)
     history_dates = {now.date(), previous_day.date()}
 
     # Load every MRMS history release partition covering the two dates in the
-    # rolling 3-hour window. A date may have a base release plus one or more
+    # rolling 8-hour window. A date may have a base release plus one or more
     # overflow partitions once the 1,000-asset GitHub limit is reached.
     release_index: dict[object, list[ReleaseInfo]] = {date_value: [] for date_value in history_dates}
     for meta in store.list_history_releases():
@@ -1275,26 +1007,24 @@ def run_archive() -> None:
         all_history_releases.extend(releases_for_date)
     all_history_releases.sort(key=lambda rel: history_release_sort_key(rel.tag))
 
-    radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(all_history_releases)
-    radar_assets_before_count = len(radar_assets)
-    phase_assets_before_count = len(phase_assets)
-    precip_type_assets_before_count = len(precip_type_assets)
-    live_watermark = load_live_watermark(store, all_history_releases)
-    archive_upper = live_watermark if live_watermark is not None else now - timedelta(minutes=7)
-    recent_observations = [
-        obs for obs in recent_observations
-        if obs.valid_time <= archive_upper + timedelta(minutes=1)
-    ]
+    today_release = next(
+        (r for r in release_index.get(now.date(), []) if r.tag == f"mrms-{now:%Y%m%d}"),
+        None,
+    )
+    live_watermark = read_live_watermark(store, today_release)
     if live_watermark is not None:
-        print(
-            f"  Archive upper bound from live workflow: {live_watermark.isoformat()} "
-            f"({len(recent_observations)} observations eligible)"
-        )
+        eligible_upper = live_watermark
+        print(f"  Live watermark: {live_watermark.isoformat()}")
     else:
-        print(
-            f"  No live watermark yet; holding newest ~7 minutes for the live workflow "
-            f"({len(recent_observations)} observations eligible)"
-        )
+        eligible_upper = now - timedelta(minutes=7)
+        print(f"  Live watermark: none found; holding newest 7 minutes through {eligible_upper.isoformat()}")
+
+    recent_observations = [
+        obs for obs in retention_observations
+        if obs.valid_time <= eligible_upper
+    ]
+
+    radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(all_history_releases)
     print(f"  History release partitions available: {len(all_history_releases)}")
     for date_value in sorted(release_index):
         labels = [f"{rel.tag} ({len(rel.assets)})" for rel in sorted(release_index[date_value], key=lambda rel: history_release_sort_key(rel.tag))]
@@ -1317,91 +1047,41 @@ def run_archive() -> None:
     )
 
     # --------------------------------------------------------------
-    # Radar observations
+    # Historical processing window. Retention is three hours, but each run
+    # processes at most one 30-minute chunk. Missing data is oldest-first so
+    # the archive steadily fills the back of the retained history.
     # --------------------------------------------------------------
-    repair_low_resolution_radar_assets(
-        store,
-        release_index,
-        radar_assets,
-        recent_observations,
-        session,
-        expected_shape,
-        (y0, y1, x0, x1),
-        crop_bounds,
-        row_map_cache,
-    )
-
-    repaired_composites = repair_low_resolution_precip_type_assets(
-        store,
-        release_index,
-        precip_type_assets,
-        recent_observations,
-        session,
-        expected_shape,
-        (y0, y1, x0, x1),
-        crop_bounds,
-        row_map_cache,
-    )
-    if repaired_composites:
-        print(f"  Repaired low-resolution precipitation-type composites: {repaired_composites}")
-
     existing_times = existing_radar_timestamps(radar_assets)
-    missing = [obs for obs in recent_observations if obs.valid_time not in existing_times]
-    missing.sort(key=lambda item: item.valid_time)
+    work_candidates = []
+    for obs in recent_observations:
+        radar_missing = obs.valid_time not in existing_times
+        exact_phase_name = f"phase_conus_{obs.timestamp_key}.webp"
+        exact_precip_name = f"preciptype_conus_{obs.timestamp_key}.webp"
+        phase_missing = exact_phase_name not in phase_assets or exact_precip_name not in precip_type_assets
+        if radar_missing or phase_missing:
+            work_candidates.append(obs)
+    work_candidates.sort(key=lambda item: item.valid_time)
 
-    if missing:
-        # Keep the history viewer current while also backfilling the 3-hour
-        # archive. The per-run cap is intentionally small: a full-CONUS
-        # 3500x7000 decode is expensive, and the workflow runs every 5 min. A pure oldest-first queue can leave the viewer many hours
-        # behind while the initial backlog is being filled. Split each run
-        # between the oldest and newest missing observations so the right edge
-        # of the slider stays close to the current MRMS scan.
-        limit = max(1, MAX_NEW_RADAR_FRAMES_PER_RUN)
-        if len(missing) > limit:
-            oldest_count = limit // 2
-            newest_count = limit - oldest_count
-            selected = missing[:oldest_count] + missing[-newest_count:]
-            selected.sort(key=lambda item: item.valid_time)
-        else:
-            selected = missing
-
+    selected: list[Observation] = []
+    if work_candidates:
+        chunk_start = work_candidates[0].valid_time
+        chunk_end = chunk_start + timedelta(minutes=ARCHIVE_WINDOW_MINUTES)
+        selected = [obs for obs in work_candidates if obs.valid_time <= chunk_end]
+        selected = selected[:max(1, MAX_NEW_RADAR_FRAMES_PER_RUN)]
         print(
-            f"  Missing radar frames to archive: {len(missing)} "
-            f"(processing {len(selected)} this run; newest frames prioritized)"
+            f"  Missing historical work items: {len(work_candidates)}; "
+            f"processing oldest 30-minute chunk {chunk_start.isoformat()} to {chunk_end.isoformat()} "
+            f"({len(selected)} observations this run)"
         )
     else:
-        selected = []
-        print("  No missing radar frames detected.")
+        print("  No missing historical radar/phase work detected in the 3-hour retention window.")
 
     archived_this_run = 0
     phase_grib_paths: list[Path] = []
     phase_observations: list[Observation] = []
 
-    # Phase/composite backfill is independent of radar backfill. This matters
-    # after deploying the per-scan change: radar frames may already exist in
-    # GitHub Releases but only have the old 5-minute phase association.
-    exact_phase_missing = []
-    for obs in recent_observations:
-        exact_phase_name = f"phase_conus_{obs.timestamp_key}.webp"
-        exact_precip_name = f"preciptype_conus_{obs.timestamp_key}.webp"
-        if exact_phase_name not in phase_assets or exact_precip_name not in precip_type_assets:
-            exact_phase_missing.append(obs)
-    exact_phase_missing.sort(key=lambda item: item.valid_time)
-    selected_phase = {obs.valid_time for obs in selected}
-    extra_phase = [obs for obs in exact_phase_missing if obs.valid_time not in selected_phase]
-    if len(extra_phase) > MAX_NEW_PHASE_FRAMES_PER_RUN:
-        # Backfill the oldest missing exact per-scan products first. The prior
-        # newest-first selection could leave the older part of the history
-        # permanently missing once the radar archive itself had caught up.
-        # Selected radar observations are always processed for exact per-scan
-        # phase products; this queue fills the remaining historical gaps.
-        extra_phase = extra_phase[:MAX_NEW_PHASE_FRAMES_PER_RUN]
-    phase_work_observations = list(selected) + extra_phase
-    phase_work_observations.sort(key=lambda item: item.valid_time)
-    print(
-        f"  Per-scan phase/composite work items: {len(phase_work_observations)} "
-        f"({len(extra_phase)} backfill-only; max {MAX_NEW_PHASE_FRAMES_PER_RUN} backfill/run)"
-    )
+    phase_work_observations = selected
+    print(f"  Per-scan phase/composite work items this run: {len(phase_work_observations)}")
 
     for obs in phase_work_observations:
         try:
@@ -1417,7 +1097,7 @@ def run_archive() -> None:
             if grib_path is not None:
                 phase_grib_paths.append(grib_path)
                 phase_observations.append(obs)
-            if obs.valid_time in {item.valid_time for item in selected}:
+            if obs.valid_time in {item.valid_time for item in selected} and obs.asset_name not in radar_assets:
                 upload_release = ensure_upload_release(
                     store,
                     obs.valid_time.date(),
@@ -1489,68 +1169,6 @@ def run_archive() -> None:
                 path.unlink(missing_ok=True)
             shutil.rmtree(helper_output, ignore_errors=True)
 
-    # --------------------------------------------------------------
-    # Legacy/current snapshot fallback. Exact per-scan assets are preferred
-    # by the history manifest; this keeps the current snapshot available even
-    # when the per-scan helper has no usable output.
-    # --------------------------------------------------------------
-    snapshot_bucket = phase_bucket_for_timestamp(now)
-    phase_asset_name = f"phase_conus_{snapshot_bucket:%Y%m%d-%H%M}.webp"
-    precip_type_asset_name = f"preciptype_conus_{snapshot_bucket:%Y%m%d-%H%M}.webp"
-
-    phase_source = OUTPUT_DIR / "winter_phase_mask.png"
-    precip_type_source = OUTPUT_DIR / "winter_precip_type.png"
-
-    if phase_asset_name not in phase_assets and phase_source.exists():
-        try:
-            data = phase_png_to_webp(
-                phase_source,
-                (y0, y1, x0, x1),
-                crop_bounds,
-                row_map_cache,
-            )
-            phase_release = ensure_upload_release(
-                store,
-                now.date(),
-                release_index,
-            )
-            asset = store.upload_asset(phase_release, phase_asset_name, data)
-            phase_release.assets[asset["name"]] = asset
-            phase_assets[asset["name"]] = asset
-            print(
-                f"  Uploaded phase snapshot {asset['name']} "
-                f"({len(data):,} bytes)"
-            )
-        except Exception as exc:
-            print(f"  WARNING: phase snapshot failed: {exc}")
-    else:
-        print(f"  Phase snapshot already present: {phase_asset_name}")
-
-    if precip_type_asset_name not in precip_type_assets and precip_type_source.exists():
-        try:
-            data = phase_png_to_webp(
-                precip_type_source,
-                (y0, y1, x0, x1),
-                crop_bounds,
-                row_map_cache,
-            )
-            precip_release = ensure_upload_release(
-                store,
-                now.date(),
-                release_index,
-            )
-            asset = store.upload_asset(precip_release, precip_type_asset_name, data)
-            precip_release.assets[asset["name"]] = asset
-            precip_type_assets[asset["name"]] = asset
-            print(
-                f"  Uploaded precipitation-type snapshot {asset['name']} "
-                f"({len(data):,} bytes)"
-            )
-        except Exception as exc:
-            print(f"  WARNING: precipitation-type snapshot failed: {exc}")
-    else:
-        print(f"  Precipitation-type snapshot already present: {precip_type_asset_name}")
-
     # Re-fetch all active release partitions so the manifest reflects every
     # successful upload, including any overflow partition created above.
     refreshed_releases: list[ReleaseInfo] = []
@@ -1588,77 +1206,42 @@ def run_archive() -> None:
     print(f"  Precipitation-type snapshots available: {manifest['precip_type_snapshot_count']}")
     print(f"  New radar frames archived this run: {archived_this_run}")
 
-    # Refresh again after all uploads so the persisted manifest and status are
-    # authoritative. The daily release remains comfortably below GitHub's
-    # 1,000-asset release limit for a 3-hour rolling window.
-    status_releases = refreshed_releases
-    stored_times = sorted(
-        ts for ts in existing_radar_timestamps(radar_assets)
-        if cutoff <= ts <= now + timedelta(minutes=1)
+    # Persist these files because GitHub Actions runners are ephemeral. The
+    # live workflow retrieves them from Release storage for the Pages build.
+    manifest_release = ensure_upload_release(store, now.date(), release_index)
+    manifest_asset = store.upload_asset(
+        manifest_release, "mrms_history.json", MRMS_HISTORY_FILE.read_bytes(), "application/json", replace=True
     )
-    unresolved_radar = [obs for obs in recent_observations if obs.asset_name not in radar_assets]
-    unresolved_phase = [
-        obs for obs in recent_observations
-        if f"phase_conus_{obs.timestamp_key}.webp" not in phase_assets
-    ]
-    unresolved_precip = [
-        obs for obs in recent_observations
-        if f"preciptype_conus_{obs.timestamp_key}.webp" not in precip_type_assets
-    ]
-    recent_files = [
-        {
-            "asset_name": obs.asset_name,
-            "timestamp_utc": obs.valid_time.isoformat(),
-        }
-        for obs in recent_observations[-20:]
-        if obs.asset_name in radar_assets
-    ]
+    manifest_release.assets[manifest_asset["name"]] = manifest_asset
+
     status = {
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
+        "archive_window_minutes": ARCHIVE_WINDOW_MINUTES,
         "live_watermark_utc": live_watermark.isoformat() if live_watermark else None,
-        "mrms_observations_in_window": len(recent_observations),
-        "radar_assets_before": radar_assets_before_count,
-        "phase_assets_before": phase_assets_before_count,
-        "precip_type_assets_before": precip_type_assets_before_count,
-        "radar_missing_before": len(missing),
+        "mrms_observations_in_window": len(retention_observations),
+        "eligible_observations": len(recent_observations),
+        "work_candidates": len(work_candidates),
+        "work_processed_this_run": len(selected),
+        "radar_assets_before": len(existing_times),
         "radar_uploaded_this_run": archived_this_run,
-        "radar_remaining_missing": len(unresolved_radar),
-        "phase_remaining_missing": len(unresolved_phase),
-        "precip_type_remaining_missing": len(unresolved_precip),
-        "oldest_stored_utc": stored_times[0].isoformat() if stored_times else None,
-        "newest_stored_utc": stored_times[-1].isoformat() if stored_times else None,
-        "status": "OK" if not unresolved_radar else "BACKFILL_IN_PROGRESS",
-        "recent_files": recent_files,
-        "release_tags": [release.tag for release in status_releases],
-        "manifest_path": str(MRMS_HISTORY_FILE),
+        "radar_remaining_missing": sum(1 for obs in recent_observations if obs.valid_time not in radar_assets),
+        "phase_remaining_missing": sum(1 for obs in recent_observations if f"phase_conus_{obs.timestamp_key}.webp" not in phase_assets),
+        "precip_type_remaining_missing": sum(1 for obs in recent_observations if f"preciptype_conus_{obs.timestamp_key}.webp" not in precip_type_assets),
+        "oldest_stored_utc": manifest["frames"][0]["timestamp_utc"] if manifest.get("frames") else None,
+        "newest_stored_utc": manifest["frames"][-1]["timestamp_utc"] if manifest.get("frames") else None,
+        "status": "caught_up" if not work_candidates else "backfilling",
+        "recent_files": [
+            {"asset_name": f["radar_asset"], "timestamp_utc": f["timestamp_utc"]}
+            for f in manifest.get("frames", [])[-10:]
+        ],
     }
-
-    # Persist both the manifest and a small status record in the daily release
-    # so the next live Pages build can retrieve them without needing the archive
-    # runner's ephemeral filesystem.
-    target_release = ensure_upload_release(store, now.date(), release_index)
-    upload_or_replace_json_asset(store, target_release, "mrms_history.json", manifest)
-    upload_or_replace_json_asset(store, target_release, "mrms_archive_status.json", status)
-
-    print("\n  ============================================================")
-    print("  MRMS ARCHIVE STATUS")
-    print("  ============================================================")
-    print(f"  Archive window:       {HISTORY_HOURS} hours")
-    print(f"  Live watermark:       {status['live_watermark_utc'] or 'NONE'}")
-    print(f"  MRMS observations:    {status['mrms_observations_in_window']}")
-    print(f"  Radar stored before:  {status['radar_assets_before']}")
-    print(f"  Radar missing:        {status['radar_missing_before']}")
-    print(f"  Radar uploaded:       {status['radar_uploaded_this_run']}")
-    print(f"  Radar still missing:  {status['radar_remaining_missing']}")
-    print(f"  Phase still missing:  {status['phase_remaining_missing']}")
-    print(f"  Precip still missing: {status['precip_type_remaining_missing']}")
-    print(f"  Oldest stored:        {status['oldest_stored_utc'] or 'NONE'}")
-    print(f"  Newest stored:        {status['newest_stored_utc'] or 'NONE'}")
-    print(f"  Status:               {status['status']}")
-    print("  ============================================================")
-    for item in recent_files:
-        print(f"  {item['timestamp_utc']}  {item['asset_name']}")
+    status_path = OUTPUT_DIR / "mrms_archive_status.json"
+    status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
+    status_asset = store.upload_asset(
+        manifest_release, "mrms_archive_status.json", status_path.read_bytes(), "application/json", replace=True
+    )
+    manifest_release.assets[status_asset["name"]] = status_asset
 
     cleanup_old_releases(store, now)
 
