@@ -3,21 +3,23 @@ name: MRMS Winter Radar — Archive
 on:
   workflow_dispatch:
   schedule:
-    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+    # Archive runs every 15 minutes.
+    - cron: "2,17,32,47 * * * *"
 
 permissions:
   contents: write
 
-# The archive is idempotent. If a run is still backfilling when the next
-# scheduled run starts, the newest run is more useful because it rechecks the
-# same rolling 3-hour retention window and continues from whatever assets already exist.
+# Never cancel an archive run that is already processing.
+# A new scheduled run will wait rather than interrupting the current backfill.
 concurrency:
   group: mrms-history
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   archive:
     runs-on: ubuntu-latest
+
+    # Give the archive plenty of time to finish its 15-minute chunk.
     timeout-minutes: 25
 
     steps:
@@ -50,7 +52,7 @@ jobs:
             src/archive_mrms_history.py \
             src/build_history_precip_type.py
 
-      - name: Run 30-minute MRMS archive/backfill
+      - name: Run 15-minute MRMS archive/backfill
         working-directory: src
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -67,16 +69,20 @@ jobs:
       - name: Show archive status
         if: always()
         run: |
-          echo "## MRMS 30-Minute Archive Run Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "## MRMS 15-Minute Archive Run Status" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+
           if [ -s outputs/mrms_archive_status.json ]; then
-          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           from pathlib import Path
+
           p = Path("outputs/mrms_archive_status.json")
           d = json.loads(p.read_text())
+
           print("| Metric | Value |")
           print("|---|---|")
+
           for key, label in [
               ("generated_at_utc", "Archive run UTC"),
               ("history_hours", "Retention window"),
@@ -93,23 +99,24 @@ jobs:
               ("status", "Status"),
           ]:
               print(f"| {label} | {d.get(key, '—')} |")
+
           print()
           print("### Stored file timestamps")
+
           for item in d.get("recent_files", []):
-              print(f"- `{item['asset_name']}` — {item['timestamp_utc']}")
+              print(f"- {item}")
           PY
           else
             echo "Archive status JSON was not produced." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload debug/status files
+      - name: Upload archive debug artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mrms-archive-debug
           path: |
+            outputs/archive.log
             outputs/mrms_archive_status.json
             outputs/mrms_history.json
-            outputs/archive.log
           if-no-files-found: ignore
-          retention-days: 3
