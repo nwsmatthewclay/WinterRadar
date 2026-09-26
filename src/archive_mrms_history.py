@@ -6,7 +6,7 @@ The live WinterRadar pipeline intentionally continues to use the `latest`
 MRMS product. This module is a secondary history collector. Each time the
 GitHub Actions workflow runs it:
 
-1. Reads NOAA's timestamped MergedReflectivityComposite directory.
+1. Reads NOAA's timestamped MergedReflectivityQCComposite directory.
 2. Finds all observations from the previous 24 hours.
 3. Looks at the two daily GitHub Releases used by WinterRadar as persistent
    storage and determines which observations are missing.
@@ -64,16 +64,16 @@ OUTPUT_DIR = ROOT / "outputs"
 MRMS_HISTORY_FILE = OUTPUT_DIR / "mrms_history.json"
 
 MRMS_REFLECTIVITY_DIR = (
-    "https://mrms.ncep.noaa.gov/2D/MergedReflectivityComposite/"
+    "https://mrms.ncep.noaa.gov/2D/MergedReflectivityQCComposite/"
 )
 
 MRMS_FILENAME_RE = re.compile(
-    r"MRMS_MergedReflectivityComposite_00\.50_(\d{8}-\d{6})\.grib2\.gz"
+    r"MRMS_MergedReflectivityQCComposite_00\.50_(\d{8}-\d{6})\.grib2\.gz"
 )
 
 # New namespace prevents the viewer from ever mixing old
-# ReflectivityAtLowestAltitude frames with merged-composite frames.
-RADAR_ASSET_RE = re.compile(r"^radar_merged_conus_(\d{8}-\d{6})\.webp$")
+# older radar frames with the current QC-composite frames.
+RADAR_ASSET_RE = re.compile(r"^radar_qc_conus_(\d{8}-\d{6})\.webp$")
 PHASE_ASSET_RE = re.compile(r"^phase_conus_(\d{8}-\d{4})\.webp$")
 PRECIP_TYPE_ASSET_RE = re.compile(r"^preciptype_conus_(\d{8}-\d{4})\.webp$")
 HISTORY_RELEASE_RE = re.compile(r"^mrms-(\d{8})(?:-(\d+))?$")
@@ -120,7 +120,7 @@ class Observation:
 
     @property
     def asset_name(self) -> str:
-        return f"radar_merged_conus_{self.timestamp_key}.webp"
+        return f"radar_qc_conus_{self.timestamp_key}.webp"
 
 
 @dataclass(frozen=True)
@@ -352,7 +352,7 @@ def fetch_mrms_directory(session: requests.Session) -> list[Observation]:
     observations = parse_mrms_directory(response.text)
     if not observations:
         raise RuntimeError(
-            "No timestamped MergedReflectivityComposite observations were found "
+            "No timestamped MergedReflectivityQCComposite observations were found "
             "in the MRMS directory."
         )
     return observations
@@ -862,7 +862,7 @@ def build_manifest(
         "version": "1.0-history",
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
-        "frame_interval_note": "MRMS MergedReflectivityComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 8 hours at full-CONUS coverage.",
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 8 hours at full-CONUS coverage.",
         "bounds": [bounds[0], bounds[1], bounds[2], bounds[3]],
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(frames),
@@ -1127,14 +1127,14 @@ def run_archive() -> None:
 def self_test() -> None:
     """Pure-Python smoke test used before handing the files to Actions."""
     html = """
-    <a href="MRMS_MergedReflectivityComposite_00.50_20260920-020241.grib2.gz">a</a>
-    <a href="MRMS_MergedReflectivityComposite_00.50_20260920-020439.grib2.gz">b</a>
-    <a href="MRMS_MergedReflectivityComposite.latest.grib2.gz">latest</a>
+    <a href="MRMS_MergedReflectivityQCComposite_00.50_20260920-020241.grib2.gz">a</a>
+    <a href="MRMS_MergedReflectivityQCComposite_00.50_20260920-020439.grib2.gz">b</a>
+    <a href="MRMS_MergedReflectivityQCComposite.latest.grib2.gz">latest</a>
     """
     obs = parse_mrms_directory(html)
     assert len(obs) == 2
     assert obs[0].timestamp_key == "20260920-020241"
-    assert obs[0].asset_name == "radar_merged_conus_20260920-020241.webp"
+    assert obs[0].asset_name == "radar_qc_conus_20260920-020241.webp"
     assert PRECIP_TYPE_ASSET_RE.match("preciptype_conus_20260920-0230.webp")
 
     bounds = (20.005001, -129.995, 54.995, -60.005002)
