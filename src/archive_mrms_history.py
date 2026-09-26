@@ -74,8 +74,8 @@ MRMS_FILENAME_RE = re.compile(
 # New namespace prevents the viewer from ever mixing old
 # older radar frames with the current QC-composite frames.
 RADAR_ASSET_RE = re.compile(r"^radar_qc_conus_(\d{8}-\d{6})\.webp$")
-PHASE_ASSET_RE = re.compile(r"^phase_conus_(\d{8}-\d{4})\.webp$")
-PRECIP_TYPE_ASSET_RE = re.compile(r"^preciptype_conus_(\d{8}-\d{4})\.webp$")
+PHASE_ASSET_RE = re.compile(r"^phase_conus_(\d{8}-\d{6}|\d{8}-\d{4})\.webp$")
+PRECIP_TYPE_ASSET_RE = re.compile(r"^preciptype_conus_(\d{8}-\d{6}|\d{8}-\d{4})\.webp$")
 HISTORY_RELEASE_RE = re.compile(r"^mrms-(\d{8})(?:-(\d+))?$")
 
 # GitHub enforces a hard 1,000-asset maximum per release. Keep the active
@@ -94,11 +94,16 @@ HISTORY_FALLBACK_BOUNDS = [
 ]
 
 # Archive all observed ~2-minute MRMS frames for the most recent 8 hours.
-# Phase masks are bucketed to one per 5 minutes, matching the workflow cadence.
+# Every archived radar observation gets its own precipitation-type composite.
+# RAP environmental profiles are reused by valid hour; they do not force radar
+# observations to wait for a new model cycle.
 HISTORY_HOURS = 8
-PHASE_BUCKET_MINUTES = 5
+PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
     os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "60")
+)
+MAX_NEW_PHASE_FRAMES_PER_RUN = int(
+    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "120")
 )
 
 REQUEST_TIMEOUT = (20, 120)
@@ -499,7 +504,8 @@ def phase_png_to_webp(
     crop: tuple[int, int, int, int],
     crop_bounds: tuple[float, float, float, float],
     row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
-) -> bytes:
+    keep_grib: bool = False,
+) -> tuple[bytes, Path | None]:
     y0, y1, x0, x1 = crop
     with Image.open(path) as im:
         rgba = np.asarray(im.convert("RGBA"))[y0:y1, x0:x1]
@@ -637,11 +643,18 @@ def download_and_render_observation(
             f"      Decoded/rendered {observation.asset_name}: "
             f"{len(data):,} WebP bytes"
         )
-        return data
+        if keep_grib:
+            # Give the phase helper a deterministic timestamped filename.
+            kept = Path(tempfile.gettempdir()) / f"MRMS_{observation.timestamp_key}.grib2"
+            kept.unlink(missing_ok=True)
+            grib_path.replace(kept)
+            return data, kept
+        return data, None
 
     finally:
         gz_path.unlink(missing_ok=True)
-        grib_path.unlink(missing_ok=True)
+        if not keep_grib:
+            grib_path.unlink(missing_ok=True)
 
 
 def phase_bucket_for_timestamp(value: datetime) -> datetime:
@@ -761,14 +774,24 @@ def choose_phase_asset(
     radar_time: datetime,
     phase_assets: dict[str, dict],
 ) -> dict | None:
+    exact_name = f"phase_conus_{radar_time:%Y%m%d-%H%M%S}.webp"
+    exact = phase_assets.get(exact_name)
+    if exact is not None:
+        return {
+            "timestamp_utc": radar_time.isoformat(),
+            "asset_name": exact["name"],
+            "url": exact["browser_download_url"],
+            "api_url": exact.get("url"),
+        }
+
     candidates: list[tuple[datetime, dict]] = []
     for name, asset in phase_assets.items():
         match = PHASE_ASSET_RE.match(name)
         if not match:
             continue
-        bucket = datetime.strptime(match.group(1), "%Y%m%d-%H%M").replace(
-            tzinfo=timezone.utc
-        )
+        stamp = match.group(1)
+        fmt = "%Y%m%d-%H%M%S" if len(stamp) == 15 else "%Y%m%d-%H%M"
+        bucket = datetime.strptime(stamp, fmt).replace(tzinfo=timezone.utc)
         if bucket <= radar_time:
             candidates.append((bucket, asset))
     if not candidates:
@@ -787,14 +810,28 @@ def choose_precip_type_asset(
     radar_time: datetime,
     precip_type_assets: dict[str, dict],
 ) -> dict | None:
+    # New per-scan assets use the exact radar timestamp.  This is the primary
+    # path and prevents the history slider from pairing a radar frame with an
+    # older 5-minute composite.
+    exact_name = f"preciptype_conus_{radar_time:%Y%m%d-%H%M%S}.webp"
+    exact = precip_type_assets.get(exact_name)
+    if exact is not None:
+        return {
+            "timestamp_utc": radar_time.isoformat(),
+            "asset_name": exact["name"],
+            "url": exact["browser_download_url"],
+            "api_url": exact.get("url"),
+        }
+
+    # Backward compatibility for history generated before the per-scan change.
     candidates: list[tuple[datetime, dict]] = []
     for name, asset in precip_type_assets.items():
         match = PRECIP_TYPE_ASSET_RE.match(name)
         if not match:
             continue
-        bucket = datetime.strptime(match.group(1), "%Y%m%d-%H%M").replace(
-            tzinfo=timezone.utc
-        )
+        stamp = match.group(1)
+        fmt = "%Y%m%d-%H%M%S" if len(stamp) == 15 else "%Y%m%d-%H%M"
+        bucket = datetime.strptime(stamp, fmt).replace(tzinfo=timezone.utc)
         if bucket <= radar_time:
             candidates.append((bucket, asset))
     if not candidates:
@@ -983,33 +1020,58 @@ def run_archive() -> None:
         print("  No missing radar frames detected.")
 
     archived_this_run = 0
-    for obs in selected:
+    phase_grib_paths: list[Path] = []
+    phase_observations: list[Observation] = []
+
+    # Phase/composite backfill is independent of radar backfill. This matters
+    # after deploying the per-scan change: radar frames may already exist in
+    # GitHub Releases but only have the old 5-minute phase association.
+    exact_phase_missing = []
+    for obs in recent_observations:
+        exact_phase_name = f"phase_conus_{obs.timestamp_key}.webp"
+        exact_precip_name = f"preciptype_conus_{obs.timestamp_key}.webp"
+        if exact_phase_name not in phase_assets or exact_precip_name not in precip_type_assets:
+            exact_phase_missing.append(obs)
+    exact_phase_missing.sort(key=lambda item: item.valid_time)
+    selected_phase = {obs.valid_time for obs in selected}
+    extra_phase = [obs for obs in exact_phase_missing if obs.valid_time not in selected_phase]
+    if len(extra_phase) > MAX_NEW_PHASE_FRAMES_PER_RUN:
+        extra_phase = extra_phase[-MAX_NEW_PHASE_FRAMES_PER_RUN:]
+    phase_work_observations = list(selected) + extra_phase
+    phase_work_observations.sort(key=lambda item: item.valid_time)
+    print(
+        f"  Per-scan phase/composite work items: {len(phase_work_observations)} "
+        f"({len(extra_phase)} backfill-only)"
+    )
+
+    for obs in phase_work_observations:
         try:
-            data = download_and_render_observation(
+            data, grib_path = download_and_render_observation(
                 session,
                 obs,
                 expected_shape,
                 (y0, y1, x0, x1),
                 crop_bounds,
                 row_map_cache,
+                keep_grib=True,
             )
-            upload_release = ensure_upload_release(
-                store,
-                obs.valid_time.date(),
-                release_index,
-            )
-            asset = store.upload_asset(upload_release, obs.asset_name, data)
-            # Keep the in-memory partition count synchronized so the next
-            # upload in this same run can roll over before reaching GitHub's
-            # 1,000-asset hard limit.
-            upload_release.assets[asset["name"]] = asset
-            target = radar_assets
-            target[asset["name"]] = asset
-            archived_this_run += 1
-            print(
-                f"      Uploaded {asset['name']} "
-                f"({len(data):,} bytes)"
-            )
+            if grib_path is not None:
+                phase_grib_paths.append(grib_path)
+                phase_observations.append(obs)
+            if obs.valid_time in {item.valid_time for item in selected}:
+                upload_release = ensure_upload_release(
+                    store,
+                    obs.valid_time.date(),
+                    release_index,
+                )
+                asset = store.upload_asset(upload_release, obs.asset_name, data)
+                upload_release.assets[asset["name"]] = asset
+                radar_assets[asset["name"]] = asset
+                archived_this_run += 1
+                print(
+                    f"      Uploaded {asset['name']} "
+                    f"({len(data):,} bytes)"
+                )
         except Exception as exc:
             # A single bad historical frame should not suppress the remaining
             # backlog; the next workflow run will retry it. Always print the
@@ -1021,6 +1083,52 @@ def run_archive() -> None:
             if HISTORY_DEBUG:
                 import traceback
                 traceback.print_exc()
+
+    # --------------------------------------------------------------
+    # Per-scan phase/composite generation.
+    # Each radar observation gets a matching phase and precipitation-type
+    # asset. RAP environmental profiles are cached by valid hour inside the
+    # isolated helper process, so hourly model timing never skips a radar scan.
+    # --------------------------------------------------------------
+    if phase_grib_paths:
+        helper_output = Path(tempfile.mkdtemp(prefix="winterradar_phase_"))
+        try:
+            import subprocess
+            helper = ROOT / "src" / "build_history_precip_type.py"
+            if not helper.exists():
+                helper = ROOT / "build_history_precip_type.py"
+            cmd = ["python", str(helper), "--output-dir", str(helper_output)] + [str(path) for path in phase_grib_paths]
+            print(f"  Building per-scan phase composites for {len(phase_grib_paths)} radar scans...")
+            subprocess.run(cmd, check=True)
+
+            for obs in phase_observations:
+                names = [
+                    f"phase_conus_{obs.timestamp_key}.webp",
+                    f"preciptype_conus_{obs.timestamp_key}.webp",
+                ]
+                for name in names:
+                    source = helper_output / name
+                    if not source.exists():
+                        print(f"  WARNING: per-scan phase asset missing: {name}")
+                        continue
+                    if name.startswith("phase_conus_"):
+                        target_assets = phase_assets
+                    else:
+                        target_assets = precip_type_assets
+                    if name in target_assets:
+                        continue
+                    data = source.read_bytes()
+                    release = ensure_upload_release(store, obs.valid_time.date(), release_index)
+                    asset = store.upload_asset(release, name, data)
+                    release.assets[asset["name"]] = asset
+                    target_assets[asset["name"]] = asset
+                    print(f"  Uploaded per-scan phase asset {name} ({len(data):,} bytes)")
+        except Exception as exc:
+            print(f"  WARNING: per-scan phase generation failed: {type(exc).__name__}: {exc}")
+        finally:
+            for path in phase_grib_paths:
+                path.unlink(missing_ok=True)
+            shutil.rmtree(helper_output, ignore_errors=True)
 
     # --------------------------------------------------------------
     # Phase + precipitation-type snapshots: one 10-minute bucket per interval.
