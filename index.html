@@ -184,6 +184,20 @@ html, body {
     image-rendering: pixelated !important;
 }
 
+.layer-raster-status {
+    margin-left: auto;
+    padding-left: 6px;
+    color: #6d7b84;
+    font-size: 7px;
+    font-weight: 800;
+    white-space: nowrap;
+    text-transform: uppercase;
+}
+
+.layer-raster-status.loaded { color: #2b7a4b; }
+.layer-raster-status.empty { color: #8a6b1d; }
+.layer-raster-status.failed { color: #a33a3a; }
+
 .map-legend {
     position: absolute;
     bottom: 78px;
@@ -1345,7 +1359,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                             type="checkbox"
                             onchange="togglePhase(this.checked)"
                         >
-                        <span>Winter Phase Mask</span>
+                        <span>Winter Phase Mask</span><span id="phaseLayerStatus" class="layer-raster-status" aria-live="polite"></span>
                     </label>
 
                     <label class="layer-row">
@@ -1354,7 +1368,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                             type="checkbox"
                             onchange="toggleRadarFusion(this.checked)"
                         >
-                        <span>Radar Phase Evidence</span>
+                        <span>Radar Phase Evidence</span><span id="radarFusionLayerStatus" class="layer-raster-status" aria-live="polite"></span>
                     </label>
 
                     <label class="layer-row">
@@ -1363,7 +1377,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                             type="checkbox"
                             onchange="togglePhaseAgreement(this.checked)"
                         >
-                        <span>Phase Agreement</span>
+                        <span>Phase Agreement</span><span id="phaseAgreementLayerStatus" class="layer-raster-status" aria-live="polite"></span>
                     </label>
 
                     <label class="layer-row">
@@ -1915,61 +1929,194 @@ function createImageOverlay(
 }
 
 
-function loadRasterWithFallback(urls, bounds, opacity, zIndex, className, onReady, onFailure) {
-    let attempt = 0;
+const winterRasterLoadTokens = Object.create(null);
+
+async function loadRasterWithFallback(urls, bounds, opacity, zIndex, className, onReady, onFailure, stateId) {
+    const list = Array.isArray(urls) ? urls.filter(Boolean) : [];
+    const requestKey = stateId || ("z" + zIndex + ":" + (className || ""));
+    const requestToken = (winterRasterLoadTokens[requestKey] || 0) + 1;
+    winterRasterLoadTokens[requestKey] = requestToken;
+
     let cancelled = false;
     let active = null;
+    let activeObjectUrl = null;
 
-    function next() {
-        if (cancelled) return;
-        if (attempt >= urls.length) {
-            if (typeof onFailure === "function") onFailure();
-            return;
+    function isCurrent() {
+        return !cancelled && winterRasterLoadTokens[requestKey] === requestToken;
+    }
+
+    function setState(state, detail) {
+        if (!stateId) return;
+        const el = document.getElementById(stateId);
+        if (!el) return;
+        el.className = "layer-raster-status " + state;
+        el.textContent = detail || "";
+        el.title = detail || "";
+    }
+
+    function revoke(url) {
+        if (!url) return;
+        try { URL.revokeObjectURL(url); } catch (_) {}
+    }
+
+    function removeActive() {
+        if (active) {
+            if (map && map.hasLayer(active)) map.removeLayer(active);
+            if (active._winterRadarObjectUrl) {
+                revoke(active._winterRadarObjectUrl);
+                active._winterRadarObjectUrl = null;
+            }
+            active = null;
+        }
+        if (activeObjectUrl) {
+            revoke(activeObjectUrl);
+            activeObjectUrl = null;
+        }
+    }
+
+    async function decodeForBrowser(blob, url) {
+        if (!blob || blob.size < 16) {
+            throw new Error("Raster response was unexpectedly small: " + (blob ? blob.size : 0) + " bytes");
         }
 
-        const url = urls[attempt++];
-        const tester = new Image();
+        if (typeof createImageBitmap === "function") {
+            const bitmap = await createImageBitmap(blob);
+            try {
+                const width = bitmap.width;
+                const height = bitmap.height;
 
-        // All WinterRadar raster assets are same-origin GitHub Pages files.
-        // Do not force a crossOrigin request here; that can cause otherwise
-        // valid cached/static images to fail in the browser.
-        tester.onload = function() {
-            if (cancelled) return;
+                // Sample alpha without allocating a full 7000x4571 readback.
+                const maxDim = 900;
+                const scale = Math.min(1, maxDim / Math.max(width, height));
+                const w = Math.max(1, Math.round(width * scale));
+                const h = Math.max(1, Math.round(height * scale));
+                const canvas = document.createElement("canvas");
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext("2d", { willReadFrequently: true });
+                let alphaFraction = -1;
+                if (ctx) {
+                    ctx.clearRect(0, 0, w, h);
+                    ctx.drawImage(bitmap, 0, 0, w, h);
+                    const pixels = ctx.getImageData(0, 0, w, h).data;
+                    let nonTransparent = 0;
+                    for (let i = 3; i < pixels.length; i += 4) {
+                        if (pixels[i] > 0) nonTransparent += 1;
+                    }
+                    alphaFraction = nonTransparent / (w * h);
+                }
+                return { width, height, alphaFraction };
+            } finally {
+                bitmap.close();
+            }
+        }
 
-            active = createImageOverlay(
-                url,
+        const testUrl = URL.createObjectURL(blob);
+        try {
+            const img = new Image();
+            img.decoding = "async";
+            img.src = testUrl;
+            if (typeof img.decode === "function") {
+                await img.decode();
+            } else {
+                await new Promise(function(resolve, reject) {
+                    img.onload = resolve;
+                    img.onerror = function() { reject(new Error("Browser could not decode raster: " + url)); };
+                });
+            }
+            return {
+                width: img.naturalWidth,
+                height: img.naturalHeight,
+                alphaFraction: -1
+            };
+        } finally {
+            revoke(testUrl);
+        }
+    }
+
+    function handleFailure() {
+        removeActive();
+        if (isCurrent()) {
+            setState("failed", "Load failed");
+            if (typeof onFailure === "function") onFailure();
+        }
+    }
+
+    for (const url of list) {
+        if (!isCurrent()) return;
+
+        try {
+            const response = await fetch(url, {
+                cache: "no-store",
+                credentials: url.startsWith("./") ? "same-origin" : "omit",
+                headers: {
+                    "Accept": "image/avif,image/webp,image/png,image/*,*/*;q=0.8"
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error("HTTP " + response.status + " for " + url);
+            }
+
+            const blob = await response.blob();
+            const decoded = await decodeForBrowser(blob, url);
+
+            if (!isCurrent()) return;
+
+            const objectUrl = URL.createObjectURL(blob);
+            const overlay = createImageOverlay(
+                objectUrl,
                 bounds,
                 opacity,
                 zIndex,
                 false,
                 className || ""
             );
-            active.addTo(map);
+            overlay._winterRadarObjectUrl = objectUrl;
+            activeObjectUrl = objectUrl;
+            active = overlay;
+
+            // Attach the error handler before adding the overlay. We do NOT wait
+            // for Leaflet's load event: the raster bytes were already fetched and
+            // explicitly browser-decoded above.
+            overlay.once("error", function() {
+                if (active !== overlay) return;
+                console.warn("Leaflet rejected an already-decoded raster:", url);
+                removeActive();
+                if (isCurrent() && typeof onFailure === "function") {
+                    // The PNG/WebP itself was valid, so report the actual browser
+                    // rendering problem rather than silently toggling the layer off.
+                    setState("failed", "Browser render failed");
+                    onFailure();
+                }
+            });
+
+            overlay.addTo(map);
+            overlay.setOpacity(opacity);
+            if (typeof overlay.bringToFront === "function") overlay.bringToFront();
+
+            const empty = decoded.alphaFraction === 0;
+            setState(
+                empty ? "empty" : "loaded",
+                empty ? "Loaded • no phase signal" : "Loaded"
+            );
 
             if (typeof onReady === "function") {
-                onReady(active, url);
+                onReady(overlay, url, blob.size, decoded);
             }
-        };
 
-        tester.onerror = function() {
-            if (cancelled) return;
-            next();
-        };
-
-        // Explicitly bypass the browser cache for the current-cycle products.
-        // This prevents a stale failed response from poisoning a layer retry.
-        tester.src = url;
+            activeObjectUrl = null;
+            return function() {
+                cancelled = true;
+                removeActive();
+            };
+        } catch (error) {
+            console.warn("Raster load attempt failed:", url, error);
+            removeActive();
+        }
     }
 
-    next();
-
-    return function cancel() {
-        cancelled = true;
-        if (active) {
-            removeMapOverlay(active);
-            active = null;
-        }
-    };
+    handleFailure();
 }
 
 function radarDisplaySpec() {
@@ -2035,6 +2182,8 @@ function loadCurrentPhaseOverlay(force = false) {
         removeMapOverlay(phaseOverlay);
         phaseOverlay = null;
         phaseDisplayMode = null;
+        const status = document.getElementById("phaseLayerStatus");
+        if (status) { status.textContent = ""; status.className = "layer-raster-status"; }
         return;
     }
 
@@ -2068,7 +2217,8 @@ function loadCurrentPhaseOverlay(force = false) {
             const checkbox = document.getElementById("phaseToggle");
             if (checkbox) checkbox.checked = false;
             updateDynamicMapLegend();
-        }
+        },
+        "phaseLayerStatus"
     );
 }
 
@@ -2168,6 +2318,8 @@ function loadRadarFusionLayer() {
     if (!document.getElementById("radarFusionToggle")?.checked) {
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
+        const status = document.getElementById("radarFusionLayerStatus");
+        if (status) { status.textContent = ""; status.className = "layer-raster-status"; }
         return;
     }
 
@@ -2199,7 +2351,8 @@ function loadRadarFusionLayer() {
             const checkbox = document.getElementById("radarFusionToggle");
             if (checkbox) checkbox.checked = false;
             updateDynamicMapLegend();
-        }
+        },
+        "radarFusionLayerStatus"
     );
 }
 
@@ -2209,6 +2362,8 @@ function loadPhaseAgreementLayer() {
     if (!document.getElementById("phaseAgreementToggle")?.checked) {
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
+        const status = document.getElementById("phaseAgreementLayerStatus");
+        if (status) { status.textContent = ""; status.className = "layer-raster-status"; }
         return;
     }
 
@@ -2238,7 +2393,8 @@ function loadPhaseAgreementLayer() {
             const checkbox = document.getElementById("phaseAgreementToggle");
             if (checkbox) checkbox.checked = false;
             updateDynamicMapLegend();
-        }
+        },
+        "phaseAgreementLayerStatus"
     );
 }
 
@@ -2257,6 +2413,8 @@ function togglePhaseAgreement(enabled) {
     } else {
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
+        const status = document.getElementById("phaseAgreementLayerStatus");
+        if (status) { status.textContent = ""; status.className = "layer-raster-status"; }
     }
 }
 
@@ -2275,6 +2433,8 @@ function toggleRadarFusion(enabled) {
     } else {
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
+        const status = document.getElementById("radarFusionLayerStatus");
+        if (status) { status.textContent = ""; status.className = "layer-raster-status"; }
     }
 }
 
@@ -3301,8 +3461,13 @@ function setHistoryStatus(textValue, className) {
 
 
 function removeMapOverlay(layerRef) {
-    if (layerRef && map && map.hasLayer(layerRef)) {
+    if (!layerRef) return;
+    if (map && map.hasLayer(layerRef)) {
         map.removeLayer(layerRef);
+    }
+    if (layerRef._winterRadarObjectUrl) {
+        URL.revokeObjectURL(layerRef._winterRadarObjectUrl);
+        layerRef._winterRadarObjectUrl = null;
     }
 }
 
@@ -3348,9 +3513,11 @@ function historyAssetUrl(frame, kind) {
 
 function historyImageProxyUrl(url) {
     if (!url) return url;
-
+    const absolute = /^https?:\/\//i.test(url)
+        ? url
+        : new URL(url, window.location.href).href;
     return "https://wsrv.nl/?url=" +
-        encodeURIComponent(url) +
+        encodeURIComponent(absolute) +
         "&output=webp";
 }
 
@@ -3380,70 +3547,103 @@ function loadHistoricalOverlay(options) {
             return;
         }
 
+        const urls = [
+            nativeUrl,
+            historyImageProxyUrl(nativeUrl)
+        ].filter(Boolean);
         let attempt = 0;
         let overlay = null;
-        const isSameOriginHistoryAsset = String(nativeUrl).startsWith("./history/");
-        // Always keep a browser-display fallback. Same-origin Pages assets are
-        // preferred, but a missing staged asset should not make the slider blank.
-        const urls = isSameOriginHistoryAsset
-            ? [nativeUrl, historyImageProxyUrl(nativeUrl)]
-            : [nativeUrl, historyImageProxyUrl(nativeUrl)];
+        let objectUrl = null;
 
-        function tryNextUrl() {
+        async function tryNext() {
             if (attempt >= urls.length) {
                 onFailed();
                 reject(new Error("Historical image failed to load."));
                 return;
             }
 
-            const url = urls[attempt];
-            attempt += 1;
+            const url = urls[attempt++];
 
-            overlay = createImageOverlay(
-                url,
-                bounds,
-                0,
-                zIndex,
-                false,
-                className || ""
-            );
+            try {
+                const response = await fetch(url, {
+                    cache: "no-store",
+                    credentials: url.startsWith("./history/") ? "same-origin" : "omit"
+                });
+                if (!response.ok) throw new Error("HTTP " + response.status + " for " + url);
 
-            assignPending(overlay);
+                const blob = await response.blob();
+                if (!blob || blob.size < 16) throw new Error("Historical raster is empty");
 
-            overlay.on("load", function() {
-                // A newer slider selection superseded this load.
+                objectUrl = URL.createObjectURL(blob);
+                const img = new Image();
+                img.decoding = "async";
+                img.src = objectUrl;
+                if (typeof img.decode === "function") {
+                    await img.decode();
+                } else {
+                    await new Promise(function(resolveImg, rejectImg) {
+                        img.onload = resolveImg;
+                        img.onerror = rejectImg;
+                    });
+                }
+
                 if (requestId !== historyRenderRequest || !historyMode) {
-                    removeMapOverlay(overlay);
+                    revokeHistoryObjectUrl();
                     resolve(null);
                     return;
                 }
 
-                // Remove the old active layer only after the new image loaded.
-                removeActive();
-                overlay.setOpacity(opacity);
-                onLoaded(overlay);
-                resolve(overlay);
-            });
+                overlay = createImageOverlay(
+                    objectUrl,
+                    bounds,
+                    0,
+                    zIndex,
+                    false,
+                    className || ""
+                );
+                overlay._winterRadarObjectUrl = objectUrl;
+                objectUrl = null;
 
-            overlay.on("error", function() {
-                removeMapOverlay(overlay);
+                assignPending(overlay);
 
-                if (attempt < urls.length) {
-                    tryNextUrl();
-                } else {
-                    onFailed();
-                    reject(new Error("Historical image failed to load."));
-                }
-            });
+                overlay.once("load", function() {
+                    if (requestId !== historyRenderRequest || !historyMode) {
+                        removeMapOverlay(overlay);
+                        resolve(null);
+                        return;
+                    }
+                    removeActive();
+                    overlay.setOpacity(opacity);
+                    if (typeof overlay.bringToFront === "function") overlay.bringToFront();
+                    onLoaded(overlay);
+                    resolve(overlay);
+                });
 
-            overlay.addTo(map);
-            overlay.setOpacity(0);
+                overlay.once("error", function() {
+                    removeMapOverlay(overlay);
+                    overlay = null;
+                    tryNext().catch(reject);
+                });
+
+                overlay.addTo(map);
+                overlay.setOpacity(0);
+            } catch (error) {
+                console.warn("Historical raster load attempt failed:", url, error);
+                revokeHistoryObjectUrl();
+                tryNext().catch(reject);
+            }
         }
 
-        tryNextUrl();
+        function revokeHistoryObjectUrl() {
+            if (objectUrl) {
+                try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+                objectUrl = null;
+            }
+        }
+
+        tryNext().catch(reject);
     });
 }
-
 
 function loadLiveOverlay(url, bounds, opacity, zIndex) {
     const overlay = createImageOverlay(
