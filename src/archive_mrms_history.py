@@ -1048,6 +1048,128 @@ def repair_low_resolution_radar_assets(
     return repaired
 
 
+
+def repair_low_resolution_precip_type_assets(
+    store: GitHubReleaseStore,
+    release_index: dict[object, list[ReleaseInfo]],
+    precip_type_assets: dict[str, dict],
+    recent_observations: list[Observation],
+    session: requests.Session,
+    expected_shape: tuple[int, int],
+    crop: tuple[int, int, int, int],
+    crop_bounds: tuple[float, float, float, float],
+    row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
+) -> int:
+    """Repair legacy low-resolution precipitation-type composite assets."""
+    if MAX_LOWRES_REPAIRS_PER_RUN <= 0 or MAX_LOWRES_INSPECTIONS_PER_RUN <= 0:
+        return 0
+
+    candidates = []
+    for name, asset in precip_type_assets.items():
+        match = PRECIP_TYPE_ASSET_RE.match(name)
+        if not match:
+            continue
+        stamp_text = match.group(1)
+        fmt = "%Y%m%d-%H%M%S" if len(stamp_text) == 15 else "%Y%m%d-%H%M"
+        try:
+            stamp = datetime.strptime(stamp_text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        candidates.append((stamp, name, asset))
+
+    candidates.sort(key=lambda item: item[0])
+    candidates = candidates[:MAX_LOWRES_INSPECTIONS_PER_RUN]
+    if not candidates:
+        return 0
+
+    target_width = crop[3] - crop[2]
+    print(
+        f"  Checking up to {len(candidates)} existing precipitation-type composites "
+        f"for legacy low resolution (target width {target_width}px; "
+        f"max repairs {MAX_LOWRES_REPAIRS_PER_RUN})"
+    )
+
+    repaired = 0
+    recent_by_time = sorted(recent_observations, key=lambda item: item.valid_time)
+
+    for stamp, asset_name, asset in candidates:
+        if repaired >= MAX_LOWRES_REPAIRS_PER_RUN:
+            break
+        try:
+            width, height = store.download_asset_dimensions(asset)
+            if width >= int(target_width * 0.95):
+                continue
+
+            obs = min(
+                recent_by_time,
+                key=lambda item: abs((item.valid_time - stamp).total_seconds()),
+                default=None,
+            )
+            if obs is None or abs((obs.valid_time - stamp).total_seconds()) > 180:
+                print(f"    WARNING: no nearby MRMS scan found for {asset_name}; leaving unchanged")
+                continue
+
+            print(
+                f"    Legacy low-resolution composite detected: {asset_name} "
+                f"({width}x{height}); rebuilding from {obs.timestamp_key} at native resolution"
+            )
+
+            _radar_data, grib_path = download_and_render_observation(
+                session,
+                obs,
+                expected_shape,
+                crop,
+                crop_bounds,
+                row_map_cache,
+                keep_grib=True,
+            )
+            if grib_path is None:
+                raise RuntimeError("Native-resolution GRIB was not preserved")
+
+            helper_output = Path(tempfile.mkdtemp(prefix="winterradar_repair_"))
+            try:
+                helper = ROOT / "src" / "build_history_precip_type.py"
+                if not helper.exists():
+                    helper = ROOT / "build_history_precip_type.py"
+                import subprocess
+                subprocess.run(
+                    ["python", str(helper), "--output-dir", str(helper_output), str(grib_path)],
+                    check=True,
+                )
+                generated = helper_output / f"preciptype_conus_{obs.timestamp_key}.webp"
+                if not generated.exists():
+                    raise RuntimeError(f"Native composite was not generated: {generated.name}")
+                data = generated.read_bytes()
+            finally:
+                grib_path.unlink(missing_ok=True)
+                shutil.rmtree(helper_output, ignore_errors=True)
+
+            release = release_for_asset(release_index, asset_name)
+            if release is None:
+                raise RuntimeError(f"Could not locate release containing {asset_name}")
+
+            store.delete_asset(asset)
+            release.assets.pop(asset_name, None)
+            precip_type_assets.pop(asset_name, None)
+            replacement = store.upload_asset(release, asset_name, data)
+            release.assets[replacement["name"]] = replacement
+            precip_type_assets[replacement["name"]] = replacement
+            repaired += 1
+            print(
+                f"      Replaced {asset_name} with native-resolution composite "
+                f"({len(data):,} bytes)"
+            )
+        except Exception as exc:
+            print(
+                f"      WARNING: unable to repair composite {asset_name}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            if HISTORY_DEBUG:
+                import traceback
+                traceback.print_exc()
+
+    return repaired
+
 def run_archive() -> None:
     print("=" * 72)
     print("WINTER RADAR — MRMS 8-HOUR MERGED COMPOSITE HISTORY ARCHIVE")
@@ -1141,6 +1263,20 @@ def run_archive() -> None:
         crop_bounds,
         row_map_cache,
     )
+
+    repaired_composites = repair_low_resolution_precip_type_assets(
+        store,
+        release_index,
+        precip_type_assets,
+        recent_observations,
+        session,
+        expected_shape,
+        (y0, y1, x0, x1),
+        crop_bounds,
+        row_map_cache,
+    )
+    if repaired_composites:
+        print(f"  Repaired low-resolution precipitation-type composites: {repaired_composites}")
 
     existing_times = existing_radar_timestamps(radar_assets)
     missing = [obs for obs in recent_observations if obs.valid_time not in existing_times]
