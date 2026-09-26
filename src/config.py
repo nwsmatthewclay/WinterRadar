@@ -13,7 +13,9 @@ MRMS_BASE = "https://mrms.ncep.noaa.gov/2D"
 # scripts already in the repository.  The live map does NOT download all of
 # these products; see LIVE_PRODUCTS and OPTIONAL_DIAGNOSTIC_PRODUCTS below.
 PRODUCTS = {
-    "reflectivity": "MergedReflectivityComposite",
+    # The QC composite is authoritative for the live map and must match the
+    # QC composite used by the history archive.
+    "reflectivity": "MergedReflectivityQCComposite",
     "precip_flag": "PrecipFlag",
     "precip_rate": "PrecipRate",
     "rhohv": "MergedRhoHV",
@@ -56,6 +58,11 @@ OPTIONAL_DIAGNOSTIC_PRODUCTS = {
 
 # Product-specific units and MRMS sentinel values.
 FIELD_INFO = {
+    "MergedReflectivityQCComposite": {
+        "units": "dBZ",
+        "missing": (-99.0,),
+        "no_coverage": (-999.0,),
+    },
     "MergedReflectivityComposite": {
         "units": "dBZ",
         "missing": (-99.0,),
