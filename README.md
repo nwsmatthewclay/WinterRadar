@@ -1,35 +1,45 @@
-WinterRadar 3-Hour Split Workflow
+WinterRadar — 3-hour retention / 30-minute archive chunks
 
-Files
+Replace/add
 
-.github/workflows/mrms_live.yml — current/live products every 5 minutes and Pages deployment.
+.github/workflows/mrms.yml
 
-.github/workflows/mrms_archive.yml — rolling 3-hour history repair every 5 minutes.
+.github/workflows/mrms_archive.yml
 
-src/publish_live_history.py — stores the newest live radar/phase/precipitation-type WebPs in the daily GitHub Release and writes mrms_live_latest.json.
+src/archive_mrms_history.py
 
-src/stage_history_for_pages.py — retrieves the release manifest and staged history WebPs for the Pages build.
+src/publish_live_history.py
 
-src/archive_mrms_history.py — 3-hour rolling archive/backfill plus mrms_history.json and mrms_archive_status.json.
+src/stage_history_for_pages.py
 
-Data flow
+Architecture
 
-Live workflow downloads and calculates the newest MRMS/RAP products.
+Live workflow: every 5 minutes; latest MRMS scan and current products.
 
-Live publishes the newest timestamped browser rasters to the daily mrms-YYYYMMDD release.
+Archive workflow: every 5 minutes; retains 3 hours but processes only one 30-minute oldest-missing chunk per run.
 
-Live writes mrms_live_latest.json as the completion watermark.
+RAP: hourly/cached by the existing historical phase helper.
 
-Archive scans the last 3 hours but will not process observations newer than that live watermark. This prevents a current scan from being downloaded twice by the two workflows.
+Dual-pol: remains in the live scientific pipeline every 5 minutes; historical dual-pol/fusion persistence is not silently fabricated by this change.
 
-Archive fills missing older radar timestamps and missing per-scan phase/precipitation-type products.
+MRMS history: full-CONUS QC reflectivity plus per-scan phase and precipitation type.
 
-Archive writes mrms_history.json and mrms_archive_status.json back into the release.
+GitHub Releases: persistent archive storage.
 
-The next live Pages build retrieves those release assets and stages them under site/history/.
+GitHub Pages: same-origin staged history for the browser.
 
-GitHub Releases are persistent; the GitHub Actions runner filesystem is not.
+Important fixes
 
-Release storage
+Live Web Mercator projection now runs after all fusion/diagnostic source images exist.
 
-A 3-hour window is roughly 90 MRMS observations at a ~2-minute upstream cadence. With radar + phase + precipitation-type assets, this remains well below GitHub's 1,000-assets-per-release limit. GitHub currently allows up to 1,000 assets per release and each individual asset may be up to 2 GiB.
+Live installs scipy, required by download_rap_profile.py.
+
+Archive honors the live completion watermark and does not compete for the newest scan.
+
+Archive works oldest-first through the 3-hour retention window in 30-minute chunks.
+
+Archive persists mrms_history.json and mrms_archive_status.json into the daily Release; the previous runner-local manifest would disappear when the Actions runner ended.
+
+Exact per-scan phase and precipitation-type products are retained instead of creating an additional current snapshot every archive run.
+
+Archive has the keep_grib parameter required by the phase helper handoff.
