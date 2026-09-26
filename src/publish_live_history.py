@@ -24,7 +24,7 @@ TOKEN = os.environ.get("GITHUB_TOKEN", "")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
-UA = "WinterRadar/1.0 (live history publisher)"
+UA = "WinterRadar/1.1 (live history publisher)"
 TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
 
