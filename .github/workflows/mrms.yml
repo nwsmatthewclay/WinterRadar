@@ -110,31 +110,6 @@ jobs:
           fi
           exit 0
 
-      - name: Project browser MRMS rasters to Web Mercator
-        run: |
-          set -euo pipefail
-          python -u src/project_mrms_webmercator.py
-
-      # Archive history after the live Web Mercator products are complete.
-      # History is deliberately non-critical so it can never take the live
-      # radar/Pages product offline. The collector discovers any timestamped
-      # MRMS frames missed while this workflow was queued or running.
-      - name: Archive 8-hour full-CONUS MRMS history
-        continue-on-error: true
-        working-directory: src
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -euo pipefail
-          python -u archive_mrms_history.py
-
-      # Diagnostics are deliberately OUTSIDE the critical live-radar path.
-      # They can fail without taking the current MRMS radar offline.
       - name: Download optional diagnostic 2-D fields
         continue-on-error: true
         working-directory: src
@@ -273,6 +248,38 @@ jobs:
       # persistent storage for Actions, but not reliable <img> sources in the
       # browser. Stage the archived WebP frames into the Pages deployment so
       # the history viewer can load them same-origin with image/webp.
+      # Archive history only after ALL current-scan diagnostic products and
+      # their fallbacks exist. This ordering is intentional: Web Mercator
+      # needs the phase-fusion overlay when that product is available.
+      - name: Project browser MRMS rasters to Web Mercator
+        run: |
+          set -euo pipefail
+          python -u src/project_mrms_webmercator.py
+
+      # Archive history after the live Web Mercator products are complete.
+      # History is deliberately non-critical so it can never take the live
+      # radar/Pages product offline. The collector discovers any timestamped
+      # MRMS frames missed while this workflow was queued or running.
+
+      # History is deliberately non-critical so it can never take the live
+      # radar/Pages product offline. The collector discovers any timestamped
+      # MRMS frames missed while this workflow was queued or running.
+      - name: Archive 8-hour full-CONUS MRMS history
+        continue-on-error: true
+        working-directory: src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u archive_mrms_history.py
+
+      # Diagnostics are deliberately OUTSIDE the critical live-radar path.
+      # They can fail without taking the current MRMS radar offline.
       - name: Stage archived MRMS history for Pages
         continue-on-error: true
         env:
