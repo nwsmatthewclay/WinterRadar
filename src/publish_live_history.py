@@ -172,7 +172,7 @@ def main() -> None:
     print("WINTER RADAR — LIVE HISTORY HANDOFF")
     print("=" * 68)
     print(f"  Live MRMS timestamp: {dt.isoformat()}")
-    print(f"  Release: {release['tag']}")
+    print(f"  Release: {release.get('tag_name', tag)}")
 
     for name, (path, ctype) in files.items():
         upload(session, release, name, path.read_bytes(), ctype)
