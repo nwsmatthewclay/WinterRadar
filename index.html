@@ -2165,28 +2165,37 @@ function loadRadarFusionLayer() {
         return;
     }
 
-    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
-    const png = "./outputs/phase_radar_fusion_overlay_web.png?v=" + stamp;
-    const webp = "./outputs/phase_radar_fusion_overlay_web.webp?v=" + stamp;
-
     removeMapOverlay(radarFusionOverlay);
-    radarFusionOverlay = L.imageOverlay(png, MRMS_NATIONAL_BOUNDS, {
-        opacity: overlayOpacity,
-        interactive: false,
-        zIndex: 575,
-        className: "winter-raster-sharp"
-    }).addTo(map);
-    radarFusionOverlay.once("error", function() {
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = L.imageOverlay(webp, MRMS_NATIONAL_BOUNDS, {
-            opacity: overlayOpacity,
-            interactive: false,
-            zIndex: 575,
-            className: "winter-raster-sharp"
-        }).addTo(map);
-    });
-}
+    radarFusionOverlay = null;
 
+    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
+    const urls = [
+        "./outputs/phase_radar_fusion_overlay_web.png?v=" + stamp,
+        "./outputs/phase_radar_fusion_overlay_web.webp?v=" + stamp
+    ];
+
+    // Preflight the image before creating the Leaflet overlay. The previous
+    // implementation called addTo(map) before attaching its error handler,
+    // which can race with cached/static GitHub Pages responses.
+    loadRasterWithFallback(
+        urls,
+        MRMS_NATIONAL_BOUNDS,
+        overlayOpacity,
+        575,
+        "winter-raster-sharp",
+        function(layer, url) {
+            radarFusionOverlay = layer;
+            console.info("Radar phase evidence overlay loaded:", url);
+        },
+        function() {
+            radarFusionOverlay = null;
+            console.warn("Radar phase evidence overlay failed to load from PNG and WebP.");
+            const checkbox = document.getElementById("radarFusionToggle");
+            if (checkbox) checkbox.checked = false;
+            updateDynamicMapLegend();
+        }
+    );
+}
 
 
 function loadPhaseAgreementLayer() {
@@ -2197,28 +2206,35 @@ function loadPhaseAgreementLayer() {
         return;
     }
 
-    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
-    const png = "./outputs/phase_agreement_overlay_web.png?v=" + stamp;
-    const webp = "./outputs/phase_agreement_overlay_web.webp?v=" + stamp;
-
     removeMapOverlay(phaseAgreementOverlay);
-    phaseAgreementOverlay = L.imageOverlay(png, MRMS_NATIONAL_BOUNDS, {
-        opacity: overlayOpacity,
-        interactive: false,
-        zIndex: 585,
-        className: "winter-raster-sharp"
-    }).addTo(map);
-    phaseAgreementOverlay.once("error", function() {
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = L.imageOverlay(webp, MRMS_NATIONAL_BOUNDS, {
-            opacity: overlayOpacity,
-            interactive: false,
-            zIndex: 585,
-            className: "winter-raster-sharp"
-        }).addTo(map);
-    });
-}
+    phaseAgreementOverlay = null;
 
+    const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
+    const urls = [
+        "./outputs/phase_agreement_overlay_web.png?v=" + stamp,
+        "./outputs/phase_agreement_overlay_web.webp?v=" + stamp
+    ];
+
+    // Use the same reliable preflight/fallback path as radar phase evidence.
+    loadRasterWithFallback(
+        urls,
+        MRMS_NATIONAL_BOUNDS,
+        overlayOpacity,
+        585,
+        "winter-raster-sharp",
+        function(layer, url) {
+            phaseAgreementOverlay = layer;
+            console.info("Phase agreement overlay loaded:", url);
+        },
+        function() {
+            phaseAgreementOverlay = null;
+            console.warn("Phase agreement overlay failed to load from PNG and WebP.");
+            const checkbox = document.getElementById("phaseAgreementToggle");
+            if (checkbox) checkbox.checked = false;
+            updateDynamicMapLegend();
+        }
+    );
+}
 
 
 function togglePhaseAgreement(enabled) {
