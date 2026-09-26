@@ -21,7 +21,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "outputs"
 
-WEB_VERSION = "1.4-webmercator-png-browser-primary"
+WEB_VERSION = "1.5-full-national-extent"
 MAX_LAT = 85.0511287798
 
 
@@ -117,6 +117,15 @@ def main() -> None:
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     bounds = validate_bounds(metadata["bounds"])
+    # Never silently project a regional crop as the national browser raster.
+    # The native MRMS composite is CONUS-scale and includes Canadian radar
+    # input; the browser copy must preserve that complete source extent.
+    south, west, north, east = bounds
+    if west > -129.0 or east < -61.0 or south > 21.0 or north < 54.0:
+        raise RuntimeError(
+            f"MRMS browser extent is unexpectedly cropped: {bounds}. "
+            "Refusing to publish a truncated national raster."
+        )
 
     print("=" * 72)
     print(f"MRMS WEB MERCATOR POST-PROCESSOR — {WEB_VERSION}")
