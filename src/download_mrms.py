@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import json
 import os
 import shutil
 import time
@@ -23,6 +24,7 @@ from config import (
     OPTIONAL_ATTEMPTS,
     OPTIONAL_CONNECT_TIMEOUT,
     OPTIONAL_READ_TIMEOUT,
+    PRODUCTS,
 )
 
 USER_AGENT = "WinterRadar/1.0 (NWS MRMS operational visualization)"
@@ -159,7 +161,7 @@ def download_product(product: str, *, required: bool) -> Path | None:
         # request the former reflectivity filename.  The bytes are the
         # authoritative MergedReflectivityComposite field; no second radar
         # download is performed.
-        if product == "MergedReflectivityComposite":
+        if product in {"MergedReflectivityComposite", "MergedReflectivityQCComposite"}:
             legacy = DATA_DIR / "MRMS_ReflectivityAtLowestAltitude.latest.grib2"
             shutil.copyfile(grib_path, legacy)
             print(f"  Compatibility alias -> {legacy}")
@@ -173,13 +175,32 @@ def download_product(product: str, *, required: bool) -> Path | None:
 
 
 def download_required_live_products() -> dict[str, Path | None]:
-    """Download only the hard-required live radar product."""
-    return {
-        "reflectivity": download_product(
-            REQUIRED_LIVE_PRODUCTS["reflectivity"],
-            required=True,
+    """Download the QC MRMS radar, with the un-QC composite as a fail-safe."""
+    primary = REQUIRED_LIVE_PRODUCTS["reflectivity"]
+    try:
+        path = download_product(primary, required=True)
+        (DATA_DIR / "MRMS_reflectivity_source.json").write_text(
+            json.dumps({"configured_product": primary, "source_product": primary}, indent=2),
+            encoding="utf-8",
         )
-    }
+        return {"reflectivity": path}
+    except Exception as primary_error:
+        fallback = PRODUCTS["reflectivity_fallback"]
+        print(
+            f"  WARNING: {primary} unavailable; falling back to {fallback}: {primary_error}"
+        )
+        fallback_path = download_product(fallback, required=True)
+        # Downstream consumers use the configured reflectivity product name.
+        # Preserve that contract while recording which source actually supplied
+        # the field.
+        configured_path = DATA_DIR / f"MRMS_{primary}.latest.grib2"
+        shutil.copyfile(fallback_path, configured_path)
+        (DATA_DIR / "MRMS_reflectivity_source.json").write_text(
+            json.dumps({"configured_product": primary, "source_product": fallback}, indent=2),
+            encoding="utf-8",
+        )
+        print(f"  Fallback radar copied to configured path -> {configured_path}")
+        return {"reflectivity": configured_path}
 
 
 def download_optional_live_products() -> dict[str, Path | None]:
