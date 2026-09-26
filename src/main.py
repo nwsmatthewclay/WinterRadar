@@ -25,7 +25,7 @@ from render import (  # noqa: E402
     write_metadata,
 )
 
-MAIN_VERSION = "9.4-rap-profile-phase-sampler"
+MAIN_VERSION = "9.5-national-mrms-composite"
 PROFILE_CHUNK_ROWS = 40  # keep chunk boundaries aligned with the 10x diagnostic grid
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
@@ -252,6 +252,12 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
         "phase_domain": {
             "west": -130.0, "east": -60.0, "south": 20.0, "north": 55.0,
         },
+        "radar_domain": {
+            "west": float(np.nanmin(lons)),
+            "east": float(np.nanmax(lons)),
+            "south": float(np.nanmin(lats)),
+            "north": float(np.nanmax(lats)),
+        },
         "max_probabilities_percent": max_prob,
         "mean_melting_energy_jkg": float(np.mean(mean_me)) if mean_me else None,
         "mean_refreezing_energy_jkg": float(np.mean(mean_re)) if mean_re else None,
@@ -288,7 +294,7 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
 def main() -> None:
     print("=" * 72)
     print(f"WINTER RADAR CORE — {MAIN_VERSION}")
-    print("Radar generation remains isolated from the research phase engine.")
+    print("National MRMS composite radar is authoritative; RAP phase is an overlay.")
     print("Native MRMS grid; Web Mercator projection is handled downstream.")
     print("=" * 72)
 
