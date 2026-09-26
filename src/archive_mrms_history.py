@@ -99,11 +99,14 @@ HISTORY_FALLBACK_BOUNDS = [
 # observations to wait for a new model cycle.
 HISTORY_HOURS = 8
 PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
+# Keep each archive invocation short enough for the 5-minute workflow.
+# Newest observations are always included; only a small number of older
+# observations are processed as catch-up work.
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "60")
+    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "6")
 )
 MAX_NEW_PHASE_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "120")
+    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "6")
 )
 
 REQUEST_TIMEOUT = (20, 120)
@@ -998,7 +1001,8 @@ def run_archive() -> None:
 
     if missing:
         # Keep the history viewer current while also backfilling the 8-hour
-        # archive. A pure oldest-first queue can leave the viewer many hours
+        # archive. The per-run cap is intentionally small: a full-CONUS
+        # 3500x7000 decode is expensive, and the workflow runs every 5 min. A pure oldest-first queue can leave the viewer many hours
         # behind while the initial backlog is being filled. Split each run
         # between the oldest and newest missing observations so the right edge
         # of the slider stays close to the current MRMS scan.
@@ -1036,12 +1040,14 @@ def run_archive() -> None:
     selected_phase = {obs.valid_time for obs in selected}
     extra_phase = [obs for obs in exact_phase_missing if obs.valid_time not in selected_phase]
     if len(extra_phase) > MAX_NEW_PHASE_FRAMES_PER_RUN:
+        # Backfill only a small tail each run. Selected radar observations
+        # are always processed for exact per-scan phase products.
         extra_phase = extra_phase[-MAX_NEW_PHASE_FRAMES_PER_RUN:]
     phase_work_observations = list(selected) + extra_phase
     phase_work_observations.sort(key=lambda item: item.valid_time)
     print(
         f"  Per-scan phase/composite work items: {len(phase_work_observations)} "
-        f"({len(extra_phase)} backfill-only)"
+        f"({len(extra_phase)} backfill-only; max {MAX_NEW_PHASE_FRAMES_PER_RUN} backfill/run)"
     )
 
     for obs in phase_work_observations:
