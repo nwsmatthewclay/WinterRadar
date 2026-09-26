@@ -12,9 +12,8 @@ GitHub Actions workflow runs it:
    storage and determines which observations are missing.
 4. Downloads and renders only those missing observations.
 5. Stores native-resolution WebP frames in the appropriate daily release.
-6. Archives one full-CONUS winter-phase mask and one full-CONUS precipitation-
-   type composite per 10-minute bucket, keeping the history comfortably below
-   GitHub's 1,000-asset-per-release limit.
+6. Archives exact per-scan full-CONUS winter-phase masks and precipitation-type
+   composites, with an oldest-first backfill for historical radar frames.
 7. Builds outputs/mrms_history.json for the Pages viewer.
 
 The live radar path is never modified by this script. The workflow should run
@@ -106,7 +105,7 @@ MAX_NEW_RADAR_FRAMES_PER_RUN = int(
     os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "6")
 )
 MAX_NEW_PHASE_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "6")
+    os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "24")
 )
 # Older history frames were created with the previous 3500-pixel downsampling
 # cap. Inspect a limited number of existing assets each run and repair only a
@@ -1323,9 +1322,12 @@ def run_archive() -> None:
     selected_phase = {obs.valid_time for obs in selected}
     extra_phase = [obs for obs in exact_phase_missing if obs.valid_time not in selected_phase]
     if len(extra_phase) > MAX_NEW_PHASE_FRAMES_PER_RUN:
-        # Backfill only a small tail each run. Selected radar observations
-        # are always processed for exact per-scan phase products.
-        extra_phase = extra_phase[-MAX_NEW_PHASE_FRAMES_PER_RUN:]
+        # Backfill the oldest missing exact per-scan products first. The prior
+        # newest-first selection could leave the older part of the history
+        # permanently missing once the radar archive itself had caught up.
+        # Selected radar observations are always processed for exact per-scan
+        # phase products; this queue fills the remaining historical gaps.
+        extra_phase = extra_phase[:MAX_NEW_PHASE_FRAMES_PER_RUN]
     phase_work_observations = list(selected) + extra_phase
     phase_work_observations.sort(key=lambda item: item.valid_time)
     print(
@@ -1420,7 +1422,9 @@ def run_archive() -> None:
             shutil.rmtree(helper_output, ignore_errors=True)
 
     # --------------------------------------------------------------
-    # Phase + precipitation-type snapshots: one 10-minute bucket per interval.
+    # Legacy/current snapshot fallback. Exact per-scan assets are preferred
+    # by the history manifest; this keeps the current snapshot available even
+    # when the per-scan helper has no usable output.
     # --------------------------------------------------------------
     snapshot_bucket = phase_bucket_for_timestamp(now)
     phase_asset_name = f"phase_conus_{snapshot_bucket:%Y%m%d-%H%M}.webp"
