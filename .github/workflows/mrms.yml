@@ -98,11 +98,6 @@ jobs:
           set -euo pipefail
           python -u src/build_phase_diagnostics.py
 
-      - name: Project browser MRMS rasters to Web Mercator
-        run: |
-          set -euo pipefail
-          python -u src/project_mrms_webmercator.py
-
       # Archive history after the live Web Mercator products are complete.
       # History is deliberately non-critical so it can never take the live
       # radar/Pages product offline. The collector discovers any timestamped
@@ -239,6 +234,14 @@ jobs:
                       encoding="utf-8",
                   )
           PY
+
+      # Project all browser rasters only after every diagnostic/fusion source
+      # has been created (or replaced by a fallback). The projection script
+      # expects these source PNGs to exist on a fresh GitHub runner.
+      - name: Project browser MRMS rasters to Web Mercator
+        run: |
+          set -euo pipefail
+          python -u src/project_mrms_webmercator.py
 
       # GitHub Release assets are intentionally delivered as downloads with
       # application/octet-stream/attachment semantics. They are excellent
