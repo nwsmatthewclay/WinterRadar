@@ -17,6 +17,7 @@ import time
 
 import numpy as np
 import requests
+from scipy.spatial import cKDTree
 
 from config import DATA_DIR
 
@@ -515,6 +516,19 @@ def load_rap_profile(path: Path) -> dict:
     x_axis = hx[0, :].astype(np.float64)
     y_axis = hy[:, 0].astype(np.float64)
 
+    # Build a geographic nearest-neighbor index from the actual RAP lat/lon
+    # coordinates.  This is more robust than assuming the filtered Lambert
+    # grid can be represented by independent x/y axes.  A latitude-scaled
+    # longitude coordinate keeps distance approximately isotropic across the
+    # CONUS domain while remaining very fast for the 24.5-million-cell MRMS
+    # national grid.
+    finite_geo = np.isfinite(raw_lat) & np.isfinite(raw_lon)
+    lat_flat = raw_lat[finite_geo].astype(np.float64)
+    lon_flat = ((raw_lon[finite_geo] + 180.0) % 360.0) - 180.0
+    lon_scale = float(np.cos(np.deg2rad(np.nanmean(lat_flat))))
+    geo_points = np.column_stack((lat_flat, lon_flat * lon_scale))
+    geo_tree = cKDTree(geo_points)
+
     profile = {
         "pressure_hpa": data["pressure_hpa"],
         "wetbulb_c": wetbulb_c,
@@ -529,6 +543,11 @@ def load_rap_profile(path: Path) -> dict:
         "_projected_y": hy.astype(np.float64),
         "_x_axis": x_axis,
         "_y_axis": y_axis,
+        "_geo_tree": geo_tree,
+        "_geo_source_indices": np.flatnonzero(finite_geo),
+        "_geo_lon_scale": lon_scale,
+        "_geo_lat": raw_lat.reshape(-1),
+        "_geo_lon": ((raw_lon.reshape(-1) + 180.0) % 360.0) - 180.0,
     }
 
     print("  RAP PROFILE READY", flush=True)
@@ -553,7 +572,15 @@ def _nearest_index(sorted_values: np.ndarray, values: np.ndarray) -> np.ndarray:
 
 
 def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) -> dict:
-    """Nearest-neighbor sample RAP profile fields onto an MRMS chunk."""
+    """Nearest-neighbor sample the actual RAP geographic grid onto MRMS.
+
+    The previous sampler projected both grids and then rejected any target
+    point more than half a RAP grid spacing from a projected grid axis.  That
+    was unnecessarily strict at the edge of the filtered RAP domain and could
+    create hard geographic cutoffs in the phase products.  This version uses
+    the actual RAP lat/lon coordinates returned by pygrib, with a cached KD
+    tree, and applies a generous but finite geographic acceptance radius.
+    """
     lat = np.asarray(lats, dtype=np.float64)
     lon = np.asarray(lons, dtype=np.float64)
     if lat.ndim == 1:
@@ -561,50 +588,42 @@ def sample_profile_to_mrms(profile: dict, lats: np.ndarray, lons: np.ndarray) ->
     else:
         lat2, lon2 = lat, lon
 
-    # Reuse cached RAP projection coordinates.
-    hx = np.asarray(profile.get("_projected_x"), dtype=np.float64)
-    hy = np.asarray(profile.get("_projected_y"), dtype=np.float64)
-    x_axis = np.asarray(profile.get("_x_axis"), dtype=np.float64)
-    y_axis = np.asarray(profile.get("_y_axis"), dtype=np.float64)
+    tree = profile.get("_geo_tree")
+    source_indices = np.asarray(profile.get("_geo_source_indices"), dtype=np.int64)
+    lon_scale = float(profile.get("_geo_lon_scale", 0.8))
+    if tree is None or source_indices.size == 0:
+        raise RuntimeError("RAP geographic nearest-neighbor index is unavailable.")
 
-    x_rev = x_axis[0] > x_axis[-1]
-    y_rev = y_axis[0] > y_axis[-1]
-    x_sorted = x_axis[::-1] if x_rev else x_axis
-    y_sorted = y_axis[::-1] if y_rev else y_axis
+    target_lat = lat2.reshape(-1)
+    target_lon = ((lon2.reshape(-1) + 180.0) % 360.0) - 180.0
+    finite = np.isfinite(target_lat) & np.isfinite(target_lon)
 
-    # Project the MRMS target coordinates with the same local spherical LCC
-    # equation used for the RAP grid. This avoids the intermittent pyproj
-    # mixed-dimensional-array failure and keeps source/target coordinates in
-    # exactly the same projection space.
-    target_shape = lon2.shape
-    x, y = _lambert_conformal_conic_xy(lon2, lat2, profile["projection"])
-    x = np.asarray(x, dtype=np.float64).reshape(target_shape)
-    y = np.asarray(y, dtype=np.float64).reshape(target_shape)
-    ix_sorted = _nearest_index(x_sorted, x)
-    iy_sorted = _nearest_index(y_sorted, y)
-    ix = (len(x_axis) - 1 - ix_sorted) if x_rev else ix_sorted
-    iy = (len(y_axis) - 1 - iy_sorted) if y_rev else iy_sorted
+    query_points = np.column_stack((
+        target_lat[finite],
+        target_lon[finite] * lon_scale,
+    ))
+    distances, tree_indices = tree.query(query_points, k=1, workers=-1)
+    flat_source = source_indices[tree_indices]
 
-    # Require the selected grid point itself to be close to the target
-    # projected coordinate. This guards against accepting a clipped/offset
-    # nearest index when a filtered RAP subset does not actually cover an MRMS
-    # target point. Half a RAP grid spacing is the natural nearest-neighbor
-    # acceptance radius, with a small tolerance for floating-point projection
-    # roundoff.
-    selected_x = x_axis[ix]
-    selected_y = y_axis[iy]
-    dx = float(np.nanmedian(np.abs(np.diff(x_sorted)))) if len(x_sorted) > 1 else np.nan
-    dy = float(np.nanmedian(np.abs(np.diff(y_sorted)))) if len(y_sorted) > 1 else np.nan
-    x_tolerance = 0.51 * dx if np.isfinite(dx) and dx > 0 else np.inf
-    y_tolerance = 0.51 * dy if np.isfinite(dy) and dy > 0 else np.inf
+    # RAP is a ~13-km grid.  0.20 degrees is roughly 22 km in latitude and
+    # provides enough room for the filtered-domain edge without extrapolating
+    # across a meaningful gap.
+    valid = finite.copy()
+    valid[finite] &= distances <= 0.20
 
-    valid = (
-        np.isfinite(x) & np.isfinite(y)
-        & (x >= min(x_axis.min(), x_axis.max())) & (x <= max(x_axis.min(), x_axis.max()))
-        & (y >= min(y_axis.min(), y_axis.max())) & (y <= max(y_axis.min(), y_axis.max()))
-        & (np.abs(x - selected_x) <= x_tolerance)
-        & (np.abs(y - selected_y) <= y_tolerance)
-    )
+    flat_n = target_lat.size
+    iy = np.zeros(flat_n, dtype=np.int64)
+    ix = np.zeros(flat_n, dtype=np.int64)
+    src_shape = np.asarray(profile["temperature_c"]).shape[1:]
+    src_cols = src_shape[1]
+    iy[finite] = flat_source // src_cols
+    ix[finite] = flat_source % src_cols
+    valid &= (iy >= 0) & (iy < src_shape[0]) & (ix >= 0) & (ix < src_shape[1])
+
+    target_shape = lat2.shape
+    iy = iy.reshape(target_shape)
+    ix = ix.reshape(target_shape)
+    valid = valid.reshape(target_shape)
 
     out: dict[str, np.ndarray] = {}
     for key in ("wetbulb_c", "temperature_c", "rh_ice_pct", "height_m"):
