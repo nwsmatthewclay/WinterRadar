@@ -108,6 +108,15 @@ MAX_NEW_RADAR_FRAMES_PER_RUN = int(
 MAX_NEW_PHASE_FRAMES_PER_RUN = int(
     os.environ.get("MRMS_HISTORY_MAX_PHASE_FRAMES_PER_RUN", "6")
 )
+# Older history frames were created with the previous 3500-pixel downsampling
+# cap. Inspect a limited number of existing assets each run and repair only a
+# few low-resolution frames so the normal archive remains under the time target.
+MAX_LOWRES_REPAIRS_PER_RUN = int(
+    os.environ.get("MRMS_HISTORY_MAX_LOWRES_REPAIRS_PER_RUN", "3")
+)
+MAX_LOWRES_INSPECTIONS_PER_RUN = int(
+    os.environ.get("MRMS_HISTORY_MAX_LOWRES_INSPECTIONS_PER_RUN", "20")
+)
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
@@ -282,6 +291,31 @@ class GitHubReleaseStore:
                 f"HTTP {response.status_code}: {detail}"
             )
         return response.json()
+
+    def delete_asset(self, asset: dict) -> None:
+        asset_id = int(asset["id"])
+        response = self.session.delete(
+            self._url(f"/releases/assets/{asset_id}"),
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code not in (204, 404):
+            detail = response.text[:500].replace("\n", " ")
+            raise RuntimeError(
+                f"GitHub asset deletion failed for {asset.get('name', asset_id)}: "
+                f"HTTP {response.status_code}: {detail}"
+            )
+
+    def download_asset_dimensions(self, asset: dict) -> tuple[int, int]:
+        """Download an existing WebP just far enough to inspect its dimensions."""
+        url = str(asset.get("url") or "")
+        if not url:
+            raise RuntimeError(f"History asset has no API URL: {asset.get('name')}")
+        headers = dict(self.headers)
+        headers["Accept"] = "application/octet-stream"
+        response = self.session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        with Image.open(io.BytesIO(response.content)) as image:
+            return tuple(int(value) for value in image.size)
 
     def delete_release(self, release_id: int) -> None:
         self._request("DELETE", f"/releases/{release_id}")
@@ -913,6 +947,107 @@ def build_manifest(
     }
 
 
+def release_for_asset(
+    release_index: dict[object, list[ReleaseInfo]],
+    asset_name: str,
+) -> ReleaseInfo | None:
+    for releases in release_index.values():
+        for release in releases:
+            if asset_name in release.assets:
+                return release
+    return None
+
+
+def repair_low_resolution_radar_assets(
+    store: GitHubReleaseStore,
+    release_index: dict[object, list[ReleaseInfo]],
+    radar_assets: dict[str, dict],
+    recent_observations: list[Observation],
+    session: requests.Session,
+    expected_shape: tuple[int, int],
+    crop: tuple[int, int, int, int],
+    crop_bounds: tuple[float, float, float, float],
+    row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
+) -> int:
+    """Replace old downsampled radar WebPs with native-resolution versions.
+
+    The first archive implementation capped history images at 3500 pixels wide.
+    New frames are native-width, so the viewer can contain a mixture. We repair
+    only a few frames per run and inspect only a small oldest-first window.
+    """
+    if MAX_LOWRES_REPAIRS_PER_RUN <= 0 or MAX_LOWRES_INSPECTIONS_PER_RUN <= 0:
+        return 0
+
+    candidates = [
+        (obs.valid_time, obs)
+        for obs in recent_observations
+        if obs.asset_name in radar_assets
+    ]
+    candidates.sort(key=lambda item: item[0])
+    candidates = candidates[:MAX_LOWRES_INSPECTIONS_PER_RUN]
+
+    repaired = 0
+    target_width = crop[3] - crop[2]
+    print(
+        f"  Checking up to {len(candidates)} existing radar frames for legacy "
+        f"low resolution (target width {target_width}px; max repairs {MAX_LOWRES_REPAIRS_PER_RUN})"
+    )
+
+    for _timestamp, obs in candidates:
+        if repaired >= MAX_LOWRES_REPAIRS_PER_RUN:
+            break
+        asset = radar_assets.get(obs.asset_name)
+        if not asset:
+            continue
+        try:
+            width, height = store.download_asset_dimensions(asset)
+            if width >= int(target_width * 0.95):
+                continue
+            print(
+                f"    Legacy low-resolution frame detected: {obs.asset_name} "
+                f"({width}x{height}); rebuilding at {target_width}px wide"
+            )
+
+            data = download_and_render_observation(
+                session,
+                obs,
+                expected_shape,
+                crop,
+                crop_bounds,
+                row_map_cache,
+                keep_grib=False,
+            )[0]
+
+            release = release_for_asset(release_index, obs.asset_name)
+            if release is None:
+                raise RuntimeError(f"Could not locate release containing {obs.asset_name}")
+
+            # GitHub release assets cannot be overwritten in-place. Delete the
+            # old low-resolution asset, then upload the same timestamp/name at
+            # native resolution. If the upload fails, the next run will detect
+            # the missing frame and repair it again.
+            store.delete_asset(asset)
+            release.assets.pop(obs.asset_name, None)
+            radar_assets.pop(obs.asset_name, None)
+
+            replacement = store.upload_asset(release, obs.asset_name, data)
+            release.assets[replacement["name"]] = replacement
+            radar_assets[replacement["name"]] = replacement
+            repaired += 1
+            print(
+                f"      Replaced {obs.asset_name} with native-resolution "
+                f"WebP ({len(data):,} bytes)"
+            )
+        except Exception as exc:
+            print(
+                f"    WARNING: low-resolution repair failed for {obs.asset_name}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    print(f"  Low-resolution radar frames repaired this run: {repaired}")
+    return repaired
+
+
 def run_archive() -> None:
     print("=" * 72)
     print("WINTER RADAR — MRMS 8-HOUR MERGED COMPOSITE HISTORY ARCHIVE")
@@ -995,6 +1130,18 @@ def run_archive() -> None:
     # --------------------------------------------------------------
     # Radar observations
     # --------------------------------------------------------------
+    repair_low_resolution_radar_assets(
+        store,
+        release_index,
+        radar_assets,
+        recent_observations,
+        session,
+        expected_shape,
+        (y0, y1, x0, x1),
+        crop_bounds,
+        row_map_cache,
+    )
+
     existing_times = existing_radar_timestamps(radar_assets)
     missing = [obs for obs in recent_observations if obs.valid_time not in existing_times]
     missing.sort(key=lambda item: item.valid_time)
