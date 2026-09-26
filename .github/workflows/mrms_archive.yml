@@ -10,7 +10,7 @@ permissions:
 
 # The archive is idempotent. If a run is still backfilling when the next
 # scheduled run starts, the newest run is more useful because it rechecks the
-# same rolling 3-hour window and continues from whatever assets already exist.
+# same rolling 3-hour retention window and continues from whatever assets already exist.
 concurrency:
   group: mrms-history
   cancel-in-progress: true
@@ -40,6 +40,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install scipy
 
       - name: Archive syntax QC
         run: |
@@ -49,7 +50,7 @@ jobs:
             src/archive_mrms_history.py \
             src/build_history_precip_type.py
 
-      - name: Run 3-hour MRMS archive
+      - name: Run 30-minute MRMS archive/backfill
         working-directory: src
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -66,7 +67,7 @@ jobs:
       - name: Show archive status
         if: always()
         run: |
-          echo "## MRMS 3-Hour Archive Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "## MRMS 30-Minute Archive Run Status" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ -s outputs/mrms_archive_status.json ]; then
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
@@ -78,9 +79,9 @@ jobs:
           print("|---|---|")
           for key, label in [
               ("generated_at_utc", "Archive run UTC"),
-              ("history_hours", "History window"),
+              ("history_hours", "Retention window"),
               ("live_watermark_utc", "Live watermark"),
-              ("mrms_observations_in_window", "MRMS observations in 3h"),
+              ("mrms_observations_in_window", "MRMS observations in retention window"),
               ("radar_assets_before", "Radar stored before"),
               ("radar_missing_before", "Radar missing before"),
               ("radar_uploaded_this_run", "Radar uploaded this run"),
