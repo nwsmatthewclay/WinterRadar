@@ -152,7 +152,11 @@ def result_to_precip_type_rgba(
             f"{result.phase.shape}."
         )
 
-    rgba = np.zeros((*result.phase.shape, 4), dtype=np.uint8)
+    # Start with the complete MRMS composite so radar coverage is never
+    # removed merely because the RAP phase sampler has no valid profile at a
+    # particular pixel. The phase engine only changes the color of pixels
+    # where it has a meaningful winter classification.
+    rgba = reflectivity_to_rgba(dbz)
     precip = np.isfinite(dbz) & (dbz >= 5.0)
 
     # Liquid rain uses the exact BR HiRes palette. This makes the composite
@@ -202,8 +206,8 @@ def result_to_precip_type_rgba(
 
     # Unknown/uncertain precipitation gets a quieter gray, but remains visible
     # so the national mosaic does not appear to have unexplained holes.
-    unknown = precip & (result.phase == UNKNOWN)
-    rgba[unknown] = (145, 150, 155, min(alpha, 190))
+    # UNKNOWN intentionally leaves the underlying MRMS reflectivity visible.
+    # This is critical outside the usable RAP phase-sampling area.
 
     return rgba
 
