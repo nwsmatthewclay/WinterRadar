@@ -294,7 +294,7 @@ def _profile_phase_result(ref: np.ndarray, lats: np.ndarray, lons: np.ndarray, m
 def main() -> None:
     print("=" * 72)
     print(f"WINTER RADAR CORE — {MAIN_VERSION}")
-    print("National MRMS composite radar is authoritative; RAP phase is an overlay.")
+    print("National MRMS QC composite radar is authoritative; RAP phase is an overlay.")
     print("Native MRMS grid; Web Mercator projection is handled downstream.")
     print("=" * 72)
 
@@ -309,6 +309,15 @@ def main() -> None:
     ref, lats, lons = load("reflectivity")
     validate_core_inputs(ref, lats, lons)
     lons_norm = normalize_longitudes(lons)
+
+    source_meta = {"configured_product": PRODUCTS["reflectivity"], "source_product": PRODUCTS["reflectivity"]}
+    source_path = DATA_DIR / "MRMS_reflectivity_source.json"
+    if source_path.exists():
+        try:
+            source_meta.update(json.loads(source_path.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    print(f"Reflectivity source: {source_meta.get('source_product', PRODUCTS['reflectivity'])}")
 
     print(f"Reflectivity shape: {ref.shape}")
     print(f"Latitude range: {float(np.nanmin(lats)):.3f} to {float(np.nanmax(lats)):.3f}")
@@ -427,6 +436,8 @@ def main() -> None:
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["phase_status"] = phase_status
+    metadata["reflectivity_product"] = source_meta.get("source_product", PRODUCTS["reflectivity"])
+    metadata["reflectivity_configured_product"] = PRODUCTS["reflectivity"]
     metadata["phase_support_fields"] = {
         "precip_flag": bool(live_status.get("precip_flag")),
         "bb_top": bool(live_status.get("bb_top")),
