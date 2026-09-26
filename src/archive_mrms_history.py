@@ -504,8 +504,7 @@ def phase_png_to_webp(
     crop: tuple[int, int, int, int],
     crop_bounds: tuple[float, float, float, float],
     row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
-    keep_grib: bool = False,
-) -> tuple[bytes, Path | None]:
+) -> bytes:
     y0, y1, x0, x1 = crop
     with Image.open(path) as im:
         rgba = np.asarray(im.convert("RGBA"))[y0:y1, x0:x1]
@@ -562,8 +561,9 @@ def download_and_render_observation(
     crop: tuple[int, int, int, int],
     crop_bounds: tuple[float, float, float, float],
     row_map_cache: dict[tuple[int, float, float], tuple[int, np.ndarray]],
-) -> bytes:
-    """Download one MRMS frame, decode it from a real file, and return WebP bytes."""
+    keep_grib: bool = False,
+) -> tuple[bytes, Path | None]:
+    """Download one MRMS frame, render WebP, and optionally preserve the GRIB for per-scan phase processing."""
     print(f"    Downloading {observation.filename}")
 
     # ecCodes requires a real file descriptor. Keep both the compressed MRMS
