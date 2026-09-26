@@ -158,9 +158,8 @@ def download_product(product: str, *, required: bool) -> Path | None:
         print(f"  OK -> {grib_path} ({grib_path.stat().st_size:,} bytes)")
 
         # Compatibility alias for older diagnostic/fusion scripts that still
-        # request the former reflectivity filename.  The bytes are the
-        # authoritative MergedReflectivityComposite field; no second radar
-        # download is performed.
+        # request the former reflectivity filename. The bytes are the same
+        # authoritative QC composite used by the live radar.
         if product in {"MergedReflectivityComposite", "MergedReflectivityQCComposite"}:
             legacy = DATA_DIR / "MRMS_ReflectivityAtLowestAltitude.latest.grib2"
             shutil.copyfile(grib_path, legacy)
@@ -175,32 +174,26 @@ def download_product(product: str, *, required: bool) -> Path | None:
 
 
 def download_required_live_products() -> dict[str, Path | None]:
-    """Download the QC MRMS radar, with the un-QC composite as a fail-safe."""
+    """Download the QC composite used by both the live map and history archive.
+
+    Do not silently fall back to the non-QC composite: doing so would make the
+    live radar look different from the QC history and reintroduce the clutter
+    the QC composite is intended to suppress.
+    """
     primary = REQUIRED_LIVE_PRODUCTS["reflectivity"]
-    try:
-        path = download_product(primary, required=True)
-        (DATA_DIR / "MRMS_reflectivity_source.json").write_text(
-            json.dumps({"configured_product": primary, "source_product": primary}, indent=2),
-            encoding="utf-8",
-        )
-        return {"reflectivity": path}
-    except Exception as primary_error:
-        fallback = PRODUCTS["reflectivity_fallback"]
-        print(
-            f"  WARNING: {primary} unavailable; falling back to {fallback}: {primary_error}"
-        )
-        fallback_path = download_product(fallback, required=True)
-        # Downstream consumers use the configured reflectivity product name.
-        # Preserve that contract while recording which source actually supplied
-        # the field.
-        configured_path = DATA_DIR / f"MRMS_{primary}.latest.grib2"
-        shutil.copyfile(fallback_path, configured_path)
-        (DATA_DIR / "MRMS_reflectivity_source.json").write_text(
-            json.dumps({"configured_product": primary, "source_product": fallback}, indent=2),
-            encoding="utf-8",
-        )
-        print(f"  Fallback radar copied to configured path -> {configured_path}")
-        return {"reflectivity": configured_path}
+    path = download_product(primary, required=True)
+    (DATA_DIR / "MRMS_reflectivity_source.json").write_text(
+        json.dumps(
+            {
+                "configured_product": primary,
+                "source_product": primary,
+                "qc_authoritative": True,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return {"reflectivity": path}
 
 
 def download_optional_live_products() -> dict[str, Path | None]:
