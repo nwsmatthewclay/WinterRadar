@@ -1900,7 +1900,9 @@ function createImageOverlay(
         options.className = className;
     }
 
-    if (crossOrigin) {
+    // These raster products are same-origin GitHub Pages assets. Only set
+    // CORS for genuinely external image URLs.
+    if (crossOrigin && /^https?:\/\//i.test(url) && !url.startsWith(window.location.origin)) {
         options.crossOrigin = true;
     }
 
@@ -1909,6 +1911,43 @@ function createImageOverlay(
         bounds,
         options
     );
+}
+
+
+function loadRasterWithFallback(urls, bounds, opacity, zIndex, className, onReady, onFailure) {
+    let attempt = 0;
+    let active = null;
+
+    function next() {
+        if (attempt >= urls.length) {
+            if (typeof onFailure === "function") onFailure();
+            return;
+        }
+
+        const url = urls[attempt++];
+        active = createImageOverlay(url, bounds, 0, zIndex, false, className || "");
+
+        // Attach handlers BEFORE addTo(). This avoids losing load/error events
+        // for cached or very-fast GitHub Pages responses.
+        active.on("load", function() {
+            if (!active) return;
+            active.setOpacity(opacity);
+            if (typeof onReady === "function") onReady(active, url);
+        });
+        active.on("error", function() {
+            const failed = active;
+            active = null;
+            removeMapOverlay(failed);
+            next();
+        });
+        active.addTo(map);
+    }
+
+    next();
+    return function cancel() {
+        removeMapOverlay(active);
+        active = null;
+    };
 }
 
 
@@ -1940,48 +1979,26 @@ function precipTypeDisplaySpec() {
 
 
 function loadCurrentPrecipTypeOverlay(force = false) {
-    if (historyMode || !currentBounds) {
-        return;
-    }
-
+    if (historyMode || !currentBounds) return;
     if (!document.getElementById("precipTypeToggle")?.checked) {
         removeMapOverlay(precipTypeOverlay);
         precipTypeOverlay = null;
         precipTypeDisplayMode = null;
         return;
     }
-
     const spec = precipTypeDisplaySpec();
-
-    if (!force && precipTypeOverlay && precipTypeDisplayMode === spec.mode) {
-        return;
-    }
-
+    if (!force && precipTypeOverlay && precipTypeDisplayMode === spec.mode) return;
     removeMapOverlay(precipTypeOverlay);
     precipTypeOverlay = null;
     precipTypeDisplayMode = spec.mode;
-
-    precipTypeOverlay = createImageOverlay(
-        spec.url,
-        spec.bounds,
-        overlayOpacity,
-        540,
-        true,
-        "winter-raster-sharp"
+    loadRasterWithFallback(
+        ["./outputs/winter_precip_type_web.png?v=" + Date.now(), "./outputs/winter_precip_type_web.webp?v=" + Date.now()],
+        spec.bounds, overlayOpacity, 540, "winter-raster-sharp",
+        function(layer) { precipTypeOverlay = layer; },
+        function() { console.warn("Precipitation-type raster could not be loaded from PNG or WebP."); precipTypeOverlay = null; precipTypeDisplayMode = null; updateDynamicMapLegend(); }
     );
-
-    precipTypeOverlay.addTo(map);
-    precipTypeOverlay.setOpacity(overlayOpacity);
-
-    precipTypeOverlay.on("error", function() {
-        console.warn("Full-CONUS precipitation-type composite is not available yet.");
-        document.getElementById("precipTypeToggle").checked = false;
-        removeMapOverlay(precipTypeOverlay);
-        precipTypeOverlay = null;
-        precipTypeDisplayMode = null;
-        updateDynamicMapLegend();
-    });
 }
+
 
 
 function refreshPrecipTypeResolutionOnView() {
@@ -1991,54 +2008,26 @@ function refreshPrecipTypeResolutionOnView() {
 
 
 function loadCurrentPhaseOverlay(force = false) {
-    if (historyMode || !currentBounds) {
-        return;
-    }
-
+    if (historyMode || !currentBounds) return;
     if (!document.getElementById("phaseToggle")?.checked) {
         removeMapOverlay(phaseOverlay);
         phaseOverlay = null;
         phaseDisplayMode = null;
         return;
     }
-
     const spec = phaseDisplaySpec();
-
-    if (!force && phaseOverlay && phaseDisplayMode === spec.mode) {
-        return;
-    }
-
+    if (!force && phaseOverlay && phaseDisplayMode === spec.mode) return;
     removeMapOverlay(phaseOverlay);
     phaseOverlay = null;
     phaseDisplayMode = spec.mode;
-
-    phaseOverlay = createImageOverlay(
-        spec.url,
-        spec.bounds,
-        overlayOpacity,
-        550,
-        true,
-        "winter-raster-sharp"
+    loadRasterWithFallback(
+        ["./outputs/winter_phase_mask_web.png?v=" + Date.now(), "./outputs/winter_phase_mask_web.webp?v=" + Date.now()],
+        spec.bounds, overlayOpacity, 550, "winter-raster-sharp",
+        function(layer) { phaseOverlay = layer; },
+        function() { console.warn("Winter phase mask raster could not be loaded from PNG or WebP."); phaseOverlay = null; phaseDisplayMode = null; updateDynamicMapLegend(); }
     );
-
-    phaseOverlay.addTo(map);
-    phaseOverlay.setOpacity(overlayOpacity);
-
-    phaseOverlay.on("error", function() {
-        if (phaseDisplayMode === "close") {
-            console.warn("Regional sharp winter mask unavailable; using full-CONUS mask.");
-            phaseDisplayMode = null;
-            loadCurrentPhaseOverlay(true);
-        } else {
-            console.warn("Full-CONUS winter phase mask is not available yet.");
-            document.getElementById("phaseToggle").checked = false;
-            removeMapOverlay(phaseOverlay);
-            phaseOverlay = null;
-            phaseDisplayMode = null;
-            updateDynamicMapLegend();
-        }
-    });
 }
+
 
 
 function refreshPhaseResolutionOnView() {
@@ -2048,48 +2037,26 @@ function refreshPhaseResolutionOnView() {
 
 
 function loadCurrentRadarOverlay(force = false) {
-    if (historyMode || !currentBounds) {
-        return;
-    }
-
+    if (historyMode || !currentBounds) return;
     if (!document.getElementById("radarToggle")?.checked) {
         removeMapOverlay(radarOverlay);
         radarOverlay = null;
         radarDisplayMode = null;
         return;
     }
-
     const spec = radarDisplaySpec();
-
-    if (!force && radarOverlay && radarDisplayMode === spec.mode) {
-        return;
-    }
-
+    if (!force && radarOverlay && radarDisplayMode === spec.mode) return;
     removeMapOverlay(radarOverlay);
     radarOverlay = null;
     radarDisplayMode = spec.mode;
-
-    radarOverlay = createImageOverlay(
-        spec.url,
-        spec.bounds,
-        overlayOpacity,
-        500,
-        true,
-        "winter-radar-raster"
+    loadRasterWithFallback(
+        [spec.url, "./outputs/mrms_current_web.webp?v=" + Date.now()],
+        spec.bounds, overlayOpacity, 500, "winter-radar-raster",
+        function(layer) { radarOverlay = layer; },
+        function() { console.warn("MRMS raster could not be loaded from PNG or WebP."); radarOverlay = null; radarDisplayMode = null; updateDynamicMapLegend(); }
     );
-
-    radarOverlay.addTo(map);
-    radarOverlay.setOpacity(overlayOpacity);
-
-    radarOverlay.on("error", function() {
-        console.warn("Full-CONUS MRMS raster is not available yet.");
-        document.getElementById("radarToggle").checked = false;
-        removeMapOverlay(radarOverlay);
-        radarOverlay = null;
-        radarDisplayMode = null;
-        updateDynamicMapLegend();
-    });
 }
+
 
 
 function refreshRadarResolutionOnView() {
@@ -2153,125 +2120,40 @@ function loadRadarLayers(metadata) {
 
 
 function loadRadarFusionLayer() {
-
-    if (historyMode) {
-        return;
-    }
-
+    if (historyMode) return;
     if (!document.getElementById("radarFusionToggle")?.checked || !currentBounds) {
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
         return;
     }
-
     removeMapOverlay(radarFusionOverlay);
-
-    radarFusionOverlay = createImageOverlay(
-        "./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(),
-        MRMS_NATIONAL_BOUNDS,
-        overlayOpacity,
-        575,
-        true,
-        "winter-raster-sharp"
+    radarFusionOverlay = null;
+    loadRasterWithFallback(
+        ["./outputs/phase_radar_fusion_overlay_web.png?v=" + Date.now(), "./outputs/phase_radar_fusion_overlay_web.webp?v=" + Date.now()],
+        MRMS_NATIONAL_BOUNDS, overlayOpacity, 575, "winter-raster-sharp",
+        function(layer) { radarFusionOverlay = layer; },
+        function() { console.warn("Radar phase evidence overlay could not be loaded from PNG or WebP."); radarFusionOverlay = null; updateDynamicMapLegend(); }
     );
-
-    radarFusionOverlay.addTo(map);
-    radarFusionOverlay.setOpacity(overlayOpacity);
-
-    let radarFusionRetried = false;
-    radarFusionOverlay.on("error", function() {
-        if (!radarFusionRetried) {
-            radarFusionRetried = true;
-            console.warn("Radar phase evidence PNG did not decode; retrying once without cache.");
-            removeMapOverlay(radarFusionOverlay);
-            radarFusionOverlay = createImageOverlay(
-                "./outputs/phase_radar_fusion_overlay_web.png?retry=" + Date.now(),
-                MRMS_NATIONAL_BOUNDS,
-                overlayOpacity,
-                575,
-                true,
-                "winter-raster-sharp"
-            );
-            radarFusionOverlay.addTo(map);
-            radarFusionOverlay.setOpacity(overlayOpacity);
-            radarFusionOverlay.on("error", function() {
-                console.warn("Full-CONUS radar phase evidence overlay could not be decoded or loaded.");
-                document.getElementById("radarFusionToggle").checked = false;
-                removeMapOverlay(radarFusionOverlay);
-                radarFusionOverlay = null;
-                updateDynamicMapLegend();
-            });
-            return;
-        }
-
-        console.warn("Full-CONUS radar phase evidence overlay could not be decoded or loaded.");
-        document.getElementById("radarFusionToggle").checked = false;
-        removeMapOverlay(radarFusionOverlay);
-        radarFusionOverlay = null;
-        updateDynamicMapLegend();
-    });
 }
 
 
 function loadPhaseAgreementLayer() {
-
-    if (historyMode) {
-        return;
-    }
-
+    if (historyMode) return;
     if (!document.getElementById("phaseAgreementToggle")?.checked || !currentBounds) {
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
         return;
     }
-
     removeMapOverlay(phaseAgreementOverlay);
-
-    phaseAgreementOverlay = createImageOverlay(
-        "./outputs/phase_agreement_overlay_web.png?v=" + Date.now(),
-        MRMS_NATIONAL_BOUNDS,
-        overlayOpacity,
-        585,
-        true,
-        "winter-raster-sharp"
+    phaseAgreementOverlay = null;
+    loadRasterWithFallback(
+        ["./outputs/phase_agreement_overlay_web.png?v=" + Date.now(), "./outputs/phase_agreement_overlay_web.webp?v=" + Date.now()],
+        MRMS_NATIONAL_BOUNDS, overlayOpacity, 585, "winter-raster-sharp",
+        function(layer) { phaseAgreementOverlay = layer; },
+        function() { console.warn("Phase agreement overlay could not be loaded from PNG or WebP."); phaseAgreementOverlay = null; updateDynamicMapLegend(); }
     );
-
-    phaseAgreementOverlay.addTo(map);
-    phaseAgreementOverlay.setOpacity(overlayOpacity);
-
-    let phaseAgreementRetried = false;
-    phaseAgreementOverlay.on("error", function() {
-        if (!phaseAgreementRetried) {
-            phaseAgreementRetried = true;
-            console.warn("Phase agreement PNG did not decode; retrying once without cache.");
-            removeMapOverlay(phaseAgreementOverlay);
-            phaseAgreementOverlay = createImageOverlay(
-                "./outputs/phase_agreement_overlay_web.png?retry=" + Date.now(),
-                MRMS_NATIONAL_BOUNDS,
-                overlayOpacity,
-                585,
-                true,
-                "winter-raster-sharp"
-            );
-            phaseAgreementOverlay.addTo(map);
-            phaseAgreementOverlay.setOpacity(overlayOpacity);
-            phaseAgreementOverlay.on("error", function() {
-                console.warn("Full-CONUS phase agreement overlay could not be decoded or loaded.");
-                document.getElementById("phaseAgreementToggle").checked = false;
-                removeMapOverlay(phaseAgreementOverlay);
-                phaseAgreementOverlay = null;
-                updateDynamicMapLegend();
-            });
-            return;
-        }
-
-        console.warn("Full-CONUS phase agreement overlay could not be decoded or loaded.");
-        document.getElementById("phaseAgreementToggle").checked = false;
-        removeMapOverlay(phaseAgreementOverlay);
-        phaseAgreementOverlay = null;
-        updateDynamicMapLegend();
-    });
 }
+
 
 
 function togglePhaseAgreement(enabled) {
