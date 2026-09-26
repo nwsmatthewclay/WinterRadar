@@ -1915,6 +1915,25 @@ function createImageOverlay(
         options.className = className;
     }
 
+    // Use dedicated Leaflet panes so asynchronous raster downloads can never
+    // move a lower-priority layer above a higher-priority phase layer.
+    if (map && typeof map.createPane === "function") {
+        const paneMap = {
+            500: "winterRadarPane",
+            540: "winterPrecipTypePane",
+            550: "winterPhasePane",
+            575: "winterRadarFusionPane",
+            585: "winterPhaseAgreementPane"
+        };
+        const paneName = paneMap[zIndex] || ("winterRasterPane" + String(zIndex).replace(/[^0-9a-z]/gi, ""));
+        if (!map.getPane(paneName)) {
+            map.createPane(paneName);
+            map.getPane(paneName).style.zIndex = String(zIndex);
+            map.getPane(paneName).style.pointerEvents = "none";
+        }
+        options.pane = paneName;
+    }
+
     // These raster products are same-origin GitHub Pages assets. Only set
     // CORS for genuinely external image URLs.
     if (crossOrigin && /^https?:\/\//i.test(url) && !url.startsWith(window.location.origin)) {
@@ -2093,7 +2112,8 @@ async function loadRasterWithFallback(urls, bounds, opacity, zIndex, className, 
 
             overlay.addTo(map);
             overlay.setOpacity(opacity);
-            if (typeof overlay.bringToFront === "function") overlay.bringToFront();
+            // Do not call bringToFront(): the dedicated pane controls the
+            // scientific layer ordering and remains stable during refreshes.
 
             const empty = decoded.alphaFraction === 0;
             setState(
@@ -3614,7 +3634,8 @@ function loadHistoricalOverlay(options) {
                     }
                     removeActive();
                     overlay.setOpacity(opacity);
-                    if (typeof overlay.bringToFront === "function") overlay.bringToFront();
+                    // Pane z-order is authoritative; do not reorder panes
+                    // when history images finish asynchronously.
                     onLoaded(overlay);
                     resolve(overlay);
                 });
