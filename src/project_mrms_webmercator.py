@@ -172,6 +172,20 @@ def main() -> None:
         json.dumps(web_metadata, indent=2), encoding="utf-8"
     )
 
+    # Lightweight click/QC metadata consumed by the Pages staging step.
+    # Keep this separate from the raster metadata so a missing optional
+    # regional product can never prevent the national raster from publishing.
+    (OUTPUT_DIR / "phase_agreement_click.json").write_text(
+        json.dumps({
+            "status": "available",
+            "bounds": list(bounds),
+            "image": "phase_agreement_overlay_web.png",
+            "projection": "EPSG:3857",
+            "source": "MRMS national composite + RAP phase agreement",
+        }, indent=2),
+        encoding="utf-8",
+    )
+
     browser_assets = (
         "mrms_current_web.png", "mrms_current_web.webp",
         "winter_phase_mask_web.png", "winter_phase_mask_web.webp",
