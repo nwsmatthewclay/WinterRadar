@@ -1,28 +1,35 @@
-# MRMS Winter Radar Viewer
+WinterRadar 3-Hour Split Workflow
 
-Initial prototype for a CONUS MRMS winter precipitation viewer and social-media graphic generator.
+Files
 
-## Architecture
+.github/workflows/mrms_live.yml — current/live products every 5 minutes and Pages deployment.
 
-- `src/` — Python MRMS download, processing, classification, and rendering
-- `web/` — static interactive Leaflet viewer
-- `outputs/` — generated PNG/JSON assets published by GitHub Pages
-- `.github/workflows/` — scheduled GitHub Actions workflow
+.github/workflows/mrms_archive.yml — rolling 3-hour history repair every 5 minutes.
 
-## Initial MRMS fields
+src/publish_live_history.py — stores the newest live radar/phase/precipitation-type WebPs in the daily GitHub Release and writes mrms_live_latest.json.
 
-- ReflectivityAtLowestAltitude
-- PrecipFlag
-- BrightBandTopHeight
-- BrightBandBottomHeight
-- RadarQualityIndex
-- Model_WetBulbTemp
-- Model_0degC_Height
+src/stage_history_for_pages.py — retrieves the release manifest and staged history WebPs for the Pages build.
 
-The phase classifier is intentionally modular. The first version is radar-assisted and conservative; a later module will add an HRRR/RAP vertical wet-bulb profile and revised Bourgouin-style energy calculation for snow/sleet/freezing-rain separation.
+src/archive_mrms_history.py — 3-hour rolling archive/backfill plus mrms_history.json and mrms_archive_status.json.
 
-## GitHub Pages
+Data flow
 
-Set GitHub Pages to use **GitHub Actions** as the deployment source. The workflow builds a `site/` artifact containing the viewer and generated MRMS image, then deploys that artifact to Pages. GitHub's Pages workflow supports this artifact-based deployment model.
+Live workflow downloads and calculates the newest MRMS/RAP products.
 
-The scheduled workflow runs every 5 minutes. GitHub Actions supports scheduled workflows as frequently as every 5 minutes, although scheduled jobs can occasionally be delayed under high load.
+Live publishes the newest timestamped browser rasters to the daily mrms-YYYYMMDD release.
+
+Live writes mrms_live_latest.json as the completion watermark.
+
+Archive scans the last 3 hours but will not process observations newer than that live watermark. This prevents a current scan from being downloaded twice by the two workflows.
+
+Archive fills missing older radar timestamps and missing per-scan phase/precipitation-type products.
+
+Archive writes mrms_history.json and mrms_archive_status.json back into the release.
+
+The next live Pages build retrieves those release assets and stages them under site/history/.
+
+GitHub Releases are persistent; the GitHub Actions runner filesystem is not.
+
+Release storage
+
+A 3-hour window is roughly 90 MRMS observations at a ~2-minute upstream cadence. With radar + phase + precipitation-type assets, this remains well below GitHub's 1,000-assets-per-release limit. GitHub currently allows up to 1,000 assets per release and each individual asset may be up to 2 GiB.
