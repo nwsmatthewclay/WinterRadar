@@ -92,15 +92,23 @@ jobs:
           bash ./src/verify_core_outputs.sh
 
       - name: Build phase probability and QC diagnostics
-        continue-on-error: true
         env:
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
         run: |
-          set -euo pipefail
+          # This is a reporting/QC product, not part of the critical radar path.
+          # Never allow a diagnostic failure to prevent Web Mercator, history, or Pages.
+          set +e
           python -u src/build_phase_diagnostics.py
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "WARNING: phase diagnostics failed with exit code $rc; continuing with core radar products."
+          else
+            echo "Phase diagnostics completed successfully."
+          fi
+          exit 0
 
       - name: Project browser MRMS rasters to Web Mercator
         run: |
