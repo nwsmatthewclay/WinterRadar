@@ -19,7 +19,7 @@ jobs:
   archive:
     runs-on: ubuntu-latest
 
-    # The archive processes up to 12 newest/backfill scans per run.
+    # The archive processes up to 12 scans per run, reserving half of the budget for older gaps.
     timeout-minutes: 25
 
     steps:
@@ -58,7 +58,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           MRMS_HISTORY_MAX_FRAMES_PER_RUN: "12"
-          MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN: "12"
+          MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN: "6"
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
