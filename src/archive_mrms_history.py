@@ -208,7 +208,7 @@ class GitHubReleaseStore:
             "tag_name": tag,
             "name": f"WinterRadar MRMS 8-Hour CONUS History — {tag.removeprefix('mrms-')}",
             "body": (
-                "Automated 8-hour WinterRadar MRMS CONUS observation archive. "
+                "Automated 3-hour WinterRadar MRMS CONUS observation archive. "
                 "Radar frames are timestamped observations; phase masks are "
                 "10-minute snapshots used by the time-history viewer."
             ),
@@ -960,7 +960,7 @@ def build_manifest(
 
 def run_archive() -> None:
     print("=" * 72)
-    print("WINTER RADAR — MRMS 3-HOUR RETENTION / 30-MINUTE ARCHIVE")
+    print("WINTER RADAR — MRMS 3-HOUR RETENTION / 10-MINUTE ARCHIVE")
     print("=" * 72)
 
     now = utc_now()
@@ -987,7 +987,7 @@ def run_archive() -> None:
     history_dates = {now.date(), previous_day.date()}
 
     # Load every MRMS history release partition covering the two dates in the
-    # rolling 8-hour window. A date may have a base release plus one or more
+    # rolling 3-hour window. A date may have a base release plus one or more
     # overflow partitions once the 1,000-asset GitHub limit is reached.
     release_index: dict[object, list[ReleaseInfo]] = {date_value: [] for date_value in history_dates}
     for meta in store.list_history_releases():
@@ -1062,10 +1062,8 @@ def run_archive() -> None:
 
     # --------------------------------------------------------------
     # Historical processing window. Retention is three hours, but each run
-    # intentionally services both ends of the queue. The newest edge is
-    # processed first so the history viewer never has to wait for an old
-    # backlog to clear. A bounded oldest-first chunk then continues filling
-    # the older gaps.
+    # services the newest available NOAA edge first so history stays close to
+    # the live scan. Remaining capacity then backfills the oldest gaps.
     # --------------------------------------------------------------
     existing_times = existing_radar_timestamps(radar_assets)
     work_candidates = []
