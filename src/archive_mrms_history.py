@@ -206,7 +206,7 @@ class GitHubReleaseStore:
     def create_release(self, tag: str) -> ReleaseInfo:
         payload = {
             "tag_name": tag,
-            "name": f"WinterRadar MRMS 8-Hour CONUS History — {tag.removeprefix('mrms-')}",
+            "name": f"WinterRadar MRMS 3-Hour CONUS History — {tag.removeprefix('mrms-')}",
             "body": (
                 "Automated 3-hour WinterRadar MRMS CONUS observation archive. "
                 "Radar frames are timestamped observations; phase masks are "
@@ -1081,26 +1081,34 @@ def run_archive() -> None:
     backfill_selected: list[Observation] = []
 
     if work_candidates:
-        # Keep the right edge of history current. Use the live watermark when
-        # available; otherwise the newest eligible observation is our anchor.
-        edge_anchor = eligible_upper
+        # Keep the right edge of history current using the newest timestamp
+        # actually present in NOAA's archive window. The live watermark is
+        # informational only and is intentionally not an eligibility input.
+        edge_anchor = recent_observations[-1].valid_time
         edge_cutoff = edge_anchor - timedelta(minutes=CURRENT_EDGE_WINDOW_MINUTES)
+
+        total_budget = max(1, MAX_NEW_RADAR_FRAMES_PER_RUN)
+        edge_budget = min(total_budget, max(1, MAX_NEW_EDGE_FRAMES_PER_RUN))
+
         edge_candidates = [
             obs for obs in work_candidates
             if edge_cutoff <= obs.valid_time <= edge_anchor
         ]
         edge_candidates.sort(key=lambda item: item.valid_time, reverse=True)
-        edge_selected = edge_candidates[:max(1, MAX_NEW_EDGE_FRAMES_PER_RUN)]
+        edge_selected = edge_candidates[:edge_budget]
 
         selected_keys = {obs.valid_time for obs in edge_selected}
-        remaining = [obs for obs in work_candidates if obs.valid_time not in selected_keys]
+        remaining = [
+            obs for obs in work_candidates
+            if obs.valid_time not in selected_keys
+        ]
 
         # Continue filling the oldest missing 30-minute span with whatever
         # capacity remains after servicing the newest edge.
-        if remaining and len(selected) < max(1, MAX_NEW_RADAR_FRAMES_PER_RUN):
+        capacity = max(0, total_budget - len(edge_selected))
+        if remaining and capacity:
             chunk_start = remaining[0].valid_time
             chunk_end = chunk_start + timedelta(minutes=ARCHIVE_WINDOW_MINUTES)
-            capacity = max(1, MAX_NEW_RADAR_FRAMES_PER_RUN) - len(edge_selected)
             backfill_selected = [
                 obs for obs in remaining
                 if obs.valid_time <= chunk_end
