@@ -4,11 +4,12 @@ set -euo pipefail
 ROOT="${1:-outputs}"
 RADAR="$ROOT/mrms_current.png"
 PHASE="$ROOT/winter_phase_mask.png"
+COMPOSITE="$ROOT/winter_radar_composite.png"
 META="$ROOT/mrms_current.json"
 
 printf 'Verifying core MRMS outputs in %s\n' "$ROOT"
 
-for file in "$RADAR" "$PHASE" "$META"; do
+for file in "$RADAR" "$PHASE" "$COMPOSITE" "$META"; do
   if [[ ! -s "$file" ]]; then
     echo "ERROR: missing or empty: $file" >&2
     exit 1
@@ -25,6 +26,7 @@ from PIL import Image
 root = Path(sys.argv[1])
 radar = root / "mrms_current.png"
 phase = root / "winter_phase_mask.png"
+composite = root / "winter_radar_composite.png"
 meta = root / "mrms_current.json"
 
 with Image.open(radar) as im:
@@ -40,6 +42,13 @@ with Image.open(phase) as im:
         raise SystemExit("ERROR: phase image is not RGBA")
     if im.size != (7000, 3500):
         raise SystemExit(f"ERROR: unexpected phase dimensions: {im.size}")
+
+with Image.open(composite) as im:
+    print(f"  Composite image: {im.size[0]}x{im.size[1]} {im.mode}")
+    if im.mode != "RGBA":
+        raise SystemExit("ERROR: composite image is not RGBA")
+    if im.size != (7000, 3500):
+        raise SystemExit(f"ERROR: unexpected composite dimensions: {im.size}")
 
 with meta.open(encoding="utf-8") as fh:
     data = json.load(fh)

@@ -21,7 +21,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "outputs"
 
-WEB_VERSION = "1.5-full-national-extent"
+WEB_VERSION = "1.6-winter-composite"
 MAX_LAT = 85.0511287798
 
 
@@ -137,6 +137,7 @@ def main() -> None:
         ("radar", "mrms_current.png", "mrms_current_web.png"),
         ("phase", "winter_phase_mask.png", "winter_phase_mask_web.png"),
         ("precip_type", "winter_precip_type.png", "winter_precip_type_web.png"),
+        ("winter_radar_composite", "winter_radar_composite.png", "winter_radar_composite_web.png"),
         ("radar_phase_evidence", "phase_radar_fusion_overlay.png", "phase_radar_fusion_overlay_web.png"),
         ("phase_agreement", "phase_agreement_overlay.png", "phase_agreement_overlay_web.png"),
     )
@@ -190,6 +191,7 @@ def main() -> None:
         "mrms_current_web.png", "mrms_current_web.webp",
         "winter_phase_mask_web.png", "winter_phase_mask_web.webp",
         "winter_precip_type_web.png", "winter_precip_type_web.webp",
+        "winter_radar_composite_web.png", "winter_radar_composite_web.webp",
         "phase_radar_fusion_overlay_web.png", "phase_radar_fusion_overlay_web.webp",
         "phase_agreement_overlay_web.png", "phase_agreement_overlay_web.webp",
         "mrms_web.json",

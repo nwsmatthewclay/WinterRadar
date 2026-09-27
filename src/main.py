@@ -424,10 +424,20 @@ def main() -> None:
         OUTPUT_DIR / "winter_phase_mask.png",
     )
 
-    # Screenshot-style all-precipitation display.  This is a visualization
-    # of the existing phase solution, not a new classifier.
+    # Winter Radar Composite:
+    #   hue/family       -> precipitation type from the phase engine
+    #   brightness       -> native MRMS reflectivity
+    #   saturation       -> phase confidence
+    #
+    # Keep winter_precip_type.png as a compatibility alias for the existing
+    # archive/history pipeline while publishing the explicitly named asset.
+    composite_rgba = result_to_precip_type_rgba(result, ref)
     save_rgba_png(
-        result_to_precip_type_rgba(result, ref),
+        composite_rgba,
+        OUTPUT_DIR / "winter_radar_composite.png",
+    )
+    save_rgba_png(
+        composite_rgba,
         OUTPUT_DIR / "winter_precip_type.png",
     )
 
@@ -436,6 +446,16 @@ def main() -> None:
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["phase_status"] = phase_status
+    metadata["winter_radar_composite"] = {
+        "version": "1.0-hue-dbz-confidence",
+        "asset": "winter_radar_composite.png",
+        "hue": "precipitation_type",
+        "brightness": "MRMS_reflectivity_dBZ",
+        "saturation": "phase_confidence_0_to_1",
+        "rain_palette": "MRMS_BR_HiRes",
+        "phase_source": "RAP_Modified_Bourgouin_or_conservative_MRMS_fallback",
+        "note": "Display renderer only; does not modify the underlying phase classification.",
+    }
     metadata["reflectivity_product"] = source_meta.get("source_product", PRODUCTS["reflectivity"])
     metadata["reflectivity_configured_product"] = PRODUCTS["reflectivity"]
     metadata["phase_support_fields"] = {
@@ -458,6 +478,7 @@ def main() -> None:
         OUTPUT_DIR / "mrms_current.png",
         OUTPUT_DIR / "winter_phase_mask.png",
         OUTPUT_DIR / "winter_precip_type.png",
+        OUTPUT_DIR / "winter_radar_composite.png",
         OUTPUT_DIR / "mrms_current.json",
     ]
     for path in expected:

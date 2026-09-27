@@ -223,6 +223,7 @@ jobs:
           placeholder("phase_agreement_overlay_web.png", "Phase agreement Web Mercator overlay temporarily unavailable")
           placeholder("winter_mask_diagnostics.png", "Winter precipitation diagnostic temporarily unavailable")
           placeholder("winter_precip_type.png", "Precipitation-type composite temporarily unavailable")
+          placeholder("winter_radar_composite.png", "Winter Radar Composite temporarily unavailable")
           placeholder("phase_probability.png", "Phase probability layer temporarily unavailable")
           placeholder("phase_diagnostics.png", "Phase probability diagnostic temporarily unavailable")
 
@@ -298,6 +299,8 @@ jobs:
           fi
           cp outputs/winter_precip_type.png site/outputs/winter_precip_type.png
           cp outputs/winter_precip_type_web.png site/outputs/winter_precip_type_web.png
+          cp outputs/winter_radar_composite.png site/outputs/winter_radar_composite.png
+          cp outputs/winter_radar_composite_web.png site/outputs/winter_radar_composite_web.png
           if [ -s outputs/winter_precip_type_regional_web.png ]; then
             cp outputs/winter_precip_type_regional_web.png site/outputs/winter_precip_type_regional_web.png
           else
@@ -333,6 +336,7 @@ jobs:
 
           test -s site/outputs/winter_precip_type.png
           test -s site/outputs/winter_precip_type_web.png
+          test -s site/outputs/winter_radar_composite_web.png
           bash ./src/verify_core_outputs.sh site/outputs
 
           echo "=============================================="

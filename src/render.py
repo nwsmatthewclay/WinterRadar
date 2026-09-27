@@ -35,7 +35,7 @@ PHASE_COLORS = {
 
 
 # ----------------------------------------------------------------------
-# Winter precipitation-type composite
+# Winter Radar Composite
 #
 # This is a display product, not a second classifier.  It uses the phase
 # already produced by the RAP/Modified-Bourgouin engine and colors each
@@ -107,9 +107,10 @@ def _paint_intensity_ramp(
     mask: np.ndarray,
     dbz: np.ndarray,
     colors: np.ndarray,
+    confidence: np.ndarray,
     alpha: int = 245,
 ) -> None:
-    """Paint one phase mask with a reflectivity-dependent RGB ramp."""
+    """Paint a phase family using dBZ for intensity and confidence for saturation."""
     if not np.any(mask):
         return
 
@@ -118,13 +119,39 @@ def _paint_intensity_ramp(
         TYPE_RAMP_LEVELS[0],
         TYPE_RAMP_LEVELS[-1],
     )
+    conf = np.clip(
+        np.nan_to_num(confidence[mask], nan=0.0),
+        0.0,
+        1.0,
+    )
 
-    for channel in range(3):
-        rgba[..., channel][mask] = np.rint(
-            np.interp(sample, TYPE_RAMP_LEVELS, colors[:, channel])
-        ).astype(np.uint8)
+    rgb = np.stack([
+        np.interp(sample, TYPE_RAMP_LEVELS, colors[:, 0]),
+        np.interp(sample, TYPE_RAMP_LEVELS, colors[:, 1]),
+        np.interp(sample, TYPE_RAMP_LEVELS, colors[:, 2]),
+    ], axis=1)
 
-    rgba[..., 3][mask] = np.uint8(alpha)
+    # Scientific display rule:
+    #   hue = classified precipitation type
+    #   brightness/intensity = MRMS reflectivity
+    #   saturation = phase confidence
+    #
+    # We retain 35% of the phase color at zero confidence so low-confidence
+    # pixels remain visible without looking falsely certain.
+    luminance = (
+        0.299 * rgb[:, 0]
+        + 0.587 * rgb[:, 1]
+        + 0.114 * rgb[:, 2]
+    )[:, None]
+    saturation_factor = 0.35 + 0.65 * conf[:, None]
+    rgb = luminance + (rgb - luminance) * saturation_factor
+
+    rgba[..., :3][mask] = np.clip(np.rint(rgb), 0, 255).astype(np.uint8)
+    rgba[..., 3][mask] = np.clip(
+        np.rint(145.0 + 110.0 * conf),
+        120,
+        alpha,
+    ).astype(np.uint8)
 
 
 def result_to_precip_type_rgba(
@@ -133,8 +160,15 @@ def result_to_precip_type_rgba(
     alpha: int = 245,
 ) -> np.ndarray:
     """
-    Render the classified precipitation field as a screenshot-style
-    precipitation-type composite.
+    Render the classified precipitation field as the Winter Radar Composite.
+
+    The display encodes three independent quantities:
+      * hue/family = precipitation type from the phase engine
+      * brightness/intensity = native MRMS reflectivity (dBZ)
+      * saturation/opacity = phase confidence
+
+    This remains a display product; it does not alter or replace the scientific
+    phase classifier.
 
     Important: this function does NOT determine precipitation type.  The
     existing phase engine supplies result.phase.  Reflectivity is used only
@@ -146,9 +180,15 @@ def result_to_precip_type_rgba(
     implying a precise winter phase.
     """
     dbz = np.asarray(reflectivity, dtype=np.float32)
+    confidence = np.asarray(result.confidence, dtype=np.float32)
     if dbz.shape != result.phase.shape:
         raise ValueError(
             f"Reflectivity shape {dbz.shape} does not match phase shape "
+            f"{result.phase.shape}."
+        )
+    if confidence.shape != result.phase.shape:
+        raise ValueError(
+            f"Confidence shape {confidence.shape} does not match phase shape "
             f"{result.phase.shape}."
         )
 
@@ -180,6 +220,7 @@ def result_to_precip_type_rgba(
         precip & (result.phase == SNOW),
         dbz,
         TYPE_RAMP_COLORS["snow"],
+        confidence,
         alpha=alpha,
     )
 
@@ -192,6 +233,7 @@ def result_to_precip_type_rgba(
         ice_mask,
         dbz,
         TYPE_RAMP_COLORS["ice"],
+        confidence,
         alpha=alpha,
     )
 
@@ -201,13 +243,24 @@ def result_to_precip_type_rgba(
         precip & (result.phase == MIXED),
         dbz,
         TYPE_RAMP_COLORS["mixed"],
+        confidence,
         alpha=alpha,
     )
 
-    # Unknown/uncertain precipitation gets a quieter gray, but remains visible
-    # so the national mosaic does not appear to have unexplained holes.
-    # UNKNOWN intentionally leaves the underlying MRMS reflectivity visible.
-    # This is critical outside the usable RAP phase-sampling area.
+    # Unknown/uncertain precipitation gets a quieter gray, with its saturation
+    # also tied to the classifier confidence. This keeps uncertainty visible
+    # without implying a precise winter phase.
+    unknown_mask = precip & (result.phase == UNKNOWN)
+    if np.any(unknown_mask):
+        unknown_colors = TYPE_RAMP_COLORS["uncertain"]
+        _paint_intensity_ramp(
+            rgba,
+            unknown_mask,
+            dbz,
+            unknown_colors,
+            confidence,
+            alpha=alpha,
+        )
 
     return rgba
 

@@ -1268,6 +1268,241 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
         width: 100%;
     }
 }
+
+/* ============================================================
+   WINTERRADAR WORKSTATION PRESENTATION
+   Visual target: dark scientific radar workstation / composite view.
+   The underlying scientific raster values are unchanged.
+============================================================ */
+:root {
+    --bg: #06111a;
+    --panel: #0c1822;
+    --panel-soft: #101f2b;
+    --line: #263a49;
+    --text: #e8f1f5;
+    --muted: #8da2af;
+    --accent: #55b8e8;
+}
+
+html, body {
+    background:
+        radial-gradient(circle at 50% -10%, rgba(36,103,143,.16), transparent 38%),
+        #06111a;
+    color: var(--text);
+}
+
+.topbar {
+    min-height: 60px;
+    padding: 9px 16px;
+    background: rgba(5,15,24,.96);
+    border-bottom: 1px solid #294151;
+    box-shadow: 0 8px 28px rgba(0,0,0,.35);
+}
+
+.brand-title { color: #f2f8fb; font-size: 17px; letter-spacing: .02em; }
+.brand-subtitle { color: #79909e; }
+.brand-mark {
+    background: #42b6ec;
+    box-shadow: 0 0 0 4px rgba(66,182,236,.12), 0 0 14px rgba(66,182,236,.24);
+}
+.status, .button {
+    background: #0d1d29;
+    border-color: #2c4352;
+    color: #c9d7de;
+}
+.button:hover { background: #142937; }
+
+.container {
+    width: min(1700px, calc(100% - 18px));
+    margin: 10px auto 22px;
+}
+
+.heading { margin: 0 2px 9px; }
+.heading h1 { color: #eaf5fa; font-size: 14px; letter-spacing: .12em; }
+.heading span { color: #78909f; }
+
+.health-strip {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 7px;
+    margin-bottom: 8px;
+}
+.health-card {
+    position: relative;
+    overflow: hidden;
+    min-height: 62px;
+    padding: 9px 11px;
+    border: 1px solid #263c4b;
+    border-radius: 7px;
+    background: linear-gradient(180deg, #10212d, #0b1721);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+}
+.health-card::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: #687d89;
+}
+.health-card.good::before { background: #39c777; box-shadow: 0 0 12px rgba(57,199,119,.35); }
+.health-card.warn::before { background: #d89a3b; }
+.health-card-label {
+    color: #6f8795;
+    font-size: 7px;
+    font-weight: 900;
+    letter-spacing: .11em;
+}
+.health-card-value {
+    margin-top: 4px;
+    color: #e8f6fb;
+    font-size: 12px;
+    font-weight: 900;
+}
+.health-card-detail {
+    margin-top: 2px;
+    color: #78909e;
+    font-size: 7.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.map-card {
+    border: 1px solid #29404f;
+    border-radius: 8px;
+    background: #07131c;
+    box-shadow: 0 12px 38px rgba(0,0,0,.34);
+}
+.map-header {
+    padding: 9px 12px;
+    background: linear-gradient(90deg, #0b1b27, #0a1721);
+    border-bottom: 1px solid #263d4c;
+}
+.map-title { color: #eaf6fb; font-size: 13px; letter-spacing: .07em; }
+.map-subtitle { color: #6f8795; }
+.map-meta { color: #7e95a2; }
+
+#map {
+    height: min(79vh, 900px);
+    min-height: 560px;
+    background: #061019;
+}
+.leaflet-container { background: #061019; }
+.leaflet-control-zoom a {
+    background: rgba(8,22,31,.9) !important;
+    color: #d8e6ed !important;
+    border-color: #304654 !important;
+}
+.leaflet-control-attribution {
+    background: rgba(4,12,18,.82) !important;
+    color: #708691 !important;
+}
+.leaflet-control-attribution a { color: #82b6d0 !important; }
+
+.map-legend, .layer-panel, .layer-toggle, .diagnostic-readout,
+.opacity-control, .map-history-control, .search-results {
+    background: rgba(8,20,29,.95) !important;
+    border-color: #334b5a !important;
+    color: #d8e6ec !important;
+    box-shadow: 0 7px 24px rgba(0,0,0,.38) !important;
+}
+.map-legend-title, .layer-title, .diagnostic-readout-title { color: #e7f2f6 !important; }
+.map-legend-label, .map-legend-note, .layer-menu-note, .diagnostic-readout-label,
+.history-subtitle, .history-note, .map-history-readout { color: #7f95a2 !important; }
+.map-legend-item, .phase-ramp-row, .layer-row, .diagnostic-readout-value,
+.opacity-control label { color: #c8d8df !important; }
+.map-legend-section + .map-legend-section { border-color: #263b49; }
+.layer-menu-note { background: #0d202d !important; border-left-color: #2f9dca !important; }
+.layer-row input { accent-color: #42b8e8; }
+.diagnostic-toggle, .history-control-btn, .history-speed, .map-history-btn {
+    background: #0d1e2a !important;
+    border-color: #314a59 !important;
+    color: #d4e2e8 !important;
+}
+.diagnostic-toggle.active { background: #123247 !important; border-color: #3b9cc4 !important; }
+
+.map-status-chip { background: #14232d; color: #8fa3ae; border: 1px solid #263b49; }
+.map-status-chip.good { background: rgba(31,112,75,.22); color: #6de1a0; }
+.map-status-chip.warn { background: rgba(152,103,31,.22); color: #e8b968; }
+
+.radar-time {
+    background: rgba(7,20,29,.92);
+    border-color: #314b5b;
+    color: #dbe8ee;
+}
+.radar-time-label { color: #58c4f2; }
+
+.map-wrap.radar-updated::after {
+    background: rgba(13,52,67,.94);
+    border-color: rgba(76,202,239,.4);
+    color: #6dd6f6;
+    box-shadow: 0 2px 15px rgba(0,0,0,.3);
+}
+
+.map-toolbar, .info-card, .history-panel, details.diagnostics {
+    background: #0b1822;
+    border-color: #263d4c;
+    color: #d9e6ec;
+    box-shadow: 0 7px 22px rgba(0,0,0,.22);
+}
+.map-toolbar { border-top-color: #263d4c; }
+.info-label, .history-time-meta { color: #718895; }
+.info-value, .history-time-main, .history-title { color: #dce9ee; }
+.history-status { background: #12232e; border-color: #2c4453; color: #91a6b1; }
+.history-status.live { background: rgba(31,112,75,.22); color: #69d89a; }
+.history-status.playing { background: rgba(32,104,145,.24); color: #70c4e7; }
+
+.search-form input {
+    background: #091721;
+    border-color: #304754;
+    color: #dce8ed;
+}
+.result-row { border-color: #263b48; color: #d8e5ea; }
+.result-row:hover { background: #122633; }
+.result-row span { color: #7e95a2; }
+
+.composite-legend-rule { color: #8ca4b0 !important; }
+.composite-subrule { margin-top: 8px; color: #6f8997 !important; }
+.composite-intensity {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr auto;
+    align-items: center;
+    gap: 4px;
+    color: #91a6b1;
+    font-size: 7px;
+    font-weight: 800;
+}
+.composite-intensity i {
+    height: 7px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #0e0e5a, #034f8c, #07a2b6, #11e51f, #ffff00, #ff8c00, #dd0000);
+}
+.composite-confidence {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr auto;
+    align-items: center;
+    gap: 5px;
+    color: #91a6b1;
+    font-size: 7px;
+    font-weight: 800;
+}
+.composite-confidence i {
+    height: 8px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #61717b, #6b93a5, #4cc7ee);
+}
+.composite-confidence .high { color: #76d9f7; }
+
+.rain { background: #16d95f; }
+
+@media (max-width: 1000px) {
+    .health-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 650px) {
+    .health-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #map { height: 68vh; min-height: 460px; }
+}
+
 </style>
 </head>
 
@@ -1292,16 +1527,44 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 <main class="container">
 
     <div class="heading">
-        <h1>Current MRMS</h1>
-        <span>Interactive full-CONUS MRMS radar / winter phase viewer • Web Mercator</span>
+        <h1>LIVE NATIONAL COMPOSITE</h1>
+        <span>MRMS • RAP • Vertical Dual-Pol • Winter Phase</span>
     </div>
+
+    <section class="health-strip" aria-label="WinterRadar data health">
+        <div class="health-card" id="healthMRMS">
+            <div class="health-card-label">MRMS RADAR</div>
+            <div class="health-card-value" id="healthMRMSValue">Current</div>
+            <div class="health-card-detail" id="healthMRMSDetail">Waiting for scan</div>
+        </div>
+        <div class="health-card" id="healthRAP">
+            <div class="health-card-label">RAP PHASE</div>
+            <div class="health-card-value" id="healthRAPValue">Waiting</div>
+            <div class="health-card-detail" id="healthRAPDetail">Vertical profile</div>
+        </div>
+        <div class="health-card" id="healthDual">
+            <div class="health-card-label">DUAL-POL</div>
+            <div class="health-card-value" id="healthDualValue">Waiting</div>
+            <div class="health-card-detail" id="healthDualDetail">RhoHV / ZDR</div>
+        </div>
+        <div class="health-card" id="healthAgreement">
+            <div class="health-card-label">PHASE AGREEMENT</div>
+            <div class="health-card-value" id="healthAgreementValue">Waiting</div>
+            <div class="health-card-detail" id="healthAgreementDetail">Environment + radar</div>
+        </div>
+        <div class="health-card" id="healthComposite">
+            <div class="health-card-label">WINTER COMPOSITE</div>
+            <div class="health-card-value" id="healthCompositeValue">Loading</div>
+            <div class="health-card-detail" id="healthCompositeDetail">Type + dBZ + confidence</div>
+        </div>
+    </section>
 
     <section class="map-card">
 
         <div class="map-header">
             <div>
-                <span class="map-title">MRMS Reflectivity + Precipitation Type + Phase Evidence</span>
-                <span class="map-subtitle">Interactive map</span>
+                <span class="map-title">WINTER RADAR COMPOSITE</span>
+                <span class="map-subtitle">CONUS live analysis display</span>
             </div>
 
             <div class="map-meta">
@@ -1341,11 +1604,24 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                 </div>
 
                 <div id="legendPrecipType" class="map-legend-section" hidden>
-                    <div class="map-legend-label">Winter Radar Composite</div>
-                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
-                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-ice"></span><span>Ice (sleet / FZRA)</span></div>
-                    <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
-                    <div class="map-legend-note">National mosaic: rain uses the MRMS reflectivity palette; winter precipitation uses phase-specific colors and reflectivity-based intensity.</div>
+                    <div class="map-legend-label">WINTER RADAR COMPOSITE</div>
+                    <div class="map-legend-note composite-legend-rule"><strong>COLOR</strong> = precipitation type</div>
+                    <div class="map-legend-items">
+                        <div class="map-legend-item"><span class="map-legend-swatch snow"></span>Snow</div>
+                        <div class="map-legend-item"><span class="map-legend-swatch sleet"></span>Sleet</div>
+                        <div class="map-legend-item"><span class="map-legend-swatch fzra"></span>Freezing rain</div>
+                        <div class="map-legend-item"><span class="map-legend-swatch mixed"></span>Mixed</div>
+                        <div class="map-legend-item"><span class="map-legend-swatch rain"></span>Rain</div>
+                    </div>
+                    <div class="map-legend-label composite-subrule">INTENSITY = MRMS REFLECTIVITY (dBZ)</div>
+                    <div class="composite-intensity">
+                        <span>10</span><i></i><span>20</span><i></i><span>30</span><i></i><span>40</span><i></i><span>50</span><i></i><span>60+</span>
+                    </div>
+                    <div class="map-legend-label composite-subrule">SATURATION = PHASE CONFIDENCE</div>
+                    <div class="composite-confidence">
+                        <span class="low">Low</span><i></i><span>Moderate</span><i></i><span class="high">High</span>
+                    </div>
+                    <div class="map-legend-note">Rain retains the MRMS BR HiRes reflectivity palette. Winter precipitation uses phase-specific hue, native dBZ intensity, and classifier confidence.</div>
                 </div>
 
                 <div id="legendPhase" class="map-legend-section" hidden>
@@ -1744,7 +2020,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 <div class="export-field"><label for="exportScale">Resolution</label><select id="exportScale"><option value="1">1× — map size</option><option value="1.5">1.5×</option><option value="2">2×</option></select></div></div></div>
 <div class="export-section"><div class="export-section-title">Data layers</div>
 <label class="export-layer-row"><input id="exportRadar" type="checkbox" checked><span>MRMS Radar Data</span></label>
-<label class="export-layer-row"><input id="exportPrecipType" type="checkbox" checked><span>Precipitation Type Composite</span></label>
+<label class="export-layer-row"><input id="exportPrecipType" type="checkbox" checked><span>Winter Radar Composite</span></label>
 <label class="export-layer-row"><input id="exportPhase" type="checkbox"><span>Winter Phase Mask</span></label>
 <label class="export-layer-row"><input id="exportRadarFusion" type="checkbox"><span>Radar Phase Evidence</span></label>
 <label class="export-layer-row"><input id="exportAgreement" type="checkbox"><span>Phase Agreement</span></label>
@@ -1916,7 +2192,8 @@ function initializeMap() {
         ["precipTypeToggle", true],
         ["phaseToggle", false],
         ["radarFusionToggle", false],
-        ["phaseAgreementToggle", false]
+        ["phaseAgreementToggle", false],
+        ["stateToggle", true]
     ];
 
     startupLayerDefaults.forEach(function(pair) {
@@ -1935,17 +2212,30 @@ function initializeMap() {
 
     L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/" +
-        "World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
         {
             maxZoom: 19,
-            attribution:
-                "Tiles © Esri — Esri, DeLorme, NAVTEQ, TomTom"
+            attribution: "Tiles © Esri"
+        }
+    ).addTo(map);
+
+    L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/" +
+        "Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+        {
+            maxZoom: 19,
+            opacity: 0.78,
+            attribution: "Labels © Esri"
         }
     ).addTo(map);
 
     map.fitBounds(BTV_BOUNDS, {
         padding: [10, 10]
     });
+
+    // Keep the map presentation close to a meteorological workstation:
+    // dark basemap, subtle national state boundaries, scientific rasters above.
+    toggleReferenceLayer("state", true);
 
     map.on("zoomend", function() {
         updateLayerScaleHints();
@@ -2299,7 +2589,7 @@ function phaseDisplaySpec() {
 function precipTypeDisplaySpec() {
     return {
         mode: "national",
-        url: "./outputs/winter_precip_type_web.png?v=" + Date.now(),
+        url: "./outputs/winter_radar_composite_web.png?v=" + Date.now(),
         bounds: MRMS_NATIONAL_BOUNDS
     };
 }
@@ -2320,7 +2610,7 @@ function loadCurrentPrecipTypeOverlay(force = false) {
     precipTypeDisplayMode = spec.mode;
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
     loadRasterWithFallback(
-        ["./outputs/winter_precip_type_web.png?v=" + stamp, "./outputs/winter_precip_type_web.webp?v=" + stamp],
+        ["./outputs/winter_radar_composite_web.png?v=" + stamp, "./outputs/winter_radar_composite_web.webp?v=" + stamp, "./outputs/winter_precip_type_web.png?v=" + stamp, "./outputs/winter_precip_type_web.webp?v=" + stamp],
         spec.bounds, overlayOpacity, 540, "winter-raster-sharp",
         function(layer) {
             precipTypeOverlay = layer;
@@ -4461,6 +4751,11 @@ async function refreshData() {
             "radarTime"
         ).textContent = display;
 
+        const healthMRMSDetail = document.getElementById("healthMRMSDetail");
+        if (healthMRMSDetail) {
+            healthMRMSDetail.textContent = "Valid " + display;
+        }
+
         if (!historyMode) {
             loadRadarLayers(metadata);
         }
@@ -4502,11 +4797,38 @@ async function refreshData() {
 
 
 
+function setHealthCard(cardId, good, value, detail) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    card.className = "health-card " + (good ? "good" : "warn");
+    const valueEl = document.getElementById(cardId + "Value");
+    const detailEl = document.getElementById(cardId + "Detail");
+    if (valueEl) valueEl.textContent = value || "—";
+    if (detailEl && detail != null) detailEl.textContent = detail;
+}
+
 function setStatusChip(id, good, textValue) {
     const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = textValue;
-    el.className = "map-status-chip " + (good ? "good" : "warn");
+    if (el) {
+        el.textContent = textValue;
+        el.className = "map-status-chip " + (good ? "good" : "warn");
+    }
+
+    const healthMap = {
+        statusMRMS: "healthMRMS",
+        statusRAP: "healthRAP",
+        statusDualPol: "healthDual",
+        statusAgreement: "healthAgreement",
+        statusComposite: "healthComposite"
+    };
+    const cardId = healthMap[id];
+    if (cardId) {
+        const value = good
+            ? (id === "statusMRMS" ? "Current" :
+               id === "statusComposite" ? "Ready" : "Ready")
+            : "Limited";
+        setHealthCard(cardId, good, value, textValue);
+    }
 }
 
 async function refreshAgreementStatus() {
@@ -4518,6 +4840,11 @@ async function refreshAgreementStatus() {
         const ok = payload.status === "ok";
         setStatusChip("statusAgreement", ok, ok ? "Agreement ready" : "Agreement limited");
         setStatusChip("statusDualPol", ok, ok ? "Dual-Pol ready" : "Dual-Pol limited");
+        const dualDetail = document.getElementById("healthDualDetail");
+        const agreementDetail = document.getElementById("healthAgreementDetail");
+        const dualTime = payload.mrms_time_utc ? formatUtcTime(payload.mrms_time_utc) : "Current cycle";
+        if (dualDetail) dualDetail.textContent = "RhoHV / ZDR • " + dualTime;
+        if (agreementDetail) agreementDetail.textContent = "Environment + radar • " + dualTime;
         window.currentAgreementMetadata = payload;
     } catch (error) {
         setStatusChip("statusAgreement", false, "Agreement unavailable");
@@ -4537,6 +4864,12 @@ async function refreshPhaseQC() {
         status.textContent = good ? "RAP + Bourgouin" : phaseStatus.replaceAll("_", " ");
         status.className = "phase-qc-status " + (good ? "good" : "warn");
         setStatusChip("statusRAP", good, good ? "RAP ready" : "RAP phase limited");
+        const rapDetail = document.getElementById("healthRAPDetail");
+        if (rapDetail) {
+            rapDetail.textContent = qc.rap_valid_time_utc
+                ? "Valid " + formatUtcTime(qc.rap_valid_time_utc)
+                : "Synchronized vertical profile";
+        }
 
         const means = qc.mean_probability_percent || {};
         document.getElementById("qcRain").textContent = means.rain == null ? "—" : Number(means.rain).toFixed(0) + "%";
