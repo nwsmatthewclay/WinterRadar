@@ -108,8 +108,12 @@ PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
     os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "12")
 )
+# Reserve half of each run for older gaps. The newest edge only needs to
+# service the roughly 2-minute MRMS cadence between 10-minute archive runs;
+# using the entire budget on the edge meant older missed scans could never
+# be repaired.
 MAX_NEW_EDGE_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN", "12")
+    os.environ.get("MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN", "6")
 )
 
 REQUEST_TIMEOUT = (20, 120)
@@ -1294,9 +1298,18 @@ def run_archive() -> None:
         "work_processed_this_run": len(selected),
         "radar_assets_before": len(existing_times),
         "radar_uploaded_this_run": archived_this_run,
-        "radar_remaining_missing": sum(1 for obs in recent_observations if obs.valid_time not in radar_assets),
-        "phase_remaining_missing": sum(1 for obs in recent_observations if f"phase_conus_{obs.timestamp_key}.webp" not in phase_assets),
-        "precip_type_remaining_missing": sum(1 for obs in recent_observations if f"preciptype_conus_{obs.timestamp_key}.webp" not in precip_type_assets),
+        "radar_remaining_missing": sum(
+            1 for obs in recent_observations
+            if obs.asset_name not in radar_assets
+        ),
+        "phase_remaining_missing": sum(
+            1 for obs in recent_observations
+            if f"phase_conus_{obs.timestamp_key}.webp" not in phase_assets
+        ),
+        "precip_type_remaining_missing": sum(
+            1 for obs in recent_observations
+            if f"preciptype_conus_{obs.timestamp_key}.webp" not in precip_type_assets
+        ),
         "oldest_stored_utc": manifest["frames"][0]["timestamp_utc"] if manifest.get("frames") else None,
         "newest_stored_utc": manifest["frames"][-1]["timestamp_utc"] if manifest.get("frames") else None,
         "status": "caught_up" if not work_candidates else "backfilling",
