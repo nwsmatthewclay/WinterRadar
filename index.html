@@ -4870,7 +4870,11 @@ function startHistoryPlayback() {
     updateHistoryControls();
     updateHistoryReadout();
 
-    const interval = Math.max(280, Math.round(520 / historySpeed));
+    // Historical frames are real network images. Advancing every ~500 ms can
+    // outrun image decoding and cancel the previous request, making complete
+    // archives look like scans were skipped. Give each frame enough time to
+    // become visible; browser caching still makes repeated playback faster.
+    const interval = Math.max(900, Math.round(1400 / historySpeed));
 
     historyTimer = window.setInterval(function() {
         if (!historyFrames.length) {
