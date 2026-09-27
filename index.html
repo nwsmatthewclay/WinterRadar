@@ -2223,14 +2223,12 @@ function loadCurrentPhaseOverlay(force = false) {
     tester.onload = function() {
         if (historyMode || !checkbox.checked) return;
 
-        const overlay = createImageOverlay(
-            url,
-            MRMS_NATIONAL_BOUNDS,
-            overlayOpacity,
-            550,
-            false,
-            "winter-raster-sharp"
-        );
+        const overlay = L.imageOverlay(url, MRMS_NATIONAL_BOUNDS, {
+            opacity: overlayOpacity,
+            interactive: false,
+            pane: "winterPhasePane",
+            className: "winter-raster-sharp"
+        });
 
         overlay.on("load", function() {
             const status = document.getElementById("phaseLayerStatus");
@@ -2388,14 +2386,12 @@ function loadRadarFusionLayer() {
     tester.onload = function() {
         if (historyMode || !checkbox.checked) return;
 
-        const overlay = createImageOverlay(
-            url,
-            MRMS_NATIONAL_BOUNDS,
-            overlayOpacity,
-            575,
-            false,
-            "winter-raster-sharp"
-        );
+        const overlay = L.imageOverlay(url, MRMS_NATIONAL_BOUNDS, {
+            opacity: overlayOpacity,
+            interactive: false,
+            pane: "winterRadarFusionPane",
+            className: "winter-raster-sharp"
+        });
 
         overlay.on("load", function() {
             const status = document.getElementById("radarFusionLayerStatus");
@@ -2462,14 +2458,12 @@ function loadPhaseAgreementLayer() {
     tester.onload = function() {
         if (historyMode || !checkbox.checked) return;
 
-        const overlay = createImageOverlay(
-            url,
-            MRMS_NATIONAL_BOUNDS,
-            overlayOpacity,
-            585,
-            false,
-            "winter-raster-sharp"
-        );
+        const overlay = L.imageOverlay(url, MRMS_NATIONAL_BOUNDS, {
+            opacity: overlayOpacity,
+            interactive: false,
+            pane: "winterPhaseAgreementPane",
+            className: "winter-raster-sharp"
+        });
 
         overlay.on("load", function() {
             const status = document.getElementById("phaseAgreementLayerStatus");
@@ -3538,17 +3532,22 @@ function updateHistoryReadout() {
         "Local: " + formatLocalTime(frame.timestamp_utc) +
         "  •  Phase: " + phaseTime;
 
-    // Keep the main map time badge synchronized with history selection.
-    const historyDisplay = formatLocalTime(frame.timestamp_utc);
-    document.getElementById("radarTime").textContent = historyDisplay;
-    document.getElementById("dataTime").textContent = historyDisplay;
-    document.getElementById("lastUpdate").textContent = historyDisplay;
+    // Only let history selection overwrite the main map time badges while
+    // the dashboard is actually in History mode. Otherwise the asynchronous
+    // history-manifest refresh can replace a current 01:00Z/live timestamp
+    // with the oldest/last archived frame before the user ever enters History.
+    if (historyMode) {
+        const historyDisplay = formatLocalTime(frame.timestamp_utc);
+        document.getElementById("radarTime").textContent = historyDisplay;
+        document.getElementById("dataTime").textContent = historyDisplay;
+        document.getElementById("lastUpdate").textContent = historyDisplay;
 
-    if (mapReadout) {
-        mapReadout.textContent =
-            historyMode
-                ? historyDisplay + "  •  " + (historyIndex + 1) + "/" + historyFrames.length
-                : "LIVE";
+        if (mapReadout) {
+            mapReadout.textContent =
+                historyDisplay + "  •  " + (historyIndex + 1) + "/" + historyFrames.length;
+        }
+    } else if (mapReadout) {
+        mapReadout.textContent = "LIVE";
     }
 
     if (historyMode && historyPlaying) {
