@@ -1525,6 +1525,208 @@ html, body {
     #map { height: 68vh; min-height: 460px; }
 }
 
+
+/* ============================================================
+   SYNCHRONIZED MAP + DIAGNOSTICS WORKSPACE
+   The diagnostic graphics share the map's vertical footprint on
+   desktop and become a dedicated scroll window on smaller screens.
+============================================================ */
+.map-wrap {
+    --diagnostic-width: 34%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, var(--diagnostic-width));
+    align-items: stretch;
+}
+
+#map {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    height: min(72vh, 860px);
+    min-height: 560px;
+}
+
+.diagnostics-dock {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    height: min(72vh, 860px);
+    min-height: 560px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+    background: #07131c;
+    border-left: 1px solid #29404f;
+    scrollbar-width: thin;
+    scrollbar-color: #3c6478 #0b1822;
+}
+
+.diagnostics-dock::-webkit-scrollbar { width: 10px; }
+.diagnostics-dock::-webkit-scrollbar-track { background: #0b1822; }
+.diagnostics-dock::-webkit-scrollbar-thumb {
+    background: #3c6478;
+    border-radius: 999px;
+    border: 2px solid #0b1822;
+}
+
+.diagnostics-dock > details.diagnostics {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.diagnostics-dock details.diagnostics > summary {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 12px 13px;
+    background: linear-gradient(180deg, #102532, #0c1b25);
+    border-bottom: 1px solid #29404f;
+    color: #e8f4f8;
+    font-size: 12px;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.diagnostics-dock .phase-qc {
+    margin: 9px;
+}
+
+.diagnostics-dock .diagnostic-grid {
+    grid-template-columns: 1fr;
+    gap: 9px;
+    padding: 0 9px 12px;
+}
+
+.diagnostics-dock .diag-card {
+    border-color: #294958;
+    border-radius: 7px;
+}
+
+.diagnostics-dock .diag-head {
+    min-height: auto;
+    padding: 9px 10px;
+}
+
+.diagnostics-dock .diag-title {
+    font-size: 11px;
+}
+
+.diagnostics-dock .diag-desc {
+    font-size: 8px;
+}
+
+.diagnostics-dock .diag-card img {
+    min-height: 0;
+    max-height: none;
+    width: 100%;
+    object-fit: contain;
+    background: #07131c;
+}
+
+.diagnostics-dock .diag-open {
+    padding: 6px 9px;
+    background: #0b1b25;
+    border-top: 1px solid #203744;
+}
+
+.diagnostics-dock .diag-open a {
+    color: #62c7ee;
+    font-size: 8px;
+}
+
+.diagnostics-dock .phase-qc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.diagnostics-dock .phase-qc-cell {
+    padding: 6px;
+}
+
+.diagnostics-dock .phase-qc-value {
+    font-size: 11px;
+}
+
+.map-wrap .layer-box {
+    right: calc(var(--diagnostic-width) + 9px);
+}
+
+.map-wrap .opacity-control {
+    right: calc(var(--diagnostic-width) + 9px);
+}
+
+.map-wrap .map-history-control {
+    right: calc(var(--diagnostic-width) + 12px);
+}
+
+.map-wrap .diagnostic-readout {
+    right: calc(var(--diagnostic-width) + 9px);
+}
+
+.map-wrap .map-legend {
+    max-width: min(295px, calc(100% - var(--diagnostic-width) - 27px));
+}
+
+/* Keep the legend tied to actual Leaflet overlays, not merely checked boxes. */
+.map-legend.map-legend-empty {
+    display: none !important;
+}
+
+@media (max-width: 1050px) {
+    .map-wrap {
+        --diagnostic-width: 38%;
+        grid-template-columns: minmax(0, 1fr) minmax(285px, var(--diagnostic-width));
+    }
+
+    #map,
+    .diagnostics-dock {
+        height: min(70vh, 760px);
+        min-height: 500px;
+    }
+
+    .map-wrap .map-legend {
+        max-width: min(270px, calc(100% - var(--diagnostic-width) - 24px));
+    }
+}
+
+@media (max-width: 800px) {
+    .map-wrap {
+        --diagnostic-width: 0px;
+        display: block;
+    }
+
+    #map {
+        width: 100%;
+        height: 62vh;
+        min-height: 420px;
+    }
+
+    .diagnostics-dock {
+        width: 100%;
+        height: 58vh;
+        min-height: 420px;
+        border-left: 0;
+        border-top: 1px solid #29404f;
+    }
+
+    .map-wrap .layer-box,
+    .map-wrap .opacity-control,
+    .map-wrap .map-history-control,
+    .map-wrap .diagnostic-readout {
+        right: 9px;
+    }
+
+    .map-wrap .map-history-control {
+        right: 8px;
+    }
+
+    .map-wrap .map-legend {
+        max-width: 260px;
+    }
+}
+
 </style>
 </head>
 
@@ -1817,6 +2019,8 @@ html, body {
             </div>
 
             <div id="searchResults" class="search-results"></div>
+
+            <div id="diagnosticsDock" class="diagnostics-dock" aria-label="Scrollable WinterRadar diagnostics"></div>
         </div>
 
         <div class="map-toolbar">
@@ -1909,7 +2113,7 @@ html, body {
 
     </section>
 
-    <details class="diagnostics" ontoggle="if(this.open) refreshDiagnosticImages()">
+    <details class="diagnostics" open ontoggle="if(this.open) refreshDiagnosticImages()">
         <summary>Diagnostics</summary>
 
 
@@ -2603,6 +2807,7 @@ function loadCurrentPrecipTypeOverlay(force = false) {
         spec.bounds, overlayOpacity, 540, "winter-raster-sharp",
         function(layer) {
             precipTypeOverlay = layer;
+            updateDynamicMapLegend();
             setStatusChip("statusComposite", true, "Composite ready");
         },
         function() {
@@ -2753,6 +2958,7 @@ function loadCurrentPhaseOverlay(force = false) {
         "winter-raster-sharp",
         function(layer, url, bytes, decoded) {
             phaseOverlay = layer;
+            updateDynamicMapLegend();
             phaseDisplayMode = "national";
             updatePhaseLayerStatusFromMetadata(currentMRMSMetadata, decoded);
         },
@@ -2811,6 +3017,7 @@ function loadCurrentRadarOverlay(force = false) {
         "winter-radar-raster",
         function(layer) {
             radarOverlay = layer;
+            updateDynamicMapLegend();
 
             const wrap = document.querySelector(".map-wrap");
             if (wrap) {
@@ -2922,6 +3129,7 @@ function loadRadarFusionLayer() {
         "winter-raster-sharp",
         function(layer) {
             radarFusionOverlay = layer;
+            updateDynamicMapLegend();
         },
         function() {
             console.warn("Radar Phase Evidence could not be loaded.");
@@ -2962,6 +3170,7 @@ function loadPhaseAgreementLayer() {
         "winter-raster-sharp",
         function(layer) {
             phaseAgreementOverlay = layer;
+            updateDynamicMapLegend();
         },
         function() {
             console.warn("Phase Agreement could not be loaded.");
@@ -3187,7 +3396,23 @@ function updateDynamicMapLegend() {
         const checkbox = document.getElementById(pair[1]);
         if (!section) return;
 
-        const show = !!(checkbox && checkbox.checked);
+        let show = !!(checkbox && checkbox.checked);
+
+        // A checked box means "requested"; the legend should only appear once
+        // the corresponding Leaflet overlay is actually present on the map.
+        const activeOverlay = {
+            radarToggle: radarOverlay,
+            precipTypeToggle: precipTypeOverlay,
+            phaseToggle: phaseOverlay,
+            radarFusionToggle: radarFusionOverlay,
+            phaseAgreementToggle: phaseAgreementOverlay
+        }[pair[1]];
+
+        if (show && activeOverlay && map) {
+            show = map.hasLayer(activeOverlay);
+        } else if (show) {
+            show = false;
+        }
         section.hidden = !show;
         section.style.display = show ? "" : "none";
         if (show) visible += 1;
@@ -3218,6 +3443,7 @@ function toggleRadar(enabled) {
         removeMapOverlay(radarOverlay);
         radarOverlay = null;
         radarDisplayMode = null;
+        updateDynamicMapLegend();
     }
 }
 
@@ -3239,6 +3465,7 @@ function togglePrecipType(enabled) {
         removeMapOverlay(precipTypeOverlay);
         precipTypeOverlay = null;
         precipTypeDisplayMode = null;
+        updateDynamicMapLegend();
     }
 }
 
@@ -3260,6 +3487,7 @@ function togglePhase(enabled) {
         removeMapOverlay(phaseOverlay);
         phaseOverlay = null;
         phaseDisplayMode = null;
+        updateDynamicMapLegend();
     }
 }
 
@@ -5415,6 +5643,17 @@ async function exportGIF() {
 async function startMapExport(){if(exportBusy)return;exportBusy=true;const b=document.getElementById("exportStartButton");if(b)b.disabled=true;try{await((document.getElementById("exportFormat")?.value||"png")==="gif"?exportGIF():exportPNG());}catch(e){console.error("Map export failed:",e);setExportStatus("Export failed: "+(e?.message||e),true);}finally{exportBusy=false;if(b)b.disabled=false;document.getElementById("map")?.classList.remove("export-capture-mode");}}
 document.getElementById("exportModalBackdrop")?.addEventListener("click",e=>{if(e.target===e.currentTarget&&!exportBusy)closeExportModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&exportModalOpen&&!exportBusy)closeExportModal();});
+
+
+// Move the diagnostics into the map workspace so the graphics share a
+// dedicated, independently scrollable window beside the map.
+(function mountDiagnosticsDock() {
+    const dock = document.getElementById("diagnosticsDock");
+    const diagnostics = document.querySelector("details.diagnostics");
+    if (dock && diagnostics) {
+        dock.appendChild(diagnostics);
+    }
+})();
 
 initializeMap();
 refreshDiagnosticImages();
