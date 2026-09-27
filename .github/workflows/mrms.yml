@@ -248,10 +248,11 @@ jobs:
       # persistent storage for Actions, but not reliable <img> sources in the
       # browser. Stage the archived WebP frames into the Pages deployment so
       # the history viewer can load them same-origin with image/webp.
-      - name: Publish latest live frame to GitHub Release
+      - name: Publish five-scan live radar buffer to GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          MRMS_LIVE_HISTORY_FRAMES: "5"
         run: |
           set -euo pipefail
           python -u src/publish_live_history.py
