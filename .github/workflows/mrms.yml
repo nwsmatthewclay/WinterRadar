@@ -249,16 +249,16 @@ jobs:
       # persistent storage for Actions, but not reliable <img> sources in the
       # browser. Stage the archived WebP frames into the Pages deployment so
       # the history viewer can load them same-origin with image/webp.
-      - name: Publish five-scan live radar buffer to GitHub Release
+      - name: Publish twelve-scan live radar/composite buffer to GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MRMS_LIVE_HISTORY_FRAMES: "5"
+          MRMS_LIVE_HISTORY_FRAMES: "12"
         run: |
           set -euo pipefail
           python -u src/publish_live_history.py
 
-      # Release assets are the persistent history store. This downloads only
+      # The live publisher now seeds roughly 20+ minutes of radar plus matching phase/composite assets.\n      # Release assets remain the persistent history store; the archive continues repairing older gaps. This downloads only
       # the already-archived 3-hour WebP history into Pages so the browser can
       # load the files same-origin. It does not contact NOAA for history.
       - name: Stage 3-hour MRMS history for Pages
