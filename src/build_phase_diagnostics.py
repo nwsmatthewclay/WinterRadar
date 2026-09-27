@@ -212,8 +212,16 @@ def main() -> None:
     # The native radar remains full-CONUS; only the diagnostic graphics are
     # geographically masked here.
     btv_mask = _btv_mask(data["rain"].shape, meta)
+    rows = np.where(btv_mask.any(axis=1))[0]
+    cols = np.where(btv_mask.any(axis=0))[0]
+    if rows.size == 0 or cols.size == 0:
+        raise RuntimeError("BTV CWA mask contains no diagnostic grid cells.")
+
+    r0, r1 = int(rows.min()), int(rows.max()) + 1
+    c0, c1 = int(cols.min()), int(cols.max()) + 1
+
     for key in data:
-        data[key] = np.where(btv_mask, data[key], np.nan)
+        data[key] = np.where(btv_mask, data[key], np.nan)[r0:r1, c0:c1]
 
     save_probability_layer(data, OUT / "phase_probability.png")
 
