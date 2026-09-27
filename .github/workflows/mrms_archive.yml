@@ -19,7 +19,7 @@ jobs:
   archive:
     runs-on: ubuntu-latest
 
-    # The archive processes up to 12 scans per run, reserving half of the budget for older gaps.
+    # The archive can process up to 24 scans per run; 6 stay reserved for the newest edge while the remaining capacity heals composite/radar gaps.
     timeout-minutes: 25
 
     steps:
@@ -57,7 +57,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MRMS_HISTORY_MAX_FRAMES_PER_RUN: "12"
+          MRMS_HISTORY_MAX_FRAMES_PER_RUN: "24"
           MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN: "6"
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
