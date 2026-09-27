@@ -113,32 +113,53 @@ def main() -> None:
     radar_assets, _, _ = gather_release_assets_many(all_history_releases)
 
     # Discover the timestamped MRMS directory directly. Do not wait for the
-    # archive workflow or the live watermark to identify the newest scans.
+    # archive workflow or the live watermark to identify recent scans.
     observations = fetch_mrms_directory(store.session)
     observations = [
-        obs
-        for obs in observations
-        if obs.valid_time <= now + timedelta(minutes=1)
+        obs for obs in observations
+        if obs.valid_time <= current_dt
     ]
     observations.sort(key=lambda item: item.valid_time)
 
-    latest = observations[-LIVE_RADAR_FRAMES:]
-    if not latest:
-        raise RuntimeError("No recent timestamped MRMS observations were found")
+    # The current live raster already exists locally. Always publish it first
+    # so history cannot lose the newest scan merely because NOAA's timestamped
+    # directory is a moment behind the latest product.
+    current_release = ensure_upload_release(
+        store,
+        current_dt.date(),
+        release_index,
+    )
 
-    # Make sure the exact current live frame is represented even if the NOAA
-    # timestamped directory temporarily trails the latest product.
-    if current_dt not in {obs.valid_time for obs in latest}:
-        matching = next(
-            (obs for obs in observations if obs.valid_time == current_dt),
-            None,
+    current_radar_asset = f"radar_qc_conus_{current_stamp}.webp"
+    current_radar_path = OUTPUT / "mrms_current_web.webp"
+    if current_radar_asset not in radar_assets:
+        if not current_radar_path.exists() or current_radar_path.stat().st_size == 0:
+            raise SystemExit(
+                f"Required live radar WebP is missing: {current_radar_path}"
+            )
+        data = current_radar_path.read_bytes()
+        asset = store.upload_asset(
+            current_release,
+            current_radar_asset,
+            data,
         )
-        if matching is not None:
-            latest.append(matching)
-        latest = sorted(
-            {obs.valid_time: obs for obs in latest}.values(),
-            key=lambda item: item.valid_time,
-        )[-LIVE_RADAR_FRAMES:]
+        current_release.assets[asset["name"]] = asset
+        radar_assets[asset["name"]] = asset
+        print(
+            f"  Stored current live radar {asset['name']} "
+            f"({len(data):,} bytes) in {current_release.tag}"
+        )
+    else:
+        print(f"  Already stored current live radar: {current_radar_asset}")
+
+    # Add the four most recent completed scans before the current live scan.
+    # These form a rolling buffer roughly 8-10 minutes deep depending on the
+    # upstream MRMS scan cadence. Existing Release assets are never downloaded
+    # again.
+    prior_count = max(0, LIVE_RADAR_FRAMES - 1)
+    prior_observations = observations[
+        -prior_count:
+    ] if prior_count else []
 
     lats, lons = load_source_coordinates()
     bounds = read_history_bounds(OUTPUT / "mrms_current.json")
@@ -146,51 +167,33 @@ def main() -> None:
     expected_shape = (int(lats.size), int(lons.size))
     row_map_cache: dict = {}
 
+    buffer_times = [obs.valid_time for obs in prior_observations] + [current_dt]
+
     print("=" * 68)
     print("WINTER RADAR — LIVE FIVE-SCAN HISTORY HANDOFF")
     print("=" * 68)
     print(f"  Current live timestamp: {current_dt.isoformat()}")
     print(f"  Requested live radar buffer: {LIVE_RADAR_FRAMES} scans")
-    print(f"  NOAA newest selected scan: {latest[-1].valid_time.isoformat()}")
     print(
         "  Buffer range: "
-        f"{latest[0].valid_time.isoformat()} -> {latest[-1].valid_time.isoformat()}"
+        f"{min(buffer_times).isoformat()} -> {max(buffer_times).isoformat()}"
     )
 
-    for obs in latest:
+    for obs in prior_observations:
         if obs.asset_name in radar_assets:
             print(f"  Already stored: {obs.asset_name}")
             continue
 
-        if obs.valid_time == current_dt:
-            live_path = OUTPUT / "mrms_current_web.webp"
-            if live_path.exists() and live_path.stat().st_size > 0:
-                data = live_path.read_bytes()
-                print(
-                    f"  Reusing live WebP for {obs.asset_name} "
-                    f"({len(data):,} bytes)"
-                )
-            else:
-                data, _ = download_and_render_observation(
-                    store.session,
-                    obs,
-                    expected_shape,
-                    (y0, y1, x0, x1),
-                    crop_bounds,
-                    row_map_cache,
-                    keep_grib=False,
-                )
-        else:
-            print(f"  Buffering historical radar scan: {obs.valid_time.isoformat()}")
-            data, _ = download_and_render_observation(
-                store.session,
-                obs,
-                expected_shape,
-                (y0, y1, x0, x1),
-                crop_bounds,
-                row_map_cache,
-                keep_grib=False,
-            )
+        print(f"  Buffering historical radar scan: {obs.valid_time.isoformat()}")
+        data, _ = download_and_render_observation(
+            store.session,
+            obs,
+            expected_shape,
+            (y0, y1, x0, x1),
+            crop_bounds,
+            row_map_cache,
+            keep_grib=False,
+        )
 
         release = ensure_upload_release(
             store,
@@ -208,12 +211,6 @@ def main() -> None:
     # Always publish the current phase and per-scan precip-type products as the
     # exact live observation. The archive fills matching older phase scans
     # independently.
-    current_release = ensure_upload_release(
-        store,
-        current_dt.date(),
-        release_index,
-    )
-
     current_files = {
         f"phase_conus_{current_stamp}.webp": (
             OUTPUT / "winter_phase_mask_web.webp",
