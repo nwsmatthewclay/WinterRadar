@@ -117,7 +117,7 @@ def main() -> None:
     observations = fetch_mrms_directory(store.session)
     observations = [
         obs for obs in observations
-        if obs.valid_time <= current_dt
+        if obs.valid_time < current_dt
     ]
     observations.sort(key=lambda item: item.valid_time)
 
@@ -152,14 +152,15 @@ def main() -> None:
     else:
         print(f"  Already stored current live radar: {current_radar_asset}")
 
-    # Add the four most recent completed scans before the current live scan.
-    # These form a rolling buffer roughly 8-10 minutes deep depending on the
-    # upstream MRMS scan cadence. Existing Release assets are never downloaded
-    # again.
+    # Add the four most recent completed scans strictly before the current
+    # live scan. The strict comparison prevents the current scan from being
+    # counted twice if NOAA's timestamped directory already contains it.
     prior_count = max(0, LIVE_RADAR_FRAMES - 1)
-    prior_observations = observations[
-        -prior_count:
-    ] if prior_count else []
+    prior_observations = (
+        observations[-prior_count:]
+        if prior_count
+        else []
+    )
 
     lats, lons = load_source_coordinates()
     bounds = read_history_bounds(OUTPUT / "mrms_current.json")
@@ -240,9 +241,9 @@ def main() -> None:
         "radar_asset": f"radar_qc_conus_{current_stamp}.webp",
         "phase_asset": f"phase_conus_{current_stamp}.webp",
         "precip_type_asset": f"preciptype_conus_{current_stamp}.webp",
-        "live_radar_buffer_count": len(latest),
-        "live_radar_buffer_oldest_utc": latest[0].valid_time.isoformat(),
-        "live_radar_buffer_newest_utc": latest[-1].valid_time.isoformat(),
+        "live_radar_buffer_count": len(buffer_times),
+        "live_radar_buffer_oldest_utc": min(buffer_times).isoformat(),
+        "live_radar_buffer_newest_utc": max(buffer_times).isoformat(),
         "source": "live-workflow",
     }
 
