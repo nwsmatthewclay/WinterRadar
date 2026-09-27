@@ -180,17 +180,109 @@ def main() -> None:
         )
         return
 
-    # Prefer the manifest advertising the greatest number of frames. If two
-    # partitions somehow contain the same count, prefer the most recently
-    # updated release.
-    manifest_candidates.sort(
-        key=lambda item: (
-            int(item[2].get("frame_count", len(item[2].get("frames", [])))),
-            str(item[0].get("updated_at", "")),
-        ),
-        reverse=True,
-    )
-    release, _, manifest = manifest_candidates[0]
+    # Do NOT select a single partition manifest. Each GitHub Release partition
+    # can have its own partial rolling manifest, so choosing the manifest with
+    # the largest frame count can make Pages jump backward to an older chunk
+    # when the newest daily release contains fewer frames.
+    #
+    # Merge every manifest, de-duplicate by timestamp, then keep the newest
+    # rolling window. The asset index above spans all partitions, so every
+    # merged frame can still be downloaded regardless of which release holds it.
+    merged_by_timestamp: dict[str, dict] = {}
+    bounds_candidates: list[tuple[str, list[float]]] = []
+
+    for release, _, manifest_part in manifest_candidates:
+        tag = str(release.get("tag_name", ""))
+        bounds = manifest_part.get("bounds")
+        if isinstance(bounds, list) and len(bounds) == 4:
+            try:
+                parsed = [float(v) for v in bounds]
+                if all(map(lambda v: v == v, parsed)):
+                    bounds_candidates.append((
+                        str(release.get("updated_at", "")),
+                        parsed,
+                    ))
+            except (TypeError, ValueError):
+                pass
+
+        for frame in manifest_part.get("frames", []):
+            if not isinstance(frame, dict):
+                continue
+            ts = str(frame.get("timestamp_utc", "")).strip()
+            if not ts:
+                continue
+
+            # Prefer the newer copy when the same observation exists in more
+            # than one partition.
+            existing = merged_by_timestamp.get(ts)
+            if existing is None:
+                merged_by_timestamp[ts] = dict(frame)
+            else:
+                merged_by_timestamp[ts] = {**existing, **frame}
+
+    merged_frames = list(merged_by_timestamp.values())
+
+    def frame_time(frame: dict) -> datetime | None:
+        try:
+            return datetime.fromisoformat(str(frame.get("timestamp_utc", "")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    merged_frames = [
+        frame for frame in merged_frames
+        if frame_time(frame) is not None
+    ]
+    merged_frames.sort(key=lambda frame: frame_time(frame) or datetime.min.replace(tzinfo=timezone.utc))
+
+    history_hours = 3
+    if merged_frames:
+        newest_time = frame_time(merged_frames[-1])
+        cutoff_time = newest_time - timedelta(hours=history_hours)
+        merged_frames = [
+            frame for frame in merged_frames
+            if (frame_time(frame) or cutoff_time) >= cutoff_time
+        ]
+
+    # Build the final manifest from the merged frame set. This guarantees that
+    # the newest live frames and older archive frames coexist in one Pages
+    # history index, rather than one partition replacing the other.
+    radar_names = {
+        str(frame.get("radar_asset"))
+        for frame in merged_frames
+        if frame.get("radar_asset")
+    }
+    phase_names = {
+        str(frame.get("phase_asset"))
+        for frame in merged_frames
+        if frame.get("phase_asset")
+    }
+    precip_names = {
+        str(frame.get("precip_type_asset"))
+        for frame in merged_frames
+        if frame.get("precip_type_asset")
+    }
+
+    latest_bounds = None
+    if bounds_candidates:
+        bounds_candidates.sort(key=lambda item: item[0], reverse=True)
+        latest_bounds = bounds_candidates[0][1]
+
+    manifest = {
+        "version": "1.0-history",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "history_hours": history_hours,
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. Pages combines all current Release partitions and retains the newest 3 hours.",
+        "bounds": latest_bounds or [20.005001, -129.995, 54.995, -60.00500199999999],
+        "bounds_format": ["south", "west", "north", "east"],
+        "frame_count": len(merged_frames),
+        "phase_snapshot_count": len(phase_names),
+        "precip_type_snapshot_count": len(precip_names),
+        "releases": [
+            {"tag": r.get("tag_name", ""), "url": r.get("html_url", "")}
+            for r, _, _ in manifest_candidates
+        ],
+        "frames": merged_frames,
+    }
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     (OUTPUT / "mrms_history.json").write_text(
@@ -237,8 +329,11 @@ def main() -> None:
             if name and name not in files and url:
                 files[name] = {"url": url}
 
-    print(f"  Selected manifest release: {release.get('tag_name', 'unknown')}")
-    print(f"  Manifest frames: {manifest.get('frame_count', len(manifest.get('frames', [])))}")
+    print(f"  Combined manifest: {manifest.get('frame_count', len(manifest.get('frames', [])))} frames across {len(manifest_candidates)} manifests")
+    if manifest.get("frames"):
+        first_ts = manifest["frames"][0].get("timestamp_utc")
+        last_ts = manifest["frames"][-1].get("timestamp_utc")
+        print(f"  Combined history range: {first_ts} -> {last_ts}")
     print(f"  Release partitions searched: {len(release_assets)}")
     print(f"  Unique assets to stage: {len(files)}")
 
