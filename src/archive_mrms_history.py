@@ -1283,6 +1283,17 @@ def run_archive() -> None:
     )
     manifest_release.assets[manifest_asset["name"]] = manifest_asset
 
+    manifest_times = [
+        datetime.fromisoformat(str(frame["timestamp_utc"]).replace("Z", "+00:00"))
+        for frame in manifest.get("frames", [])
+        if frame.get("timestamp_utc")
+    ]
+    manifest_gaps = [
+        (later - earlier).total_seconds()
+        for earlier, later in zip(manifest_times, manifest_times[1:])
+    ]
+    significant_gaps = [gap for gap in manifest_gaps if gap > 300]
+
     status = {
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
@@ -1312,7 +1323,13 @@ def run_archive() -> None:
         ),
         "oldest_stored_utc": manifest["frames"][0]["timestamp_utc"] if manifest.get("frames") else None,
         "newest_stored_utc": manifest["frames"][-1]["timestamp_utc"] if manifest.get("frames") else None,
-        "status": "caught_up" if not work_candidates else "backfilling",
+        "max_frame_gap_seconds": max(manifest_gaps) if manifest_gaps else 0,
+        "significant_frame_gaps_over_5min": len(significant_gaps),
+        "status": (
+            "gap_detected"
+            if significant_gaps
+            else ("caught_up" if not work_candidates else "backfilling")
+        ),
         "recent_files": [
             {"asset_name": f["radar_asset"], "timestamp_utc": f["timestamp_utc"]}
             for f in manifest.get("frames", [])[-10:]
