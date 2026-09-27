@@ -95,6 +95,8 @@ jobs:
               ("radar_missing_before", "Radar missing before"),
               ("radar_uploaded_this_run", "Radar uploaded this run"),
               ("radar_remaining_missing", "Radar still missing"),
+              ("max_frame_gap_seconds", "Largest timestamp gap (s)"),
+              ("significant_frame_gaps_over_5min", "Gaps over 5 minutes"),
               ("phase_remaining_missing", "Phase still missing"),
               ("precip_type_remaining_missing", "Precip type still missing"),
               ("oldest_stored_utc", "Oldest stored"),
