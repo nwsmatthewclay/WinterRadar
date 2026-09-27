@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-"""Publish a fast five-scan live radar buffer into the persistent history store.
+"""Publish a buffered live radar/composite window into the persistent history store.
 
 The live workflow already has the current MRMS scan and the current
 phase/precipitation-type browser products. In addition to those current
-products, this publisher places the newest five timestamped MRMS radar scans
+products, this publisher places the newest twelve timestamped MRMS radar scans
 into the GitHub Release history store.
 
-Only the newest scan reuses the already-generated live WebP. The four prior
+Only the newest scan reuses the already-generated live WebP. The prior
 scans are downloaded/rendered with the same authoritative
 MergedReflectivityQCComposite source and full-CONUS Web Mercator geometry used
 by the archive. This gives the Pages history viewer a near-live radar buffer
@@ -19,6 +19,9 @@ five frames are a freshness buffer rather than a correctness dependency.
 
 import json
 import os
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -37,11 +40,11 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "outputs"
 TOKEN = os.environ.get("GITHUB_TOKEN", "")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
-UA = "WinterRadar/1.4 (five-scan live history publisher)"
+UA = "WinterRadar/1.5 (buffered live radar/composite publisher)"
 
 LIVE_RADAR_FRAMES = max(
     1,
-    int(os.environ.get("MRMS_LIVE_HISTORY_FRAMES", "5")),
+    int(os.environ.get("MRMS_LIVE_HISTORY_FRAMES", "12")),
 )
 
 
@@ -167,11 +170,13 @@ def main() -> None:
     y0, y1, x0, x1, crop_bounds = crop_indices(lats, lons, bounds)
     expected_shape = (int(lats.size), int(lons.size))
     row_map_cache: dict = {}
+    phase_grib_paths: list[Path] = []
+    phase_observations: list = []
 
     buffer_times = [obs.valid_time for obs in prior_observations] + [current_dt]
 
     print("=" * 68)
-    print("WINTER RADAR — LIVE FIVE-SCAN HISTORY HANDOFF")
+    print("WINTER RADAR — LIVE BUFFERED HISTORY HANDOFF")
     print("=" * 68)
     print(f"  Current live timestamp: {current_dt.isoformat()}")
     print(f"  Requested live radar buffer: {LIVE_RADAR_FRAMES} scans")
@@ -193,7 +198,7 @@ def main() -> None:
             (y0, y1, x0, x1),
             crop_bounds,
             row_map_cache,
-            keep_grib=False,
+            keep_grib=True,
         )
 
         release = ensure_upload_release(
@@ -208,6 +213,40 @@ def main() -> None:
             f"  Stored {asset['name']} ({len(data):,} bytes) "
             f"in {release.tag}"
         )
+
+    # Build matching phase and precipitation-type composites for the buffered
+    # historical scans. This is the live-edge fix: the first ~20 minutes of
+    # history no longer waits for the slower archive workflow.
+    if phase_grib_paths:
+        helper_output = Path(tempfile.mkdtemp(prefix="winterradar_live_phase_"))
+        try:
+            helper = ROOT / "src" / "build_history_precip_type.py"
+            cmd = ["python", str(helper), "--output-dir", str(helper_output)] + [str(path) for path in phase_grib_paths]
+            print(f"  Building live-edge phase composites for {len(phase_grib_paths)} buffered scans...")
+            subprocess.run(cmd, check=True)
+
+            for obs in phase_observations:
+                names = [
+                    f"phase_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
+                    f"preciptype_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
+                ]
+                release = ensure_upload_release(store, obs.valid_time.date(), release_index)
+                for name in names:
+                    source = helper_output / name
+                    if not source.exists():
+                        print(f"  WARNING: live-edge composite missing: {name}")
+                        continue
+                    if name in release.assets:
+                        continue
+                    asset = store.upload_asset(release, name, source.read_bytes(), "image/webp")
+                    release.assets[asset["name"]] = asset
+                    print(f"  Stored live-edge composite {name} ({source.stat().st_size:,} bytes)")
+        except Exception as exc:
+            print(f"  WARNING: live-edge composite generation failed: {type(exc).__name__}: {exc}")
+        finally:
+            for path in phase_grib_paths:
+                path.unlink(missing_ok=True)
+            shutil.rmtree(helper_output, ignore_errors=True)
 
     # Always publish the current phase and per-scan precip-type products as the
     # exact live observation. The archive fills matching older phase scans
@@ -255,7 +294,7 @@ def main() -> None:
         replace=True,
     )
 
-    print("LIVE FIVE-SCAN HISTORY HANDOFF COMPLETE")
+    print("LIVE BUFFERED RADAR/COMPOSITE HISTORY HANDOFF COMPLETE")
 
 
 if __name__ == "__main__":
