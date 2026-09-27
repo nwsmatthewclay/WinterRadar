@@ -15,14 +15,13 @@ GitHub Actions workflow runs it:
    storage and determines which observations are missing.
 4. Downloads and renders only those missing observations.
 5. Stores native-resolution WebP frames in the appropriate daily release.
-6. Archives one full-CONUS winter-phase mask and one full-CONUS precipitation-
-   type composite per 10-minute bucket, keeping the history comfortably below
-   GitHub's 1,000-asset-per-release limit.
+6. Builds one matching full-CONUS winter-phase mask and one precipitation-
+   type composite for each archived radar observation.
 7. Builds outputs/mrms_history.json for the Pages viewer.
 
-The live radar path is never modified by this script. The workflow should run
-this step with `continue-on-error: true` so a history/API problem cannot take
-the current radar offline.
+The live radar path is never modified by this script. The archive collector is
+a separate workflow, so an archive/API failure cannot directly take the live
+radar workflow offline.
 """
 
 import argparse
@@ -74,8 +73,8 @@ MRMS_FILENAME_RE = re.compile(
     r"MRMS_MergedReflectivityQCComposite_00\.50_(\d{8}-\d{6})\.grib2\.gz"
 )
 
-# New namespace prevents the viewer from ever mixing old
-# older radar frames with the current QC-composite frames.
+# New namespace prevents the viewer from mixing old radar frames
+# with the current QC-composite frames.
 RADAR_ASSET_RE = re.compile(r"^radar_qc_conus_(\d{8}-\d{6})\.webp$")
 PHASE_ASSET_RE = re.compile(r"^phase_conus_(\d{8}-\d{6}|\d{8}-\d{4})\.webp$")
 PRECIP_TYPE_ASSET_RE = re.compile(r"^preciptype_conus_(\d{8}-\d{6}|\d{8}-\d{4})\.webp$")
