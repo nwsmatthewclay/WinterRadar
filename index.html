@@ -198,6 +198,51 @@ html, body {
 .layer-raster-status.empty { color: #8a6b1d; }
 .layer-raster-status.failed { color: #a33a3a; }
 
+.phase-layer-row input[type="checkbox"] {
+    accent-color: #2b7a4b;
+}
+
+.phase-layer-name {
+    font-weight: 800;
+}
+
+.phase-layer-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #2b7a4b;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 900;
+    opacity: 0;
+    transform: scale(.85);
+    transition: opacity .15s ease, transform .15s ease;
+}
+
+.phase-layer-check.visible {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.phase-layer-check.empty {
+    background: #8a6b1d;
+}
+
+.phase-layer-check.failed {
+    background: #a33a3a;
+}
+
+@media (max-width: 600px) {
+    .phase-layer-row .layer-raster-status {
+        max-width: 125px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
 .map-legend {
     position: absolute;
     bottom: 78px;
@@ -1353,13 +1398,16 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                         <span>Precipitation Type Composite</span>
                     </label>
 
-                    <label class="layer-row">
+                    <label class="layer-row phase-layer-row">
                         <input
                             id="phaseToggle"
                             type="checkbox"
                             onchange="togglePhase(this.checked)"
+                            aria-controls="phaseLayerStatus"
                         >
-                        <span>Winter Phase Mask</span><span id="phaseLayerStatus" class="layer-raster-status" aria-live="polite"></span>
+                        <span class="phase-layer-name">Winter Phase Mask</span>
+                        <span id="phaseLayerCheck" class="phase-layer-check" aria-hidden="true"></span>
+                        <span id="phaseLayerStatus" class="layer-raster-status" aria-live="polite"></span>
                     </label>
 
                     <label class="layer-row">
@@ -1768,6 +1816,7 @@ let map = null;
 let radarOverlay = null;
 let phaseOverlay = null;
 let precipTypeOverlay = null;
+let currentMRMSMetadata = null;
 let radarFusionOverlay = null;
 let phaseAgreementOverlay = null;
 let diagnosticMode = false;
@@ -2233,6 +2282,97 @@ function refreshPrecipTypeResolutionOnView() {
 
 
 
+function setPhaseLayerIndicator(state, detail, title) {
+    const status = document.getElementById("phaseLayerStatus");
+    const check = document.getElementById("phaseLayerCheck");
+
+    if (status) {
+        status.className = "layer-raster-status " + (state || "");
+        status.textContent = detail || "";
+        status.title = title || detail || "";
+    }
+
+    if (check) {
+        check.className = "phase-layer-check" + (state ? " " + state : "");
+        check.textContent =
+            state === "loaded" ? "✓" :
+            state === "empty" ? "–" :
+            state === "failed" ? "!" : "";
+
+        check.title = title || detail || "";
+        if (state) check.classList.add("visible");
+    }
+}
+
+function updatePhaseLayerStatusFromMetadata(metadata, decoded) {
+    if (!metadata) return;
+
+    const diagnostics = metadata.phase_diagnostics || {};
+    const total = Number(metadata.total_pixels || 0);
+    const winter = Number(metadata.winter_or_uncertain_pixels || 0);
+    const precip = Number(diagnostics.precip_pixels || 0);
+    const phaseCells = Number(diagnostics.phase_cells || 0);
+    const validFraction = Number(
+        diagnostics.diagnostic_grid?.valid_fraction ?? 0
+    );
+    const rapOffset = Number(diagnostics.rap_mrms_time_offset_minutes);
+
+    const winterPct = total > 0 ? (100 * winter / total) : 0;
+    const phaseCoveragePct = precip > 0 ? (100 * phaseCells / precip) : 0;
+    const phaseStatus = String(metadata.phase_status || "");
+    const fallback = phaseStatus.startsWith("fallback_");
+
+    let detail;
+    const titleParts = [];
+
+    if (fallback) {
+        detail = winterPct > 0
+            ? "Fallback • " + winterPct.toFixed(1) + "% winter"
+            : "Fallback • no winter signal";
+        titleParts.push("Phase engine used the conservative MRMS fallback.");
+    } else if (winterPct <= 0.001 || (decoded && decoded.alphaFraction === 0)) {
+        detail = "Loaded • no winter signal";
+        titleParts.push(
+            "Raster loaded successfully, but no snow, sleet, freezing-rain, mixed, or uncertain pixels were detected."
+        );
+    } else {
+        detail = "Loaded • " + winterPct.toFixed(1) + "% winter";
+        titleParts.push(
+            "Winter/uncertain coverage: " + winterPct.toFixed(2) + "% of the national grid."
+        );
+    }
+
+    if (precip > 0) {
+        titleParts.push(
+            "Phase classification coverage: " +
+            phaseCoveragePct.toFixed(1) +
+            "% of MRMS precipitating pixels."
+        );
+    }
+
+    if (validFraction > 0) {
+        titleParts.push(
+            "RAP diagnostic coverage: " +
+            (100 * validFraction).toFixed(1) +
+            "%."
+        );
+    }
+
+    if (Number.isFinite(rapOffset)) {
+        titleParts.push(
+            "RAP/MRMS time offset: " +
+            Math.abs(rapOffset).toFixed(0) +
+            " min."
+        );
+    }
+
+    setPhaseLayerIndicator(
+        (winterPct <= 0.001 && !fallback) ? "empty" : "loaded",
+        detail,
+        titleParts.join(" ")
+    );
+}
+
 function loadCurrentPhaseOverlay(force = false) {
     if (historyMode || !currentBounds) return;
 
@@ -2241,18 +2381,22 @@ function loadCurrentPhaseOverlay(force = false) {
         removeMapOverlay(phaseOverlay);
         phaseOverlay = null;
         phaseDisplayMode = null;
-
-        const status = document.getElementById("phaseLayerStatus");
-        if (status) {
-            status.textContent = "";
-            status.className = "layer-raster-status";
-        }
+        setPhaseLayerIndicator("", "", "");
         return;
     }
+
+    // Keep the checkbox explicitly synchronized with the active layer. This
+    // avoids ambiguous UI state when the raster is loaded asynchronously.
+    checkbox.checked = true;
 
     removeMapOverlay(phaseOverlay);
     phaseOverlay = null;
     phaseDisplayMode = "national";
+    setPhaseLayerIndicator(
+        "loading",
+        "Loading…",
+        "Loading national winter phase raster."
+    );
 
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
 
@@ -2265,14 +2409,20 @@ function loadCurrentPhaseOverlay(force = false) {
         overlayOpacity,
         550,
         "winter-raster-sharp",
-        function(layer) {
+        function(layer, url, bytes, decoded) {
             phaseOverlay = layer;
             phaseDisplayMode = "national";
+            updatePhaseLayerStatusFromMetadata(currentMRMSMetadata, decoded);
         },
         function() {
             console.warn("Winter Phase Mask could not be loaded from PNG or WebP.");
             phaseOverlay = null;
             phaseDisplayMode = null;
+            setPhaseLayerIndicator(
+                "failed",
+                "Load failed",
+                "The national winter phase raster could not be fetched or rendered."
+            );
             updateDynamicMapLegend();
         },
         "phaseLayerStatus"
@@ -3928,10 +4078,20 @@ function renderHistoryFrame(index, fitView) {
             onLoaded: function(layer) {
                 pendingHistoryPhase = null;
                 phaseOverlay = layer;
+                setPhaseLayerIndicator(
+                    "loaded",
+                    "Loaded",
+                    "Matching historical phase product loaded for this radar frame."
+                );
             },
 
             onFailed: function() {
                 pendingHistoryPhase = null;
+                setPhaseLayerIndicator(
+                    "failed",
+                    "Load failed",
+                    "A matching historical phase product exists but could not be rendered."
+                );
                 console.warn(
                     "Historical winter phase mask failed to load:",
                     historyAssetUrl(frame, "phase")
@@ -3942,6 +4102,14 @@ function renderHistoryFrame(index, fitView) {
         removeMapOverlay(phaseOverlay);
         phaseOverlay = null;
         phaseDisplayMode = null;
+
+        if (document.getElementById("phaseToggle")?.checked) {
+            setPhaseLayerIndicator(
+                "empty",
+                "Archive pending",
+                "This history frame has radar data, but its matching phase product has not been archived yet."
+            );
+        }
     }
 
     updateHistoryControls();
@@ -4153,6 +4321,8 @@ async function refreshData() {
         const metadata =
             await response.json();
 
+        currentMRMSMetadata = metadata;
+
         const mrmsTime =
             metadata.mrms_time_utc
                 ? new Date(metadata.mrms_time_utc)
@@ -4190,6 +4360,11 @@ async function refreshData() {
         }
 
         updateDynamicMapLegend();
+
+        if (document.getElementById("phaseToggle")?.checked && phaseOverlay) {
+            updatePhaseLayerStatusFromMetadata(currentMRMSMetadata);
+        }
+
         refreshDiagnosticImages();
         refreshPhaseQC();
         refreshAgreementStatus();
