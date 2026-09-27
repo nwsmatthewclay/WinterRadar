@@ -1106,19 +1106,17 @@ def run_archive() -> None:
             if obs.valid_time not in selected_keys
         ]
 
-        # Continue filling the oldest missing 30-minute span with whatever
-        # capacity remains after servicing the newest edge.
+        # Use all remaining capacity to repair the next-newest missing
+        # observations. This makes the archive self-healing from the present
+        # backward: the newest gap is repaired first, then progressively
+        # older gaps. A stale hole near the current edge therefore gets fixed
+        # before we spend a run repairing a much older hole.
         capacity = max(0, total_budget - len(edge_selected))
         if remaining and capacity:
-            chunk_start = remaining[0].valid_time
-            chunk_end = chunk_start + timedelta(minutes=ARCHIVE_WINDOW_MINUTES)
-            backfill_selected = [
-                obs for obs in remaining
-                if obs.valid_time <= chunk_end
-            ][:capacity]
+            remaining.sort(key=lambda item: item.valid_time, reverse=True)
+            backfill_selected = remaining[:capacity]
         else:
-            chunk_start = None
-            chunk_end = None
+            backfill_selected = []
 
         selected = sorted(
             edge_selected + backfill_selected,
