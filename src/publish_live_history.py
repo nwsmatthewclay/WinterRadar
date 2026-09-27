@@ -14,7 +14,7 @@ by the archive. This gives the Pages history viewer a near-live radar buffer
 while the archive workflow catches up with the matching phase composites.
 
 The archive no longer depends on the live watermark for eligibility, so these
-five frames are a freshness buffer rather than a correctness dependency.
+frames are a freshness buffer rather than a correctness dependency.
 """
 
 import json
@@ -113,7 +113,7 @@ def main() -> None:
         for rels in release_index.values()
         for rel in rels
     ]
-    radar_assets, _, _ = gather_release_assets_many(all_history_releases)
+    radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(all_history_releases)
 
     # Discover the timestamped MRMS directory directly. Do not wait for the
     # archive workflow or the live watermark to identify recent scans.
@@ -186,33 +186,43 @@ def main() -> None:
     )
 
     for obs in prior_observations:
-        if obs.asset_name in radar_assets:
-            print(f"  Already stored: {obs.asset_name}")
+        radar_missing = obs.asset_name not in radar_assets
+        phase_name = f"phase_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp"
+        precip_name = f"preciptype_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp"
+        composites_missing = phase_name not in phase_assets or precip_name not in precip_type_assets
+
+        if not radar_missing and not composites_missing:
+            print(f"  Already complete: {obs.asset_name}")
             continue
 
-        print(f"  Buffering historical radar scan: {obs.valid_time.isoformat()}")
-        data, _ = download_and_render_observation(
+        print(f"  Buffering historical radar/composite scan: {obs.valid_time.isoformat()}")
+        data, grib_path = download_and_render_observation(
             store.session,
             obs,
             expected_shape,
             (y0, y1, x0, x1),
             crop_bounds,
             row_map_cache,
-            keep_grib=True,
+            keep_grib=composites_missing,
         )
 
-        release = ensure_upload_release(
-            store,
-            obs.valid_time.date(),
-            release_index,
-        )
-        asset = store.upload_asset(release, obs.asset_name, data)
-        release.assets[asset["name"]] = asset
-        radar_assets[asset["name"]] = asset
-        print(
-            f"  Stored {asset['name']} ({len(data):,} bytes) "
-            f"in {release.tag}"
-        )
+        if radar_missing:
+            release = ensure_upload_release(
+                store,
+                obs.valid_time.date(),
+                release_index,
+            )
+            asset = store.upload_asset(release, obs.asset_name, data)
+            release.assets[asset["name"]] = asset
+            radar_assets[asset["name"]] = asset
+            print(
+                f"  Stored {asset['name']} ({len(data):,} bytes) "
+                f"in {release.tag}"
+            )
+
+        if grib_path is not None:
+            phase_grib_paths.append(grib_path)
+            phase_observations.append(obs)
 
     # Build matching phase and precipitation-type composites for the buffered
     # historical scans. This is the live-edge fix: the first ~20 minutes of
