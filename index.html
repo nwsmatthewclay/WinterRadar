@@ -4418,23 +4418,19 @@ function loadHistoricalOverlay(options) {
                         resolve(null);
                         return;
                     }
-                    // Keep the previous frame visible while the new
-                    // frame fades in. This makes the timeline feel continuous
-                    // without synthesizing meteorological information between
-                    // observations.
-                    overlay.setOpacity(0);
-                    requestAnimationFrame(function() {
-                        overlay.setOpacity(opacity);
-                    });
+                    // History is a discrete sequence of observed scans.
+                    // Replace the active frame immediately after the new image
+                    // is decoded; never cross-fade or briefly stack two scans.
+                    overlay.setOpacity(opacity);
 
-                    window.setTimeout(function() {
-                        if (requestId === historyRenderRequest && historyMode) {
-                            removeActive();
-                        }
-                    }, 380);
+                    if (requestId !== historyRenderRequest || !historyMode) {
+                        removeMapOverlay(overlay);
+                        resolve(null);
+                        return;
+                    }
 
-                    // Pane z-order is authoritative; do not reorder panes
-                    // when history images finish asynchronously.
+                    // Remove the previous active frame only after the replacement
+                    // is ready, so a slow network request cannot leave the map blank.
                     onLoaded(overlay);
                     resolve(overlay);
                 });
@@ -4611,7 +4607,9 @@ function renderHistoryFrame(index, fitView) {
 
             onLoaded: function(layer) {
                 pendingHistoryRadar = null;
+                const previous = radarOverlay;
                 radarOverlay = layer;
+                if (previous && previous !== layer) removeMapOverlay(previous);
             },
 
             onFailed: function() {
@@ -4651,8 +4649,10 @@ function renderHistoryFrame(index, fitView) {
 
             onLoaded: function(layer) {
                 pendingHistoryPrecipType = null;
+                const previous = precipTypeOverlay;
                 precipTypeOverlay = layer;
                 precipTypeDisplayMode = "history";
+                if (previous && previous !== layer) removeMapOverlay(previous);
             },
 
             onFailed: function() {
@@ -4692,7 +4692,9 @@ function renderHistoryFrame(index, fitView) {
 
             onLoaded: function(layer) {
                 pendingHistoryPhase = null;
+                const previous = phaseOverlay;
                 phaseOverlay = layer;
+                if (previous && previous !== layer) removeMapOverlay(previous);
                 setPhaseLayerIndicator(
                     "loaded",
                     "Loaded",
