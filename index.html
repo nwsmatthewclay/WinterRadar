@@ -700,9 +700,17 @@ html, body {
 #mapHistorySlider {
     display: block;
     width: 100%;
+    min-width: 120px;
+    height: 22px;
     margin: 0;
     cursor: pointer;
+    accent-color: #42b8e8;
 }
+#mapHistorySlider:disabled { opacity: 1; cursor: default; }
+#mapHistorySlider::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: #49616f; }
+#mapHistorySlider::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -5px; border: 2px solid #0b1822; border-radius: 50%; background: #42b8e8; -webkit-appearance: none; }
+#mapHistorySlider::-moz-range-track { height: 6px; border-radius: 999px; background: #49616f; }
+#mapHistorySlider::-moz-range-thumb { width: 14px; height: 14px; border: 2px solid #0b1822; border-radius: 50%; background: #42b8e8; }
 
 .map-history-readout {
     min-width: 175px;
@@ -988,8 +996,16 @@ html, body {
 
 #historySlider {
     width: 100%;
+    min-width: 120px;
+    height: 22px;
     margin: 0;
+    accent-color: #42b8e8;
 }
+#historySlider:disabled { opacity: 1; }
+#historySlider::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: #49616f; }
+#historySlider::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -5px; border: 2px solid #0b1822; border-radius: 50%; background: #42b8e8; -webkit-appearance: none; }
+#historySlider::-moz-range-track { height: 6px; border-radius: 999px; background: #49616f; }
+#historySlider::-moz-range-thumb { width: 14px; height: 14px; border: 2px solid #0b1822; border-radius: 50%; background: #42b8e8; }
 
 .history-speed {
     height: 31px;
@@ -1075,42 +1091,48 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
 
 .diagnostic-grid {
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 0 9px 9px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 0 10px 10px;
 }
 
 .diag-card {
     overflow: hidden;
-    border: 1px solid #dde3e7;
-    border-radius: 6px;
-    background: #f7f9fa;
+    border: 1px solid #304958;
+    border-radius: 9px;
+    background: #0d1d28;
+    box-shadow: 0 5px 18px rgba(0,0,0,.18);
+    min-width: 0;
 }
 
 .diag-head {
-    padding: 7px 8px;
-    background: #fff;
-    border-bottom: 1px solid #dde3e7;
+    min-height: 72px;
+    padding: 10px 12px;
+    background: linear-gradient(180deg, #122634, #0d1d28);
+    border-bottom: 1px solid #304958;
 }
 
 .diag-title {
-    font-size: 11px;
-    font-weight: 800;
+    font-size: 12px;
+    font-weight: 900;
+    color: #e8f4f8;
 }
 
 .diag-desc {
-    margin-top: 2px;
-    color: var(--muted);
+    margin-top: 4px;
+    color: #8fa5b1;
     font-size: 9px;
+    line-height: 1.35;
 }
 
 .diag-card img {
     display: block;
     width: 100%;
     height: auto;
-    min-height: 120px;
+    min-height: 220px;
+    max-height: 520px;
     object-fit: contain;
-    background: #fff;
+    background: #07131c;
 }
 
 .diag-card img.diag-load-failed {
@@ -1387,17 +1409,17 @@ html, body {
     min-height: 560px;
     background: #061019;
 }
-.leaflet-container { background: #061019; }
+.leaflet-container { background: #dfe7ea; }
 .leaflet-control-zoom a {
     background: rgba(8,22,31,.9) !important;
     color: #d8e6ed !important;
     border-color: #304654 !important;
 }
 .leaflet-control-attribution {
-    background: rgba(4,12,18,.82) !important;
-    color: #708691 !important;
+    background: rgba(255,255,255,.88) !important;
+    color: #596b76 !important;
 }
-.leaflet-control-attribution a { color: #82b6d0 !important; }
+.leaflet-control-attribution a { color: #356f8e !important; }
 
 .map-legend, .layer-panel, .layer-toggle, .diagnostic-readout,
 .opacity-control, .map-history-control, .search-results {
@@ -1531,33 +1553,7 @@ html, body {
         <span>MRMS • RAP • Vertical Dual-Pol • Winter Phase</span>
     </div>
 
-    <section class="health-strip" aria-label="WinterRadar data health">
-        <div class="health-card" id="healthMRMS">
-            <div class="health-card-label">MRMS RADAR</div>
-            <div class="health-card-value" id="healthMRMSValue">Current</div>
-            <div class="health-card-detail" id="healthMRMSDetail">Waiting for scan</div>
-        </div>
-        <div class="health-card" id="healthRAP">
-            <div class="health-card-label">RAP PHASE</div>
-            <div class="health-card-value" id="healthRAPValue">Waiting</div>
-            <div class="health-card-detail" id="healthRAPDetail">Vertical profile</div>
-        </div>
-        <div class="health-card" id="healthDual">
-            <div class="health-card-label">DUAL-POL</div>
-            <div class="health-card-value" id="healthDualValue">Waiting</div>
-            <div class="health-card-detail" id="healthDualDetail">RhoHV / ZDR</div>
-        </div>
-        <div class="health-card" id="healthAgreement">
-            <div class="health-card-label">PHASE AGREEMENT</div>
-            <div class="health-card-value" id="healthAgreementValue">Waiting</div>
-            <div class="health-card-detail" id="healthAgreementDetail">Environment + radar</div>
-        </div>
-        <div class="health-card" id="healthComposite">
-            <div class="health-card-label">WINTER COMPOSITE</div>
-            <div class="health-card-value" id="healthCompositeValue">Loading</div>
-            <div class="health-card-detail" id="healthCompositeDetail">Type + dBZ + confidence</div>
-        </div>
-    </section>
+    
 
     <section class="map-card">
 
@@ -2210,22 +2206,15 @@ function initializeMap() {
 
     initializeScientificPanes();
 
+    // Detailed geographic basemap: cities, roads, water, parks, landmarks,
+    // administrative boundaries and topographic context remain visible beneath
+    // the scientific MRMS products.
     L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/" +
-        "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        "World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
         {
             maxZoom: 19,
             attribution: "Tiles © Esri"
-        }
-    ).addTo(map);
-
-    L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/" +
-        "Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
-        {
-            maxZoom: 19,
-            opacity: 0.78,
-            attribution: "Labels © Esri"
         }
     ).addTo(map);
 
