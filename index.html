@@ -184,6 +184,38 @@ html, body {
     image-rendering: pixelated !important;
 }
 
+.leaflet-image-layer.winter-smooth-radar {
+    transition: opacity 360ms ease-in-out !important;
+    will-change: opacity;
+}
+
+.map-wrap.radar-updated::after {
+    content: "NEW MRMS SCAN";
+    position: absolute;
+    top: 9px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1215;
+    padding: 4px 8px;
+    border: 1px solid rgba(43,122,75,.35);
+    border-radius: 999px;
+    background: rgba(237,247,238,.96);
+    color: #2b7a4b;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: .06em;
+    box-shadow: 0 2px 8px rgba(25,35,45,.12);
+    animation: radarPulse 1.8s ease-out forwards;
+    pointer-events: none;
+}
+
+@keyframes radarPulse {
+    0% { opacity: 0; transform: translateX(-50%) translateY(-4px) scale(.94); }
+    18% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    72% { opacity: 1; }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-2px) scale(1.02); }
+}
+
 .layer-raster-status {
     margin-left: auto;
     padding-left: 6px;
@@ -1279,6 +1311,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <span id="statusRAP" class="map-status-chip">RAP</span>
                     <span id="statusDualPol" class="map-status-chip">Dual-Pol</span>
                     <span id="statusAgreement" class="map-status-chip">Agreement</span>
+                    <span id="statusComposite" class="map-status-chip">Composite</span>
                 </div>
             </div>
         </div>
@@ -1308,7 +1341,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                 </div>
 
                 <div id="legendPrecipType" class="map-legend-section" hidden>
-                    <div class="map-legend-label">National Precipitation Type Composite</div>
+                    <div class="map-legend-label">Winter Radar Composite</div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-snow"></span><span>Snow</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-ice"></span><span>Ice (sleet / FZRA)</span></div>
                     <div class="phase-ramp-row"><span class="phase-ramp phase-ramp-mixed"></span><span>Mixed precipitation</span></div>
@@ -1357,7 +1390,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
             <div id="diagnosticReadout" class="diagnostic-readout" aria-live="polite">
                 <button class="diagnostic-readout-close" type="button" onclick="closeDiagnosticReadout()" aria-label="Close diagnostic readout">×</button>
                 <div class="diagnostic-readout-title">Point Diagnostic</div>
-                <div id="diagnosticReadoutBody">Click the map with diagnostic mode enabled.</div>
+                <div id="diagnosticReadoutBody">Move over the map with diagnostic mode enabled.</div>
             </div>
 
             <div class="layer-box">
@@ -1377,7 +1410,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                     <div class="layer-menu-note">Scientific raster products use the full-CONUS national MRMS mosaic.</div>
 
                     <button id="diagnosticModeToggle" class="diagnostic-toggle" type="button" onclick="toggleDiagnosticMode()">Enable diagnostic mode</button>
-                    <div class="layer-menu-note" id="diagnosticModeNote" style="display:none;">Diagnostic mode enables map click readouts and additional phase/radar coverage information.</div>
+                    <div class="layer-menu-note" id="diagnosticModeNote" style="display:none;">Diagnostic mode enables live map hover/click readouts for phase, radar coverage, and fusion diagnostics.</div>
 
                     <label class="layer-row">
                         <input
@@ -1395,7 +1428,7 @@ details.diagnostics summary::-webkit-details-marker { display: none; }
                             type="checkbox"
                             onchange="togglePrecipType(this.checked)"
                         >
-                        <span>Precipitation Type Composite</span>
+                        <span>Winter Radar Composite</span>
                     </label>
 
                     <label class="layer-row phase-layer-row">
@@ -1875,8 +1908,12 @@ function initializeMap() {
     // Keep the legend synchronized immediately so the other legend sections
     // never flash on screen while the live data are loading.
     const startupLayerDefaults = [
-        ["radarToggle", true],
-        ["precipTypeToggle", false],
+        // The winter radar composite is the default map presentation.
+        // It combines MRMS reflectivity with the winter precipitation-type
+        // rendering, so the raw radar and phase mask remain optional analysis
+        // layers rather than competing with the default view.
+        ["radarToggle", false],
+        ["precipTypeToggle", true],
         ["phaseToggle", false],
         ["radarFusionToggle", false],
         ["phaseAgreementToggle", false]
@@ -1915,6 +1952,23 @@ function initializeMap() {
         refreshRadarResolutionOnView();
         refreshPhaseResolutionOnView();
         refreshPrecipTypeResolutionOnView();
+    });
+
+    let diagnosticHoverTimer = null;
+    let diagnosticHoverLatLng = null;
+
+    map.on("mousemove", function(event) {
+        if (!diagnosticMode) return;
+
+        diagnosticHoverLatLng = event.latlng;
+        if (diagnosticHoverTimer !== null) return;
+
+        diagnosticHoverTimer = window.setTimeout(function() {
+            diagnosticHoverTimer = null;
+            if (diagnosticMode && diagnosticHoverLatLng) {
+                showPointDiagnostic(diagnosticHoverLatLng);
+            }
+        }, 180);
     });
 
     map.on("click", function(event) {
@@ -2268,8 +2322,17 @@ function loadCurrentPrecipTypeOverlay(force = false) {
     loadRasterWithFallback(
         ["./outputs/winter_precip_type_web.png?v=" + stamp, "./outputs/winter_precip_type_web.webp?v=" + stamp],
         spec.bounds, overlayOpacity, 540, "winter-raster-sharp",
-        function(layer) { precipTypeOverlay = layer; },
-        function() { console.warn("Precipitation-type raster could not be loaded from PNG or WebP."); precipTypeOverlay = null; precipTypeDisplayMode = null; updateDynamicMapLegend(); }
+        function(layer) {
+            precipTypeOverlay = layer;
+            setStatusChip("statusComposite", true, "Composite ready");
+        },
+        function() {
+            console.warn("Precipitation-type raster could not be loaded from PNG or WebP.");
+            precipTypeOverlay = null;
+            precipTypeDisplayMode = null;
+            setStatusChip("statusComposite", false, "Composite limited");
+            updateDynamicMapLegend();
+        }
     );
 }
 
@@ -2445,14 +2508,44 @@ function loadCurrentRadarOverlay(force = false) {
     }
     const spec = radarDisplaySpec();
     if (!force && radarOverlay && radarDisplayMode === spec.mode) return;
-    removeMapOverlay(radarOverlay);
-    radarOverlay = null;
+    const previousOverlay = radarOverlay;
     radarDisplayMode = spec.mode;
+
     loadRasterWithFallback(
         [spec.url, "./outputs/mrms_current_web.webp?v=" + Date.now()],
-        spec.bounds, overlayOpacity, 500, "winter-radar-raster",
-        function(layer) { radarOverlay = layer; },
-        function() { console.warn("MRMS raster could not be loaded from PNG or WebP."); radarOverlay = null; radarDisplayMode = null; updateDynamicMapLegend(); }
+        spec.bounds, 0, 500, "winter-radar-raster winter-smooth-radar",
+        function(layer) {
+            radarOverlay = layer;
+            // Cross-fade the newly decoded scan over the previous scan instead
+            // of briefly exposing an empty map between MRMS updates.
+            layer.setOpacity(0);
+            requestAnimationFrame(function() {
+                layer.setOpacity(overlayOpacity);
+            });
+
+            const wrap = document.querySelector(".map-wrap");
+            if (wrap) {
+                wrap.classList.remove("radar-updated");
+                void wrap.offsetWidth;
+                wrap.classList.add("radar-updated");
+                window.setTimeout(function() {
+                    wrap.classList.remove("radar-updated");
+                }, 1900);
+            }
+
+            if (previousOverlay && map && map.hasLayer(previousOverlay)) {
+                window.setTimeout(function() {
+                    removeMapOverlay(previousOverlay);
+                }, 380);
+            }
+        },
+        function() {
+            console.warn("MRMS raster could not be loaded from PNG or WebP.");
+            // Keep the last good scan visible if the replacement failed.
+            radarOverlay = previousOverlay && map && map.hasLayer(previousOverlay) ? previousOverlay : null;
+            radarDisplayMode = radarOverlay ? spec.mode : null;
+            updateDynamicMapLegend();
+        }
     );
 }
 
@@ -3816,8 +3909,21 @@ function loadHistoricalOverlay(options) {
                         resolve(null);
                         return;
                     }
-                    removeActive();
-                    overlay.setOpacity(opacity);
+                    // Keep the previous frame visible while the new
+                    // frame fades in. This makes the timeline feel continuous
+                    // without synthesizing meteorological information between
+                    // observations.
+                    overlay.setOpacity(0);
+                    requestAnimationFrame(function() {
+                        overlay.setOpacity(opacity);
+                    });
+
+                    window.setTimeout(function() {
+                        if (requestId === historyRenderRequest && historyMode) {
+                            removeActive();
+                        }
+                    }, 380);
+
                     // Pane z-order is authoritative; do not reorder panes
                     // when history images finish asynchronously.
                     onLoaded(overlay);
@@ -4253,7 +4359,7 @@ function startHistoryPlayback() {
     updateHistoryControls();
     updateHistoryReadout();
 
-    const interval = Math.max(35, Math.round(150 / historySpeed));
+    const interval = Math.max(280, Math.round(520 / historySpeed));
 
     historyTimer = window.setInterval(function() {
         if (!historyFrames.length) {
@@ -5078,6 +5184,16 @@ document.addEventListener("pointerup", function() {
 
 // Explicit startup state requested for the overlay opacity control.
 setOverlayOpacity(0);
+
+// The composite is intentionally the default visual product on first load.
+// The checkbox state is established in initializeMap(); this call makes the
+// startup behavior explicit after all controls and panes exist.
+window.setTimeout(function() {
+    const composite = document.getElementById("precipTypeToggle");
+    if (composite && composite.checked && !historyMode) {
+        loadCurrentPrecipTypeOverlay(true);
+    }
+}, 0);
 </script>
 
 </body>
