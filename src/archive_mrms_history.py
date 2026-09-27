@@ -1204,32 +1204,38 @@ def run_archive() -> None:
             helper = ROOT / "src" / "build_history_precip_type.py"
             if not helper.exists():
                 helper = ROOT / "build_history_precip_type.py"
-            cmd = ["python", str(helper), "--output-dir", str(helper_output)] + [str(path) for path in phase_grib_paths]
             print(f"  Building per-scan phase composites for {len(phase_grib_paths)} radar scans...")
-            subprocess.run(cmd, check=True)
-
-            for obs in phase_observations:
-                names = [
-                    f"phase_conus_{obs.timestamp_key}.webp",
-                    f"preciptype_conus_{obs.timestamp_key}.webp",
-                ]
-                for name in names:
-                    source = helper_output / name
-                    if not source.exists():
-                        print(f"  WARNING: per-scan phase asset missing: {name}")
-                        continue
-                    if name.startswith("phase_conus_"):
-                        target_assets = phase_assets
-                    else:
-                        target_assets = precip_type_assets
-                    if name in target_assets:
-                        continue
-                    data = source.read_bytes()
-                    release = ensure_upload_release(store, obs.valid_time.date(), release_index)
-                    asset = store.upload_asset(release, name, data)
-                    release.assets[asset["name"]] = asset
-                    target_assets[asset["name"]] = asset
-                    print(f"  Uploaded per-scan phase asset {name} ({len(data):,} bytes)")
+            for obs, grib_path in zip(phase_observations, phase_grib_paths):
+                try:
+                    # Process each scan independently. One bad/corrupt MRMS
+                    # frame must never prevent the remaining timestamps from
+                    # receiving their matching composites.
+                    scan_output = Path(tempfile.mkdtemp(prefix="winterradar_phase_scan_"))
+                    try:
+                        cmd = ["python", str(helper), "--output-dir", str(scan_output), str(grib_path)]
+                        subprocess.run(cmd, check=True)
+                        names = [
+                            f"phase_conus_{obs.timestamp_key}.webp",
+                            f"preciptype_conus_{obs.timestamp_key}.webp",
+                        ]
+                        release = ensure_upload_release(store, obs.valid_time.date(), release_index)
+                        for name in names:
+                            source = scan_output / name
+                            if not source.exists():
+                                print(f"  WARNING: per-scan phase asset missing: {name}")
+                                continue
+                            target_assets = phase_assets if name.startswith("phase_conus_") else precip_type_assets
+                            if name in target_assets:
+                                continue
+                            data = source.read_bytes()
+                            asset = store.upload_asset(release, name, data)
+                            release.assets[asset["name"]] = asset
+                            target_assets[asset["name"]] = asset
+                            print(f"  Uploaded per-scan phase asset {name} ({len(data):,} bytes)")
+                    finally:
+                        shutil.rmtree(scan_output, ignore_errors=True)
+                except Exception as exc:
+                    print(f"  WARNING: composite generation failed for {obs.timestamp_key}: {type(exc).__name__}: {exc}")
         except Exception as exc:
             print(f"  WARNING: per-scan phase generation failed: {type(exc).__name__}: {exc}")
         finally:
