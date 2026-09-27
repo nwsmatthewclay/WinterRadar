@@ -16,6 +16,8 @@ import json
 from pathlib import Path
 
 import numpy as np
+import requests
+from matplotlib.path import Path as MplPath
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +31,86 @@ COLORS = {
     "mixed": (220, 95, 195),
     "unknown": (145, 150, 155),
 }
+
+
+BTV_CWA_BOUNDS = [42.55, -75.30, 45.20, -70.75]
+
+
+def _load_btv_cwa_geometry() -> list[np.ndarray]:
+    """Fetch the current NWS BTV CWA polygon used to mask probability graphics."""
+    url = (
+        "https://mapservices.weather.noaa.gov/static/rest/services/"
+        "nws_reference_maps/nws_reference_map/FeatureServer/1/query"
+    )
+    params = {
+        "where": "cwa='BTV'",
+        "outFields": "cwa",
+        "returnGeometry": "true",
+        "outSR": "4326",
+        "f": "geojson",
+    }
+
+    response = requests.get(url, params=params, timeout=20)
+    response.raise_for_status()
+    payload = response.json()
+
+    rings: list[np.ndarray] = []
+    for feature in payload.get("features", []):
+        geometry = feature.get("geometry") or {}
+        coordinates = geometry.get("coordinates", [])
+        if geometry.get("type") == "Polygon":
+            polygons = [coordinates]
+        elif geometry.get("type") == "MultiPolygon":
+            polygons = coordinates
+        else:
+            polygons = []
+
+        for polygon in polygons:
+            for ring in polygon[:1]:
+                if len(ring) >= 3:
+                    rings.append(np.asarray(ring, dtype=np.float64))
+
+    if not rings:
+        raise RuntimeError("NWS BTV CWA geometry returned no polygon rings.")
+
+    return rings
+
+
+def _btv_mask(data_shape: tuple[int, int], meta: dict) -> np.ndarray:
+    """Return a boolean mask for the BTV CWA on the diagnostic probability grid."""
+    south, west, north, east = (
+        float(meta.get("bounds", BTV_CWA_BOUNDS)[0]),
+        float(meta.get("bounds", BTV_CWA_BOUNDS)[1]),
+        float(meta.get("bounds", BTV_CWA_BOUNDS)[2]),
+        float(meta.get("bounds", BTV_CWA_BOUNDS)[3]),
+    )
+
+    # The diagnostic arrays are a 10x reduction of the native MRMS lat/lon grid.
+    # Their geographic extent is therefore represented by the same outer bounds.
+    h, w = data_shape
+    lats = np.linspace(north, south, h)
+    lons = np.linspace(west, east, w)
+    xx, yy = np.meshgrid(lons, lats)
+
+    try:
+        rings = _load_btv_cwa_geometry()
+        points = np.column_stack((xx.ravel(), yy.ravel()))
+        mask = np.zeros(points.shape[0], dtype=bool)
+        for ring in rings:
+            mask |= MplPath(ring).contains_points(points)
+        return mask.reshape(data_shape)
+    except Exception as exc:
+        # Diagnostics should remain available if the public GIS service has a
+        # transient outage. Fall back to the established BTV regional bounds,
+        # but make the fallback explicit in the QC metadata.
+        print(f"WARNING: unable to load current NWS BTV CWA polygon: {exc}")
+        regional = (
+            (yy >= BTV_CWA_BOUNDS[0]) &
+            (yy <= BTV_CWA_BOUNDS[2]) &
+            (xx >= BTV_CWA_BOUNDS[1]) &
+            (xx <= BTV_CWA_BOUNDS[3])
+        )
+        return regional
 
 
 def font(size: int):
@@ -126,6 +208,13 @@ def main() -> None:
     if missing:
         raise RuntimeError(f"Missing diagnostic arrays: {missing}")
 
+    # Restrict all probability/energy graphics to the current BTV CWA.
+    # The native radar remains full-CONUS; only the diagnostic graphics are
+    # geographically masked here.
+    btv_mask = _btv_mask(data["rain"].shape, meta)
+    for key in data:
+        data[key] = np.where(btv_mask, data[key], np.nan)
+
     save_probability_layer(data, OUT / "phase_probability.png")
 
     panels = [
@@ -171,6 +260,8 @@ def main() -> None:
         "mean_refreezing_energy_jkg": float(np.nanmean(data["refreezing_energy"])) if np.isfinite(data["refreezing_energy"]).any() else None,
         "mean_prob_ice_percent": float(np.nanmean(data["prob_ice"])) if np.isfinite(data["prob_ice"]).any() else None,
         "qc_definition": "High confidence = dominant probability >= 70% and >= 15 percentage points above runner-up.",
+        "domain": "WFO BTV County Warning Area",
+        "domain_cwa": "BTV",
     }
 
     names = ["rain", "snow", "sleet", "freezing_rain"]
