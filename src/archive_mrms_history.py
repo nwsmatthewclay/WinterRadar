@@ -93,25 +93,27 @@ HISTORY_FALLBACK_BOUNDS = [
     [54.995, -60.005002],
 ]
 
-# Retain all observed ~2-minute MRMS frames for the most recent 3 hours,
-# but process only one 15-minute historical chunk per invocation.
+# Retain all observed ~2-minute MRMS frames for the most recent 3 hours.
+# Each archive invocation stays bounded, but it deliberately services BOTH
+# ends of the missing queue: the newest edge remains close to the live scan
+# while older gaps continue to backfill.
 # Every archived radar observation gets its own precipitation-type composite.
 # RAP environmental profiles are reused by valid hour; they do not force radar
 # observations to wait for a new model cycle.
 HISTORY_HOURS = 3
-ARCHIVE_WINDOW_MINUTES = 15
+ARCHIVE_WINDOW_MINUTES = 30
+CURRENT_EDGE_WINDOW_MINUTES = 20
 PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
-
-# A 15-minute MRMS window normally contains about 6–8 observations.
-# Keep a generous ceiling so an unusually dense interval cannot silently
-# truncate the archive chunk.
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "10")
+    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "16")
+)
+MAX_NEW_EDGE_FRAMES_PER_RUN = int(
+    os.environ.get("MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN", "8")
 )
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
-USER_AGENT = "WinterRadar/1.4 (MRMS 3-hour retention / 15-minute archive collector)"
+USER_AGENT = "WinterRadar/1.3 (MRMS 3-hour retention / 30-minute archive collector)"
 GITHUB_API_VERSION = "2026-03-10"
 HISTORY_DEBUG = os.environ.get("MRMS_HISTORY_DEBUG", "0") == "1"
 
@@ -1052,8 +1054,10 @@ def run_archive() -> None:
 
     # --------------------------------------------------------------
     # Historical processing window. Retention is three hours, but each run
-    # processes at most one 30-minute chunk. Missing data is oldest-first so
-    # the archive steadily fills the back of the retained history.
+    # intentionally services both ends of the queue. The newest edge is
+    # processed first so the history viewer never has to wait for an old
+    # backlog to clear. A bounded oldest-first chunk then continues filling
+    # the older gaps.
     # --------------------------------------------------------------
     existing_times = existing_radar_timestamps(radar_assets)
     work_candidates = []
@@ -1067,15 +1071,56 @@ def run_archive() -> None:
     work_candidates.sort(key=lambda item: item.valid_time)
 
     selected: list[Observation] = []
+    edge_selected: list[Observation] = []
+    backfill_selected: list[Observation] = []
+
     if work_candidates:
-        chunk_start = work_candidates[0].valid_time
-        chunk_end = chunk_start + timedelta(minutes=ARCHIVE_WINDOW_MINUTES)
-        selected = [obs for obs in work_candidates if obs.valid_time <= chunk_end]
-        selected = selected[:max(1, MAX_NEW_RADAR_FRAMES_PER_RUN)]
+        # Keep the right edge of history current. Use the live watermark when
+        # available; otherwise the newest eligible observation is our anchor.
+        edge_anchor = eligible_upper
+        edge_cutoff = edge_anchor - timedelta(minutes=CURRENT_EDGE_WINDOW_MINUTES)
+        edge_candidates = [
+            obs for obs in work_candidates
+            if edge_cutoff <= obs.valid_time <= edge_anchor
+        ]
+        edge_candidates.sort(key=lambda item: item.valid_time, reverse=True)
+        edge_selected = edge_candidates[:max(1, MAX_NEW_EDGE_FRAMES_PER_RUN)]
+
+        selected_keys = {obs.valid_time for obs in edge_selected}
+        remaining = [obs for obs in work_candidates if obs.valid_time not in selected_keys]
+
+        # Continue filling the oldest missing 30-minute span with whatever
+        # capacity remains after servicing the newest edge.
+        if remaining and len(selected) < max(1, MAX_NEW_RADAR_FRAMES_PER_RUN):
+            chunk_start = remaining[0].valid_time
+            chunk_end = chunk_start + timedelta(minutes=ARCHIVE_WINDOW_MINUTES)
+            capacity = max(1, MAX_NEW_RADAR_FRAMES_PER_RUN) - len(edge_selected)
+            backfill_selected = [
+                obs for obs in remaining
+                if obs.valid_time <= chunk_end
+            ][:capacity]
+        else:
+            chunk_start = None
+            chunk_end = None
+
+        selected = sorted(
+            edge_selected + backfill_selected,
+            key=lambda item: item.valid_time,
+        )
+
+        oldest_text = (
+            f"oldest chunk {chunk_start.isoformat()} to {chunk_end.isoformat()}"
+            if chunk_start is not None
+            else "no older chunk needed"
+        )
+        newest_text = (
+            f"newest-edge {len(edge_selected)} frame(s) through {edge_anchor.isoformat()}"
+            if edge_selected
+            else "newest edge already complete"
+        )
         print(
             f"  Missing historical work items: {len(work_candidates)}; "
-            f"processing oldest 30-minute chunk {chunk_start.isoformat()} to {chunk_end.isoformat()} "
-            f"({len(selected)} observations this run)"
+            f"processing {len(selected)} this run ({newest_text}; {oldest_text})"
         )
     else:
         print("  No missing historical radar/phase work detected in the 3-hour retention window.")
@@ -1085,7 +1130,10 @@ def run_archive() -> None:
     phase_observations: list[Observation] = []
 
     phase_work_observations = selected
-    print(f"  Per-scan phase/composite work items this run: {len(phase_work_observations)}")
+    print(
+        f"  Per-scan phase/composite work items this run: {len(phase_work_observations)} "
+        f"(newest-edge {len(edge_selected)} + older-backfill {len(backfill_selected)})"
+    )
 
     for obs in phase_work_observations:
         try:
@@ -1222,6 +1270,9 @@ def run_archive() -> None:
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
         "archive_window_minutes": ARCHIVE_WINDOW_MINUTES,
+        "current_edge_window_minutes": CURRENT_EDGE_WINDOW_MINUTES,
+        "newest_edge_frames_processed": len(edge_selected),
+        "older_backfill_frames_processed": len(backfill_selected),
         "live_watermark_utc": live_watermark.isoformat() if live_watermark else None,
         "mrms_observations_in_window": len(retention_observations),
         "eligible_observations": len(recent_observations),
