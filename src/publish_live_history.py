@@ -44,7 +44,7 @@ UA = "WinterRadar/1.5 (buffered live radar/composite publisher)"
 
 LIVE_RADAR_FRAMES = max(
     1,
-    int(os.environ.get("MRMS_LIVE_HISTORY_FRAMES", "12")),
+    int(os.environ.get("MRMS_LIVE_HISTORY_FRAMES", "18")),
 )
 
 
@@ -155,15 +155,20 @@ def main() -> None:
     else:
         print(f"  Already stored current live radar: {current_radar_asset}")
 
-    # Add the four most recent completed scans strictly before the current
-    # live scan. The strict comparison prevents the current scan from being
-    # counted twice if NOAA's timestamped directory already contains it.
+    # Add completed scans from a real time window strictly before the current
+    # live scan. MRMS can publish irregular/extra observations, so a fixed
+    # scan count can leave the first several minutes of history uncovered.
     prior_count = max(0, LIVE_RADAR_FRAMES - 1)
-    prior_observations = (
-        observations[-prior_count:]
-        if prior_count
-        else []
+    buffer_window_minutes = max(
+        20,
+        int(os.environ.get("MRMS_LIVE_HISTORY_WINDOW_MINUTES", "30")),
     )
+    buffer_cutoff = current_dt - timedelta(minutes=buffer_window_minutes)
+    prior_candidates = [
+        obs for obs in observations
+        if buffer_cutoff <= obs.valid_time < current_dt
+    ]
+    prior_observations = prior_candidates[-prior_count:] if prior_count else []
 
     lats, lons = load_source_coordinates()
     bounds = read_history_bounds(OUTPUT / "mrms_current.json")
