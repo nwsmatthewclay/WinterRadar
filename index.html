@@ -2779,56 +2779,58 @@ function refreshPhaseResolutionOnView() {
 
 function loadCurrentRadarOverlay(force = false) {
     if (historyMode || !currentBounds) return;
+
     if (!document.getElementById("radarToggle")?.checked) {
         removeMapOverlay(radarOverlay);
         radarOverlay = null;
         radarDisplayMode = null;
         return;
     }
+
     const spec = radarDisplaySpec();
+
     if (!force && radarOverlay && radarDisplayMode === spec.mode) return;
-    const previousOverlay = radarOverlay;
+
+    // Remove the previous scan immediately. Each refresh should display exactly
+    // one radar image — never a cross-fade or stacked pair of MRMS scans.
+    if (radarOverlay) {
+        removeMapOverlay(radarOverlay);
+        radarOverlay = null;
+    }
+
     radarDisplayMode = spec.mode;
 
     loadRasterWithFallback(
-        [spec.url, "./outputs/mrms_current_web.webp?v=" + Date.now()],
-        spec.bounds, 0, 500, "winter-radar-raster winter-smooth-radar",
+        [
+            spec.url,
+            "./outputs/mrms_current_web.webp?v=" + Date.now()
+        ],
+        spec.bounds,
+        overlayOpacity,
+        500,
+        "winter-radar-raster",
         function(layer) {
             radarOverlay = layer;
-            // Cross-fade the newly decoded scan over the previous scan instead
-            // of briefly exposing an empty map between MRMS updates.
-            layer.setOpacity(0);
-            requestAnimationFrame(function() {
-                layer.setOpacity(overlayOpacity);
-            });
 
             const wrap = document.querySelector(".map-wrap");
             if (wrap) {
                 wrap.classList.remove("radar-updated");
                 void wrap.offsetWidth;
                 wrap.classList.add("radar-updated");
+
                 window.setTimeout(function() {
                     wrap.classList.remove("radar-updated");
                 }, 1900);
             }
-
-            if (previousOverlay && map && map.hasLayer(previousOverlay)) {
-                window.setTimeout(function() {
-                    removeMapOverlay(previousOverlay);
-                }, 380);
-            }
         },
         function() {
             console.warn("MRMS raster could not be loaded from PNG or WebP.");
-            // Keep the last good scan visible if the replacement failed.
-            radarOverlay = previousOverlay && map && map.hasLayer(previousOverlay) ? previousOverlay : null;
-            radarDisplayMode = radarOverlay ? spec.mode : null;
+            radarOverlay = null;
+            radarDisplayMode = null;
             updateDynamicMapLegend();
         }
     );
 }
-
-
 
 function refreshRadarResolutionOnView() {
     // The live MRMS reflectivity layer is always the full national mosaic.
