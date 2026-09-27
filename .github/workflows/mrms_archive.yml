@@ -3,8 +3,8 @@ name: MRMS Winter Radar — Archive
 on:
   workflow_dispatch:
   schedule:
-    # Archive runs every 15 minutes.
-    - cron: "2,17,32,47 * * * *"
+    # Archive runs every 10 minutes.
+    - cron: "2,12,22,32,42,52 * * * *"
 
 permissions:
   contents: write
@@ -52,7 +52,7 @@ jobs:
             src/archive_mrms_history.py \
             src/build_history_precip_type.py
 
-      - name: Run 15-minute MRMS archive/backfill
+      - name: Run 10-minute MRMS archive/backfill
         working-directory: src
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -69,7 +69,7 @@ jobs:
       - name: Show archive status
         if: always()
         run: |
-          echo "## MRMS 15-Minute Archive Run Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "## MRMS 10-Minute Archive Run Status" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
           if [ -s outputs/mrms_archive_status.json ]; then
