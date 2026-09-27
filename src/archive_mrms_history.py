@@ -2,8 +2,11 @@ from __future__ import annotations
 
 """Archive timestamped MRMS observations and phase masks for WinterRadar.
 
-The live WinterRadar pipeline intentionally continues to use the `latest`
-MRMS product. This module is a secondary history collector. Each time the
+The live WinterRadar pipeline intentionally continues to use the latest
+MRMS product. This module is the secondary history collector. It deliberately
+DOES NOT wait for the live workflow watermark; it discovers the newest
+completed timestamped MRMS scans directly from NOAA. This keeps the history
+edge current even when the live workflow is delayed or queued. Each time the
 GitHub Actions workflow runs it:
 
 1. Reads NOAA's timestamped MergedReflectivityQCComposite directory.
@@ -94,26 +97,25 @@ HISTORY_FALLBACK_BOUNDS = [
 ]
 
 # Retain all observed ~2-minute MRMS frames for the most recent 3 hours.
-# Each archive invocation stays bounded, but it deliberately services BOTH
-# ends of the missing queue: the newest edge remains close to the live scan
-# while older gaps continue to backfill.
+# Each archive invocation stays bounded, services the newest available NOAA
+# edge first, and uses the remaining capacity to backfill older gaps.
 # Every archived radar observation gets its own precipitation-type composite.
 # RAP environmental profiles are reused by valid hour; they do not force radar
 # observations to wait for a new model cycle.
 HISTORY_HOURS = 3
 ARCHIVE_WINDOW_MINUTES = 30
-CURRENT_EDGE_WINDOW_MINUTES = 20
+CURRENT_EDGE_WINDOW_MINUTES = 30
 PHASE_BUCKET_MINUTES = 5  # retained only for backwards-compatible old assets
 MAX_NEW_RADAR_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "16")
+    os.environ.get("MRMS_HISTORY_MAX_FRAMES_PER_RUN", "12")
 )
 MAX_NEW_EDGE_FRAMES_PER_RUN = int(
-    os.environ.get("MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN", "8")
+    os.environ.get("MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN", "12")
 )
 
 REQUEST_TIMEOUT = (20, 120)
 UPLOAD_TIMEOUT = (20, 180)
-USER_AGENT = "WinterRadar/1.3 (MRMS 3-hour retention / 30-minute archive collector)"
+USER_AGENT = "WinterRadar/1.4 (MRMS 3-hour retention / 10-minute archive collector)"
 GITHUB_API_VERSION = "2026-03-10"
 HISTORY_DEBUG = os.environ.get("MRMS_HISTORY_DEBUG", "0") == "1"
 
@@ -945,7 +947,7 @@ def build_manifest(
         "version": "1.0-history",
         "generated_at_utc": now.isoformat(),
         "history_hours": HISTORY_HOURS,
-        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 3 hours at full-CONUS coverage. Each run processes only one 30-minute historical chunk.",
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. The archive retains the most recent 3 hours at full-CONUS coverage. Each run services the newest available edge first and then backfills older missing scans within a bounded per-run budget.",
         "bounds": [bounds[0], bounds[1], bounds[2], bounds[3]],
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(frames),
@@ -1017,18 +1019,24 @@ def run_archive() -> None:
         (r for r in release_index.get(now.date(), []) if r.tag == f"mrms-{now:%Y%m%d}"),
         None,
     )
+
+    # The live watermark is informational only. The archive must never wait
+    # for the live workflow to publish before it can capture recent MRMS scans.
     live_watermark = read_live_watermark(store, today_release)
     if live_watermark is not None:
-        eligible_upper = live_watermark
-        print(f"  Live watermark: {live_watermark.isoformat()}")
+        print(f"  Live watermark (informational): {live_watermark.isoformat()}")
     else:
-        eligible_upper = now - timedelta(minutes=7)
-        print(f"  Live watermark: none found; holding newest 7 minutes through {eligible_upper.isoformat()}")
+        print("  Live watermark (informational): not available")
 
+    # Use a small safety lag so NOAA's newest directory entry has had time to
+    # finish publishing, but otherwise ingest directly from the MRMS archive.
+    # This decouples history freshness from the live workflow schedule/runtime.
+    archive_upper = now - timedelta(minutes=2)
     recent_observations = [
         obs for obs in retention_observations
-        if obs.valid_time <= eligible_upper
+        if obs.valid_time <= archive_upper
     ]
+    print(f"  Archive ingest edge: {archive_upper.isoformat()}")
 
     radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(all_history_releases)
     print(f"  History release partitions available: {len(all_history_releases)}")
@@ -1274,6 +1282,7 @@ def run_archive() -> None:
         "newest_edge_frames_processed": len(edge_selected),
         "older_backfill_frames_processed": len(backfill_selected),
         "live_watermark_utc": live_watermark.isoformat() if live_watermark else None,
+        "archive_upper_utc": archive_upper.isoformat(),
         "mrms_observations_in_window": len(retention_observations),
         "eligible_observations": len(recent_observations),
         "work_candidates": len(work_candidates),
