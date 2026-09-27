@@ -87,9 +87,13 @@ TYPE_RAMP_COLORS = {
         (5, 115, 205, 235), (25, 65, 165, 238), (45, 25, 95, 225),
         (65, 10, 40, 185), (85, 35, 25, 130), (95, 120, 70, 190),
     ]),
-    "ice": _ramp_from_anchors([
-        (5, 255, 205, 215), (25, 250, 145, 160), (45, 235, 80, 95),
-        (65, 205, 35, 55), (85, 165, 15, 30), (95, 125, 10, 20),
+    "sleet": _ramp_from_anchors([
+        (5, 220, 195, 250), (25, 185, 125, 238), (45, 145, 65, 215),
+        (65, 100, 35, 180), (85, 65, 20, 145), (95, 90, 35, 165),
+    ]),
+    "fzra": _ramp_from_anchors([
+        (5, 255, 220, 170), (25, 255, 175, 95), (45, 245, 105, 45),
+        (65, 220, 55, 25), (85, 185, 30, 18), (95, 145, 20, 12),
     ]),
     "mixed": _ramp_from_anchors([
         (5, 220, 190, 248), (25, 190, 135, 240), (45, 155, 85, 225),
@@ -224,20 +228,26 @@ def result_to_precip_type_rgba(
         alpha=alpha,
     )
 
-    # Sleet + freezing rain are intentionally grouped into an "Ice" hue
-    # family for the visualization, while the scientific phase field remains
-    # distinct underneath.
-    ice_mask = precip & np.isin(result.phase, [SLEET, FZRA])
+    # Sleet and freezing rain remain visually distinct. The scientific
+    # categorical phase field underneath is never collapsed.
     _paint_intensity_ramp(
         rgba,
-        ice_mask,
+        precip & (result.phase == SLEET),
         dbz,
-        TYPE_RAMP_COLORS["ice"],
+        TYPE_RAMP_COLORS["sleet"],
+        confidence,
+        alpha=alpha,
+    )
+    _paint_intensity_ramp(
+        rgba,
+        precip & (result.phase == FZRA),
+        dbz,
+        TYPE_RAMP_COLORS["fzra"],
         confidence,
         alpha=alpha,
     )
 
-    # Mixed is explicitly distinct from the ice family.
+    # Mixed is explicitly distinct from the ice/sleet families.
     _paint_intensity_ramp(
         rgba,
         precip & (result.phase == MIXED),
