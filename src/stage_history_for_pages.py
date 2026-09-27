@@ -15,6 +15,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
+import re
 
 import requests
 
@@ -25,7 +26,7 @@ TOKEN = os.environ.get("GITHUB_TOKEN", "")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
-UA = "WinterRadar/1.2 (Pages history staging)"
+UA = "WinterRadar/1.4 (Pages history staging)"
 
 
 def api_url(path: str) -> str:
@@ -87,6 +88,21 @@ def download_asset(session: requests.Session, asset: dict) -> bytes:
     )
     r.raise_for_status()
     return r.content
+
+
+RADAR_ASSET_RE = re.compile(r"^radar_qc_conus_(\d{8}-\d{6})\.webp$")
+
+
+def parse_radar_asset_timestamp(name: str) -> datetime | None:
+    match = RADAR_ASSET_RE.match(name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(
+            match.group(1), "%Y%m%d-%H%M%S"
+        ).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def empty_manifest() -> dict:
@@ -234,14 +250,55 @@ def main() -> None:
     ]
     merged_frames.sort(key=lambda frame: frame_time(frame) or datetime.min.replace(tzinfo=timezone.utc))
 
+    # The live workflow deliberately publishes a five-scan radar buffer even
+    # before the archive has generated the matching phase composites. Add those
+    # timestamped radar assets directly to the staging manifest so Pages can
+    # advance to the newest scan immediately rather than waiting for the next
+    # archive manifest rebuild.
+    manifest_timestamps = {
+        frame_time(frame)
+        for frame in merged_frames
+        if frame_time(frame) is not None
+    }
+
+    now = datetime.now(timezone.utc)
+    live_cutoff = now - timedelta(hours=3)
+
+    for asset_name, asset in combined_assets.items():
+        radar_time = parse_radar_asset_timestamp(asset_name)
+        if radar_time is None:
+            continue
+        if radar_time < live_cutoff or radar_time > now + timedelta(minutes=1):
+            continue
+        if radar_time in manifest_timestamps:
+            continue
+
+        merged_frames.append(
+            {
+                "timestamp_utc": radar_time.isoformat(),
+                "radar_url": asset.get("browser_download_url"),
+                "radar_asset": asset_name,
+                "radar_api_url": asset.get("url"),
+                "phase_url": None,
+                "phase_asset": None,
+                "phase_api_url": None,
+                "phase_timestamp_utc": None,
+                "precip_type_url": None,
+                "precip_type_asset": None,
+                "precip_type_api_url": None,
+                "precip_type_timestamp_utc": None,
+            }
+        )
+        manifest_timestamps.add(radar_time)
+
+    merged_frames.sort(key=lambda frame: frame_time(frame) or datetime.min.replace(tzinfo=timezone.utc))
+
     history_hours = 3
-    if merged_frames:
-        newest_time = frame_time(merged_frames[-1])
-        cutoff_time = newest_time - timedelta(hours=history_hours)
-        merged_frames = [
-            frame for frame in merged_frames
-            if (frame_time(frame) or cutoff_time) >= cutoff_time
-        ]
+    merged_frames = [
+        frame
+        for frame in merged_frames
+        if live_cutoff <= (frame_time(frame) or datetime.min.replace(tzinfo=timezone.utc)) <= now + timedelta(minutes=1)
+    ]
 
     # Build the final manifest from the merged frame set. This guarantees that
     # the newest live frames and older archive frames coexist in one Pages
@@ -271,7 +328,7 @@ def main() -> None:
         "version": "1.0-history",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "history_hours": history_hours,
-        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. Pages combines all current Release partitions and retains the newest 3 hours.",
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. Pages combines all current Release partitions, retains the newest 3 hours, and also surfaces the newest live radar buffer even before phase composites are backfilled.",
         "bounds": latest_bounds or [20.005001, -129.995, 54.995, -60.00500199999999],
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(merged_frames),
