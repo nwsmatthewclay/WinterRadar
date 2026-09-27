@@ -2223,12 +2223,14 @@ function loadCurrentPhaseOverlay(force = false) {
     tester.onload = function() {
         if (historyMode || !checkbox.checked) return;
 
-        const overlay = L.imageOverlay(url, MRMS_NATIONAL_BOUNDS, {
-            opacity: overlayOpacity,
-            interactive: false,
-            pane: "winterPhasePane",
-            className: "winter-raster-sharp"
-        });
+        const overlay = createImageOverlay(
+            url,
+            MRMS_NATIONAL_BOUNDS,
+            overlayOpacity,
+            550,
+            false,
+            "winter-raster-sharp"
+        );
 
         overlay.on("load", function() {
             const status = document.getElementById("phaseLayerStatus");
@@ -2386,12 +2388,14 @@ function loadRadarFusionLayer() {
     tester.onload = function() {
         if (historyMode || !checkbox.checked) return;
 
-        const overlay = L.imageOverlay(url, MRMS_NATIONAL_BOUNDS, {
-            opacity: overlayOpacity,
-            interactive: false,
-            pane: "winterRadarFusionPane",
-            className: "winter-raster-sharp"
-        });
+        const overlay = createImageOverlay(
+            url,
+            MRMS_NATIONAL_BOUNDS,
+            overlayOpacity,
+            575,
+            false,
+            "winter-raster-sharp"
+        );
 
         overlay.on("load", function() {
             const status = document.getElementById("radarFusionLayerStatus");
@@ -2458,12 +2462,14 @@ function loadPhaseAgreementLayer() {
     tester.onload = function() {
         if (historyMode || !checkbox.checked) return;
 
-        const overlay = L.imageOverlay(url, MRMS_NATIONAL_BOUNDS, {
-            opacity: overlayOpacity,
-            interactive: false,
-            pane: "winterPhaseAgreementPane",
-            className: "winter-raster-sharp"
-        });
+        const overlay = createImageOverlay(
+            url,
+            MRMS_NATIONAL_BOUNDS,
+            overlayOpacity,
+            585,
+            false,
+            "winter-raster-sharp"
+        );
 
         overlay.on("load", function() {
             const status = document.getElementById("phaseAgreementLayerStatus");
