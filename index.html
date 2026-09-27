@@ -1845,6 +1845,8 @@ function initializeMap() {
         preferCanvas: true
     });
 
+    initializeScientificPanes();
+
     L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/" +
         "World_Street_Map/MapServer/tile/{z}/{y}/{x}",
@@ -1896,6 +1898,33 @@ function initializeMap() {
 }
 
 
+
+function initializeScientificPanes() {
+    if (!map || typeof map.createPane !== "function") return;
+
+    const panes = [
+        ["winterRadarPane", 500],
+        ["winterPrecipTypePane", 540],
+        ["winterPhasePane", 550],
+        ["winterRadarFusionPane", 575],
+        ["winterPhaseAgreementPane", 585]
+    ];
+
+    panes.forEach(function(item) {
+        const name = item[0];
+        const z = item[1];
+        let pane = map.getPane(name);
+
+        if (!pane) {
+            pane = map.createPane(name);
+        }
+
+        pane.style.zIndex = String(z);
+        pane.style.pointerEvents = "none";
+    });
+}
+
+
 function createImageOverlay(
     url,
     bounds,
@@ -1915,9 +1944,11 @@ function createImageOverlay(
         options.className = className;
     }
 
-    // Use dedicated Leaflet panes so asynchronous raster downloads can never
-    // move a lower-priority layer above a higher-priority phase layer.
+    // Scientific panes are created during map initialization and re-applied
+    // here as a safety net before any raster is constructed.
     if (map && typeof map.createPane === "function") {
+        initializeScientificPanes();
+
         const paneMap = {
             500: "winterRadarPane",
             540: "winterPrecipTypePane",
@@ -1925,12 +1956,17 @@ function createImageOverlay(
             575: "winterRadarFusionPane",
             585: "winterPhaseAgreementPane"
         };
-        const paneName = paneMap[zIndex] || ("winterRasterPane" + String(zIndex).replace(/[^0-9a-z]/gi, ""));
+
+        const paneName =
+            paneMap[zIndex] ||
+            ("winterRasterPane" + String(zIndex).replace(/[^0-9a-z]/gi, ""));
+
         if (!map.getPane(paneName)) {
             map.createPane(paneName);
-            map.getPane(paneName).style.zIndex = String(zIndex);
-            map.getPane(paneName).style.pointerEvents = "none";
         }
+
+        map.getPane(paneName).style.zIndex = String(zIndex);
+        map.getPane(paneName).style.pointerEvents = "none";
         options.pane = paneName;
     }
 
@@ -2196,6 +2232,7 @@ function refreshPrecipTypeResolutionOnView() {
 }
 
 
+
 function loadCurrentPhaseOverlay(force = false) {
     if (historyMode || !currentBounds) return;
 
@@ -2204,6 +2241,7 @@ function loadCurrentPhaseOverlay(force = false) {
         removeMapOverlay(phaseOverlay);
         phaseOverlay = null;
         phaseDisplayMode = null;
+
         const status = document.getElementById("phaseLayerStatus");
         if (status) {
             status.textContent = "";
@@ -2217,61 +2255,28 @@ function loadCurrentPhaseOverlay(force = false) {
     phaseDisplayMode = "national";
 
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
-    const url = "./outputs/winter_phase_mask_web.png?v=" + stamp;
-    const tester = new Image();
 
-    tester.onload = function() {
-        if (historyMode || !checkbox.checked) return;
-
-        const overlay = createImageOverlay(
-            url,
-            MRMS_NATIONAL_BOUNDS,
-            overlayOpacity,
-            550,
-            false,
-            "winter-raster-sharp"
-        );
-
-        overlay.on("load", function() {
-            const status = document.getElementById("phaseLayerStatus");
-            if (status) {
-                status.textContent = "Loaded";
-                status.className = "layer-raster-status loaded";
-            }
-            console.info("Winter Phase Mask loaded:", url);
-        });
-
-        overlay.on("error", function() {
-            console.warn("Winter Phase Mask failed to display:", url);
-            removeMapOverlay(overlay);
-            if (phaseOverlay === overlay) {
-                phaseOverlay = null;
-                phaseDisplayMode = null;
-            }
-            const status = document.getElementById("phaseLayerStatus");
-            if (status) {
-                status.textContent = "Unavailable";
-                status.className = "layer-raster-status failed";
-            }
-        });
-
-        phaseOverlay = overlay;
-        overlay.addTo(map);
-        overlay.setOpacity(overlayOpacity);
-    };
-
-    tester.onerror = function() {
-        console.warn("Winter Phase Mask PNG unavailable:", url);
-        phaseOverlay = null;
-        phaseDisplayMode = null;
-        const status = document.getElementById("phaseLayerStatus");
-        if (status) {
-            status.textContent = "Unavailable";
-            status.className = "layer-raster-status failed";
-        }
-    };
-
-    tester.src = url;
+    loadRasterWithFallback(
+        [
+            "./outputs/winter_phase_mask_web.png?v=" + stamp,
+            "./outputs/winter_phase_mask_web.webp?v=" + stamp
+        ],
+        MRMS_NATIONAL_BOUNDS,
+        overlayOpacity,
+        550,
+        "winter-raster-sharp",
+        function(layer) {
+            phaseOverlay = layer;
+            phaseDisplayMode = "national";
+        },
+        function() {
+            console.warn("Winter Phase Mask could not be loaded from PNG or WebP.");
+            phaseOverlay = null;
+            phaseDisplayMode = null;
+            updateDynamicMapLegend();
+        },
+        "phaseLayerStatus"
+    );
 }
 
 function refreshPhaseResolutionOnView() {
@@ -2363,6 +2368,7 @@ function loadRadarLayers(metadata) {
 }
 
 
+
 function loadRadarFusionLayer() {
     if (historyMode || !currentBounds) return;
 
@@ -2370,6 +2376,7 @@ function loadRadarFusionLayer() {
     if (!checkbox || !checkbox.checked) {
         removeMapOverlay(radarFusionOverlay);
         radarFusionOverlay = null;
+
         const status = document.getElementById("radarFusionLayerStatus");
         if (status) {
             status.textContent = "";
@@ -2382,60 +2389,25 @@ function loadRadarFusionLayer() {
     radarFusionOverlay = null;
 
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
-    const url = "./outputs/phase_radar_fusion_overlay_web.png?v=" + stamp;
-    const tester = new Image();
 
-    tester.onload = function() {
-        if (historyMode || !checkbox.checked) return;
-
-        const overlay = createImageOverlay(
-            url,
-            MRMS_NATIONAL_BOUNDS,
-            overlayOpacity,
-            575,
-            false,
-            "winter-raster-sharp"
-        );
-
-        overlay.on("load", function() {
-            const status = document.getElementById("radarFusionLayerStatus");
-            if (status) {
-                status.textContent = "Loaded";
-                status.className = "layer-raster-status loaded";
-            }
-            console.info("Radar Phase Evidence loaded:", url);
-        });
-
-        overlay.on("error", function() {
-            console.warn("Radar Phase Evidence failed to display:", url);
-            removeMapOverlay(overlay);
-            if (radarFusionOverlay === overlay) {
-                radarFusionOverlay = null;
-            }
-            const status = document.getElementById("radarFusionLayerStatus");
-            if (status) {
-                status.textContent = "Unavailable";
-                status.className = "layer-raster-status failed";
-            }
-        });
-
-        radarFusionOverlay = overlay;
-        overlay.addTo(map);
-        overlay.setOpacity(overlayOpacity);
-    };
-
-    tester.onerror = function() {
-        console.warn("Radar Phase Evidence PNG unavailable:", url);
-        radarFusionOverlay = null;
-        const status = document.getElementById("radarFusionLayerStatus");
-        if (status) {
-            status.textContent = "Unavailable";
-            status.className = "layer-raster-status failed";
-        }
-    };
-
-    tester.src = url;
+    loadRasterWithFallback(
+        ["./outputs/phase_radar_fusion_overlay_web.png?v=" + stamp],
+        MRMS_NATIONAL_BOUNDS,
+        overlayOpacity,
+        575,
+        "winter-raster-sharp",
+        function(layer) {
+            radarFusionOverlay = layer;
+        },
+        function() {
+            console.warn("Radar Phase Evidence could not be loaded.");
+            radarFusionOverlay = null;
+            updateDynamicMapLegend();
+        },
+        "radarFusionLayerStatus"
+    );
 }
+
 
 function loadPhaseAgreementLayer() {
     if (historyMode || !currentBounds) return;
@@ -2444,6 +2416,7 @@ function loadPhaseAgreementLayer() {
     if (!checkbox || !checkbox.checked) {
         removeMapOverlay(phaseAgreementOverlay);
         phaseAgreementOverlay = null;
+
         const status = document.getElementById("phaseAgreementLayerStatus");
         if (status) {
             status.textContent = "";
@@ -2456,59 +2429,23 @@ function loadPhaseAgreementLayer() {
     phaseAgreementOverlay = null;
 
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
-    const url = "./outputs/phase_agreement_overlay_web.png?v=" + stamp;
-    const tester = new Image();
 
-    tester.onload = function() {
-        if (historyMode || !checkbox.checked) return;
-
-        const overlay = createImageOverlay(
-            url,
-            MRMS_NATIONAL_BOUNDS,
-            overlayOpacity,
-            585,
-            false,
-            "winter-raster-sharp"
-        );
-
-        overlay.on("load", function() {
-            const status = document.getElementById("phaseAgreementLayerStatus");
-            if (status) {
-                status.textContent = "Loaded";
-                status.className = "layer-raster-status loaded";
-            }
-            console.info("Phase Agreement loaded:", url);
-        });
-
-        overlay.on("error", function() {
-            console.warn("Phase Agreement failed to display:", url);
-            removeMapOverlay(overlay);
-            if (phaseAgreementOverlay === overlay) {
-                phaseAgreementOverlay = null;
-            }
-            const status = document.getElementById("phaseAgreementLayerStatus");
-            if (status) {
-                status.textContent = "Unavailable";
-                status.className = "layer-raster-status failed";
-            }
-        });
-
-        phaseAgreementOverlay = overlay;
-        overlay.addTo(map);
-        overlay.setOpacity(overlayOpacity);
-    };
-
-    tester.onerror = function() {
-        console.warn("Phase Agreement PNG unavailable:", url);
-        phaseAgreementOverlay = null;
-        const status = document.getElementById("phaseAgreementLayerStatus");
-        if (status) {
-            status.textContent = "Unavailable";
-            status.className = "layer-raster-status failed";
-        }
-    };
-
-    tester.src = url;
+    loadRasterWithFallback(
+        ["./outputs/phase_agreement_overlay_web.png?v=" + stamp],
+        MRMS_NATIONAL_BOUNDS,
+        overlayOpacity,
+        585,
+        "winter-raster-sharp",
+        function(layer) {
+            phaseAgreementOverlay = layer;
+        },
+        function() {
+            console.warn("Phase Agreement could not be loaded.");
+            phaseAgreementOverlay = null;
+            updateDynamicMapLegend();
+        },
+        "phaseAgreementLayerStatus"
+    );
 }
 
 function togglePhaseAgreement(enabled) {
