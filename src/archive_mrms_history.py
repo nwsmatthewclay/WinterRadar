@@ -1123,10 +1123,11 @@ def run_archive() -> None:
             key=lambda item: item.valid_time,
         )
 
-        oldest_text = (
-            f"oldest chunk {chunk_start.isoformat()} to {chunk_end.isoformat()}"
-            if chunk_start is not None
-            else "no older chunk needed"
+        backfill_text = (
+            f"next-newest {len(backfill_selected)} gap frame(s) backward from "
+            f"{backfill_selected[0].valid_time.isoformat()}"
+            if backfill_selected
+            else "no older gap repair needed"
         )
         newest_text = (
             f"newest-edge {len(edge_selected)} frame(s) through {edge_anchor.isoformat()}"
@@ -1135,7 +1136,7 @@ def run_archive() -> None:
         )
         print(
             f"  Missing historical work items: {len(work_candidates)}; "
-            f"processing {len(selected)} this run ({newest_text}; {oldest_text})"
+            f"processing {len(selected)} this run ({newest_text}; {backfill_text})"
         )
     else:
         print("  No missing historical radar/phase work detected in the 3-hour retention window.")
