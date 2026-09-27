@@ -236,26 +236,34 @@ def main() -> None:
         helper_output = Path(tempfile.mkdtemp(prefix="winterradar_live_phase_"))
         try:
             helper = ROOT / "src" / "build_history_precip_type.py"
-            cmd = ["python", str(helper), "--output-dir", str(helper_output)] + [str(path) for path in phase_grib_paths]
             print(f"  Building live-edge phase composites for {len(phase_grib_paths)} buffered scans...")
-            subprocess.run(cmd, check=True)
-
-            for obs in phase_observations:
-                names = [
-                    f"phase_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
-                    f"preciptype_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
-                ]
-                release = ensure_upload_release(store, obs.valid_time.date(), release_index)
-                for name in names:
-                    source = helper_output / name
-                    if not source.exists():
-                        print(f"  WARNING: live-edge composite missing: {name}")
-                        continue
-                    if name in release.assets:
-                        continue
-                    asset = store.upload_asset(release, name, source.read_bytes(), "image/webp")
-                    release.assets[asset["name"]] = asset
-                    print(f"  Stored live-edge composite {name} ({source.stat().st_size:,} bytes)")
+            for obs, grib_path in zip(phase_observations, phase_grib_paths):
+                try:
+                    # Process each timestamp independently so one problematic
+                    # MRMS scan cannot suppress composites for the other scans.
+                    scan_output = Path(tempfile.mkdtemp(prefix="winterradar_live_phase_scan_"))
+                    try:
+                        cmd = ["python", str(helper), "--output-dir", str(scan_output), str(grib_path)]
+                        subprocess.run(cmd, check=True)
+                        names = [
+                            f"phase_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
+                            f"preciptype_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
+                        ]
+                        release = ensure_upload_release(store, obs.valid_time.date(), release_index)
+                        for name in names:
+                            source = scan_output / name
+                            if not source.exists():
+                                print(f"  WARNING: live-edge composite missing: {name}")
+                                continue
+                            if name in release.assets:
+                                continue
+                            asset = store.upload_asset(release, name, source.read_bytes(), "image/webp")
+                            release.assets[asset["name"]] = asset
+                            print(f"  Stored live-edge composite {name} ({source.stat().st_size:,} bytes)")
+                    finally:
+                        shutil.rmtree(scan_output, ignore_errors=True)
+                except Exception as exc:
+                    print(f"  WARNING: live-edge composite generation failed for {obs.valid_time.isoformat()}: {type(exc).__name__}: {exc}")
         except Exception as exc:
             print(f"  WARNING: live-edge composite generation failed: {type(exc).__name__}: {exc}")
         finally:
