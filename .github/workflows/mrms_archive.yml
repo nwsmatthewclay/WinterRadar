@@ -19,7 +19,7 @@ jobs:
   archive:
     runs-on: ubuntu-latest
 
-    # Give the archive plenty of time to finish its 15-minute chunk.
+    # The archive processes up to 12 newest/backfill scans per run.
     timeout-minutes: 25
 
     steps:
@@ -57,6 +57,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          MRMS_HISTORY_MAX_FRAMES_PER_RUN: "12"
+          MRMS_HISTORY_MAX_EDGE_FRAMES_PER_RUN: "12"
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
@@ -86,7 +88,8 @@ jobs:
           for key, label in [
               ("generated_at_utc", "Archive run UTC"),
               ("history_hours", "Retention window"),
-              ("live_watermark_utc", "Live watermark"),
+              ("live_watermark_utc", "Live watermark (informational)"),
+              ("archive_upper_utc", "Archive ingest edge"),
               ("mrms_observations_in_window", "MRMS observations in retention window"),
               ("radar_assets_before", "Radar stored before"),
               ("radar_missing_before", "Radar missing before"),
