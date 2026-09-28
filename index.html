@@ -2514,7 +2514,7 @@ body { min-height: 100vh; }
                 <div id="layerPanel" class="layer-panel">
 
                     <div class="layer-title">Map layers</div>
-                    <div class="layer-menu-note">Scientific raster products use the full-CONUS national MRMS mosaic.</div>
+                    <div class="layer-menu-note">Operational radar, precip-type, and phase layers use the compact Northeast U.S. MRMS subset.</div>
 
                     <button id="diagnosticModeToggle" class="diagnostic-toggle" type="button" onclick="toggleDiagnosticMode()">Enable diagnostic mode</button>
                     <div class="layer-menu-note" id="diagnosticModeNote" style="display:none;">Diagnostic mode enables live map hover/click readouts for phase, radar coverage, and fusion diagnostics.</div>
@@ -2938,12 +2938,16 @@ let currentBounds = BTV_BOUNDS.slice();
 const referenceRequestSerial = { county: 0, zone: 0 };
 let dynamicReferenceRefreshTimer = null;
 
-// All scientific live raster layers use the same full-CONUS MRMS mosaic.
-// Regional presentation copies are intentionally not used because their sparse
-// coverage can make a national layer look partially populated when zoomed in.
+// Diagnostic/fusion layers remain full-CONUS. The operational radar,
+// precipitation-type composite, and winter phase mask use compact NEUS rasters
+// generated from the same full-CONUS scientific source.
 const MRMS_NATIONAL_BOUNDS = [
     [20.005001, -129.995],
     [54.995, -60.005002]
+];
+const MRMS_REGIONAL_BOUNDS = [
+    [37.0, -84.5],
+    [48.5, -66.0]
 ];
 let radarDisplayMode = null;
 let phaseDisplayMode = null;
