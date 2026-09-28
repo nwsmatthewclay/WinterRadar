@@ -401,14 +401,23 @@ def main() -> None:
     def worker(item: tuple[str, dict]) -> tuple[str, bool, str]:
         name, asset = item
         target = HISTORY_DIR / name
-        try:
-            data = download_asset(session, asset)
-            if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
-                return name, False, f"unexpected payload ({len(data):,} bytes)"
-            target.write_bytes(data)
-            return name, True, f"{len(data):,} bytes"
-        except Exception as exc:
-            return name, False, f"{type(exc).__name__}: {exc}"
+        last_error = ""
+        # A Release asset can briefly return 404/5xx while GitHub finishes
+        # updating the object. Retry before declaring it unavailable.
+        for attempt in range(1, 4):
+            try:
+                data = download_asset(session, asset)
+                if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+                    last_error = f"unexpected payload ({len(data):,} bytes)"
+                else:
+                    target.write_bytes(data)
+                    return name, True, f"{len(data):,} bytes"
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            if attempt < 3:
+                import time
+                time.sleep(1.5 * attempt)
+        return name, False, last_error
 
     failures: list[tuple[str, str]] = []
     done = 0
@@ -422,11 +431,55 @@ def main() -> None:
                 print(f"  [{done:>3}/{len(items):>3}] {'OK' if ok else 'FAIL'} {name} — {info}")
 
     print(f"  Staged: {done - len(failures)}")
-    print(f"  Failures: {len(failures)}")
-    if failures:
-        for name, info in failures[:10]:
-            print(f"    FAILED {name}: {info}")
-        raise SystemExit("History staging encountered download failures")
+    print(f"  Unavailable assets: {len(failures)}")
+
+    # Never let one stale/missing Release blob take down the entire Pages
+    # publication. Remove unavailable references from the manifest. Radar is
+    # the required frame asset; if it is unavailable, drop only that frame.
+    # Phase/precipitation are optional and can remain absent until a later run
+    # repairs them from the persistent Release/archive store.
+    unavailable = {name for name, _ in failures}
+    if unavailable:
+        sanitized_frames = []
+        dropped_radar_frames = 0
+        for frame in manifest.get("frames", []):
+            radar_name = frame.get("radar_asset")
+            if radar_name in unavailable:
+                dropped_radar_frames += 1
+                continue
+            frame = dict(frame)
+            if frame.get("phase_asset") in unavailable:
+                frame["phase_asset"] = None
+                frame["phase_url"] = None
+                frame["phase_api_url"] = None
+                frame["phase_timestamp_utc"] = None
+            if frame.get("precip_type_asset") in unavailable:
+                frame["precip_type_asset"] = None
+                frame["precip_type_url"] = None
+                frame["precip_type_api_url"] = None
+                frame["precip_type_timestamp_utc"] = None
+            sanitized_frames.append(frame)
+
+        manifest["frames"] = sanitized_frames
+        manifest["frame_count"] = len(sanitized_frames)
+        manifest["phase_snapshot_count"] = sum(
+            1 for frame in sanitized_frames if frame.get("phase_asset")
+        )
+        manifest["precip_type_snapshot_count"] = sum(
+            1 for frame in sanitized_frames if frame.get("precip_type_asset")
+        )
+        manifest["staging_unavailable_assets"] = sorted(unavailable)
+        manifest["staging_dropped_radar_frames"] = dropped_radar_frames
+        manifest["staging_generated_at_utc"] = datetime.now(timezone.utc).isoformat()
+        (OUTPUT / "mrms_history.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
+        for name, info in failures[:20]:
+            print(f"    UNAVAILABLE {name}: {info}")
+        print(
+            f"  Pages publication will continue with {len(unavailable)} unavailable "
+            f"asset(s); dropped radar frames: {dropped_radar_frames}"
+        )
 
     print("PAGES HISTORY STAGING COMPLETE")
 
