@@ -270,6 +270,7 @@ jobs:
         run: |
           set -euo pipefail
           python -u src/stage_history_for_pages.py
+          echo "Pages history staging completed; unavailable Release assets are reported in outputs/mrms_history.json."
 
       - name: Assemble Pages site
         run: |
