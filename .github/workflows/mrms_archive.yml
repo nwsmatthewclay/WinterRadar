@@ -99,6 +99,8 @@ jobs:
               ("significant_frame_gaps_over_5min", "Gaps over 5 minutes"),
               ("phase_remaining_missing", "Phase still missing"),
               ("precip_type_remaining_missing", "Precip type still missing"),
+              ("complete_composite_pairs", "Complete phase + precip pairs"),
+              ("composite_pairs_remaining_missing", "Composite pairs still missing"),
               ("oldest_stored_utc", "Oldest stored"),
               ("newest_stored_utc", "Newest stored"),
               ("status", "Status"),
@@ -113,6 +115,7 @@ jobs:
           PY
           else
             echo "Archive status JSON was not produced." >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the job log for composite-generation or RAP errors." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload archive debug artifact
