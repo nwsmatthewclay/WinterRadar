@@ -5017,13 +5017,24 @@ function historyAssetUrl(frame, kind) {
     let assetName = null;
     let directUrl = null;
 
+    const radarAsset = frame.radar_asset || "";
+    const radarMatch = radarAsset.match(/radar_qc_conus_(\\d{8}-\\d{6})\\.webp$/i);
+    const radarStamp = radarMatch ? radarMatch[1] : null;
+
     if (kind === "phase") {
-        assetName = frame.phase_asset;
+        // Prefer the explicit manifest reference. If an older/incomplete
+        // manifest omitted it, derive the exact archived filename from the
+        // radar timestamp. The Pages staging layer already contains these
+        // phase assets when the composite pair is complete.
+        assetName = frame.phase_asset ||
+            (radarStamp ? "phase_conus_" + radarStamp + ".webp" : null);
         directUrl = frame.phase_url;
     } else if (kind === "precipType") {
         // New manifests archive the composite separately. For older manifests,
-        // fall back to the legacy phase asset so existing history remains viewable.
-        assetName = frame.precip_type_asset || frame.phase_asset;
+        // derive the exact composite filename before falling back to phase.
+        assetName = frame.precip_type_asset ||
+            (radarStamp ? "preciptype_conus_" + radarStamp + ".webp" : null) ||
+            frame.phase_asset;
         directUrl = frame.precip_type_url || frame.phase_url;
     } else {
         assetName = frame.radar_asset;
@@ -5398,7 +5409,7 @@ function renderHistoryFrame(index, fitView) {
 
     if (
         document.getElementById("phaseToggle").checked &&
-        (frame.phase_url || frame.phase_asset)
+        historyAssetUrl(frame, "phase")
     ) {
         loadHistoricalOverlay({
             nativeUrl: historyAssetUrl(frame, "phase"),
