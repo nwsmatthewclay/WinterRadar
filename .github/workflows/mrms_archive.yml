@@ -38,6 +38,14 @@ jobs:
             libeccodes-dev \
             libeccodes-tools
 
+      - name: Restore RAP profile cache
+        uses: actions/cache@v4
+        with:
+          path: data/rap_profile_cache
+          key: winterradar-rap-profile-${{ github.run_id }}
+          restore-keys: |
+            winterradar-rap-profile-
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
