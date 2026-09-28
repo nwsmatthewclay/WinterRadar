@@ -5209,7 +5209,7 @@ function loadHistoricalOverlay(options) {
                 // cross-origin <img> request does not require CORS, so use a
                 // direct Leaflet image fallback instead of fetch()+Blob for
                 // persistent Release history.
-                if (/^https?:\\/\\//i.test(url) && !url.includes("wsrv.nl")) {
+                if (/^https?:\/\//i.test(url) && !url.includes("wsrv.nl")) {
                     const directImage = new Image();
                     directImage.decoding = "async";
                     directImage.onload = function() {
