@@ -163,15 +163,16 @@ jobs:
       # The live publisher now seeds roughly 20+ minutes of radar plus matching phase/composite assets.\n      # It also refreshes mrms_history.json so newly created live composites are immediately visible to Pages.\n      # Release assets remain the persistent history store; the archive continues repairing older gaps. This downloads only
       # the already-archived 3-hour WebP history into Pages so the browser can
       # load the files same-origin. It does not contact NOAA for history.
-      - name: Stage 3-hour MRMS history for Pages
+      - name: Stage hot MRMS history for Pages
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          MRMS_PAGES_HOT_WINDOW_MINUTES: "30"
         run: |
           set -euo pipefail
           python -u src/stage_history_for_pages.py
-          echo "Pages history staging completed; unavailable Release assets are reported in outputs/mrms_history.json."
+          echo "Pages hot-buffer staging completed; older Release history remains available on demand."
 
       - name: Assemble Pages site
         run: |
