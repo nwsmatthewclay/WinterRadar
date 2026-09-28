@@ -3387,7 +3387,7 @@ function loadCurrentPrecipTypeOverlay(force = false) {
     precipTypeDisplayMode = spec.mode;
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
     loadRasterWithFallback(
-        ["./outputs/winter_radar_composite_web.png?v=" + stamp, "./outputs/winter_radar_composite_web.webp?v=" + stamp, "./outputs/winter_precip_type_web.png?v=" + stamp, "./outputs/winter_precip_type_web.webp?v=" + stamp],
+        ["./outputs/winter_radar_composite_web.webp?v=" + stamp, "./outputs/winter_radar_composite_web.png?v=" + stamp, "./outputs/winter_precip_type_web.webp?v=" + stamp, "./outputs/winter_precip_type_web.png?v=" + stamp],
         spec.bounds, overlayOpacity, 540, "winter-raster-sharp",
         function(layer) {
             precipTypeOverlay = layer;
@@ -3533,8 +3533,8 @@ function loadCurrentPhaseOverlay(force = false) {
 
     loadRasterWithFallback(
         [
-            "./outputs/winter_phase_mask_web.png?v=" + stamp,
-            "./outputs/winter_phase_mask_web.webp?v=" + stamp
+            "./outputs/winter_phase_mask_web.webp?v=" + stamp,
+            "./outputs/winter_phase_mask_web.png?v=" + stamp
         ],
         MRMS_NATIONAL_BOUNDS,
         overlayOpacity,
@@ -3592,8 +3592,8 @@ function loadCurrentRadarOverlay(force = false) {
 
     loadRasterWithFallback(
         [
-            spec.url,
-            "./outputs/mrms_current_web.webp?v=" + Date.now()
+            "./outputs/mrms_current_web.webp?v=" + Date.now(),
+            spec.url
         ],
         spec.bounds,
         overlayOpacity,
