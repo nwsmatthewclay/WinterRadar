@@ -69,8 +69,8 @@ jobs:
             src/build_phase_diagnostics.py \
             src/build_phase_radar_fusion.py \
             src/publish_live_history.py \
-            src/stage_history_for_pages.py
-            src/precip_obs_qc.py
+            src/stage_history_for_pages.py \
+            src/precip_obs_qc.py \
             src/create_neus_browser_assets.py
 
       - name: Run core MRMS processing
