@@ -5288,19 +5288,77 @@ function loadHistoricalOverlay(options) {
             const url = urls[attempt++];
 
             try {
+                // GitHub Release assets are cross-origin and do not expose
+                // CORS headers. Never use fetch()/Blob for those URLs: a normal
+                // <img> request can display them without CORS and avoids noisy
+                // console failures.
+                if (/^https?:\/\//i.test(url) && !url.includes("wsrv.nl")) {
+                    await new Promise(function(resolveImg, rejectImg) {
+                        const directImage = new Image();
+                        directImage.decoding = "async";
+
+                        directImage.onload = function() {
+                            resolveImg();
+                        };
+
+                        directImage.onerror = function() {
+                            rejectImg(new Error("Historical image failed to load"));
+                        };
+
+                        directImage.src = url;
+                    });
+
+                    if (requestId !== historyRenderRequest || !historyMode) {
+                        resolve(null);
+                        return;
+                    }
+
+                    overlay = createImageOverlay(
+                        url,
+                        bounds,
+                        0,
+                        zIndex,
+                        false,
+                        className || ""
+                    );
+
+                    assignPending(overlay);
+                    overlay.addTo(map);
+                    overlay.setOpacity(opacity);
+
+                    if (requestId !== historyRenderRequest || !historyMode) {
+                        removeMapOverlay(overlay);
+                        overlay = null;
+                        resolve(null);
+                        return;
+                    }
+
+                    onLoaded(overlay);
+                    resolve(overlay);
+                    return;
+                }
+
+                // Same-origin hot-buffer assets can safely use fetch()+Blob.
+                // This gives us an explicit decode before Leaflet installs the
+                // layer and keeps the Pages history path deterministic.
                 const response = await fetch(url, {
                     cache: "no-store",
-                    credentials: url.startsWith("./history/") ? "same-origin" : "omit"
+                    credentials: "same-origin"
                 });
-                if (!response.ok) throw new Error("HTTP " + response.status + " for " + url);
+                if (!response.ok) {
+                    throw new Error("HTTP " + response.status + " for " + url);
+                }
 
                 const blob = await response.blob();
-                if (!blob || blob.size < 16) throw new Error("Historical raster is empty");
+                if (!blob || blob.size < 16) {
+                    throw new Error("Historical raster is empty");
+                }
 
                 objectUrl = URL.createObjectURL(blob);
                 const img = new Image();
                 img.decoding = "async";
                 img.src = objectUrl;
+
                 if (typeof img.decode === "function") {
                     await img.decode();
                 } else {
@@ -5328,17 +5386,6 @@ function loadHistoricalOverlay(options) {
                 objectUrl = null;
 
                 assignPending(overlay);
-
-                overlay.once("error", function() {
-                    removeMapOverlay(overlay);
-                    overlay = null;
-                    tryNext().catch(reject);
-                });
-
-                // The image bytes have already been fetched and explicitly
-                // browser-decoded above. Do not wait for a second Leaflet image
-                // load event; that event can be unreliable with Blob URLs and
-                // otherwise leaves a perfectly valid raster invisible.
                 overlay.addTo(map);
                 overlay.setOpacity(opacity);
 
@@ -5348,36 +5395,41 @@ function loadHistoricalOverlay(options) {
                     return;
                 }
 
-                // History is a discrete sequence of observed scans. Replace the
-                // active frame immediately after browser decode; never cross-fade
-                // or briefly stack two scans.
                 onLoaded(overlay);
                 resolve(overlay);
             } catch (error) {
-                console.warn("Historical raster load attempt failed:", url, error);
                 revokeHistoryObjectUrl();
 
-                // GitHub Release downloads do not provide CORS headers. A normal
-                // cross-origin <img> request does not require CORS, so use a
-                // direct Leaflet image fallback instead of fetch()+Blob for
-                // persistent Release history.
+                // External Release image failed to render directly. Retry the
+                // proxy path without ever calling fetch() against GitHub.
+                console.warn("Historical raster load attempt failed:", url);
                 if (/^https?:\/\//i.test(url) && !url.includes("wsrv.nl")) {
-                    const directImage = new Image();
-                    directImage.decoding = "async";
-                    directImage.onload = function() {
+                    const proxyUrl = historyImageProxyUrl(url);
+
+                    try {
+                        await new Promise(function(resolveImg, rejectImg) {
+                            const proxyImage = new Image();
+                            proxyImage.decoding = "async";
+                            proxyImage.onload = resolveImg;
+                            proxyImage.onerror = function() {
+                                rejectImg(new Error("Historical proxy image failed to load"));
+                            };
+                            proxyImage.src = proxyUrl;
+                        });
+
                         if (requestId !== historyRenderRequest || !historyMode) {
+                            resolve(null);
                             return;
                         }
 
                         overlay = createImageOverlay(
-                            url,
+                            proxyUrl,
                             bounds,
                             0,
                             zIndex,
                             false,
                             className || ""
                         );
-
                         assignPending(overlay);
                         overlay.addTo(map);
                         overlay.setOpacity(opacity);
@@ -5391,15 +5443,15 @@ function loadHistoricalOverlay(options) {
 
                         onLoaded(overlay);
                         resolve(overlay);
-                    };
-                    directImage.onerror = function() {
-                        tryNext().catch(reject);
-                    };
-                    directImage.src = url;
-                    return;
+                        return;
+                    } catch (proxyError) {
+                        console.warn("Historical raster proxy fallback failed:", proxyError);
+                    }
                 }
 
-                tryNext().catch(reject);
+                // Do not recurse through the same cross-origin fetch path.
+                onFailed();
+                reject(new Error("Historical image failed to load."));
             }
         }
 
