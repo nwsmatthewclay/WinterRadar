@@ -2095,8 +2095,7 @@ html, body {
                 <option value="4">4×</option>
             </select>
 
-            <button class="history-control-btn history-live-btn" type="button" onclick="showLiveMap()" title="Return to live radar">LIVE</button>
-            <button class="history-control-btn" type="button" onclick="refreshHistoryManifest()" title="Refresh archived frame list">↻</button>
+                        <button class="history-control-btn" type="button" onclick="refreshHistoryManifest()" title="Refresh archived frame list">↻</button>
         </div>
 
         <div class="history-time-row">
@@ -2388,7 +2387,7 @@ function initializeMap() {
         // It combines MRMS reflectivity with the winter precipitation-type
         // rendering, so the raw radar and phase mask remain optional analysis
         // layers rather than competing with the default view.
-        ["radarToggle", false],
+        ["radarToggle", true],
         ["precipTypeToggle", true],
         ["phaseToggle", false],
         ["radarFusionToggle", false],
@@ -4548,11 +4547,10 @@ async function refreshHistoryManifest() {
             return;
         }
 
-        if (historyMode) {
-            renderHistoryFrame(historyIndex, false);
-        } else {
-            setHistoryStatus(historyFrames.length + " frames ready");
-        }
+        // The history slider is now the only radar display path.
+        // Always render the newest frame on initial load.
+        historyMode = true;
+        renderHistoryFrame(historyIndex, false);
 
     } catch (error) {
         console.warn("MRMS history update failed:", error);
@@ -4778,10 +4776,9 @@ function showLiveMap() {
     cancelPendingHistoryLayers();
 
     updateHistoryReadout();
-    setHistoryStatus("LIVE", "live");
     updateDynamicMapLegend();
 
-    refreshData();
+    refreshHistoryManifest();
 }
 
 
@@ -4981,10 +4978,8 @@ async function refreshData() {
             healthMRMSDetail.textContent = "Valid " + display;
         }
 
-        if (!historyMode) {
-            loadRadarLayers(metadata);
-        }
-
+        // Radar display is driven exclusively by the history manifest.
+        // Do not load the separate live raster path.
         updateDynamicMapLegend();
 
         if (document.getElementById("phaseToggle")?.checked && phaseOverlay) {
@@ -5638,11 +5633,9 @@ async function exportGIF() {
             );
 
         } else if (!prevMode) {
-            historyMode = false;
-
-            loadCurrentRadarOverlay(true);
-            loadCurrentPhaseOverlay(true);
-            loadCurrentPrecipTypeOverlay(true);
+            historyMode = true;
+            historyIndex = Math.max(historyFrames.length - 1, 0);
+            renderHistoryFrame(historyIndex, false);
         }
     }
 }
