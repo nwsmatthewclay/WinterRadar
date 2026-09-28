@@ -1204,40 +1204,61 @@ def run_archive() -> None:
             helper = ROOT / "src" / "build_history_precip_type.py"
             if not helper.exists():
                 helper = ROOT / "build_history_precip_type.py"
-            print(f"  Building per-scan phase composites for {len(phase_grib_paths)} radar scans...")
-            for obs, grib_path in zip(phase_observations, phase_grib_paths):
-                try:
-                    # Process each scan independently. One bad/corrupt MRMS
-                    # frame must never prevent the remaining timestamps from
-                    # receiving their matching composites.
-                    scan_output = Path(tempfile.mkdtemp(prefix="winterradar_phase_scan_"))
-                    try:
-                        cmd = ["python", str(helper), "--output-dir", str(scan_output), str(grib_path)]
-                        subprocess.run(cmd, check=True)
-                        names = [
-                            f"phase_conus_{obs.timestamp_key}.webp",
-                            f"preciptype_conus_{obs.timestamp_key}.webp",
-                        ]
-                        release = ensure_upload_release(store, obs.valid_time.date(), release_index)
-                        for name in names:
-                            source = scan_output / name
-                            if not source.exists():
-                                print(f"  WARNING: per-scan phase asset missing: {name}")
-                                continue
-                            target_assets = phase_assets if name.startswith("phase_conus_") else precip_type_assets
-                            if name in target_assets:
-                                continue
-                            data = source.read_bytes()
-                            asset = store.upload_asset(release, name, data)
-                            release.assets[asset["name"]] = asset
-                            target_assets[asset["name"]] = asset
-                            print(f"  Uploaded per-scan phase asset {name} ({len(data):,} bytes)")
-                    finally:
-                        shutil.rmtree(scan_output, ignore_errors=True)
-                except Exception as exc:
-                    print(f"  WARNING: composite generation failed for {obs.timestamp_key}: {type(exc).__name__}: {exc}")
+
+            # Run the helper once for the whole batch. The helper caches RAP
+            # profiles by valid hour, so a 10- or 20-scan archive run does not
+            # download the same RAP profile repeatedly. Failures are isolated
+            # inside the helper: a bad RAP hour or MRMS scan is deferred while
+            # other timestamps continue through the batch.
+            print(
+                f"  Building phase/precip composites for {len(phase_grib_paths)} radar scans "
+                "with hourly RAP caching..."
+            )
+            cmd = [
+                "python", str(helper),
+                "--output-dir", str(helper_output),
+                *[str(path) for path in phase_grib_paths],
+            ]
+            subprocess.run(cmd, check=True)
+
+            uploaded_phase = 0
+            uploaded_precip = 0
+            for obs in phase_observations:
+                names = [
+                    f"phase_conus_{obs.timestamp_key}.webp",
+                    f"preciptype_conus_{obs.timestamp_key}.webp",
+                ]
+                release = ensure_upload_release(store, obs.valid_time.date(), release_index)
+                for name in names:
+                    source = helper_output / name
+                    if not source.exists():
+                        print(
+                            f"  WARNING: composite deferred; output was not produced for "
+                            f"{obs.timestamp_key}: {name}"
+                        )
+                        continue
+                    target_assets = phase_assets if name.startswith("phase_conus_") else precip_type_assets
+                    if name in target_assets:
+                        continue
+                    data = source.read_bytes()
+                    asset = store.upload_asset(release, name, data)
+                    release.assets[asset["name"]] = asset
+                    target_assets[asset["name"]] = asset
+                    if name.startswith("phase_conus_"):
+                        uploaded_phase += 1
+                    else:
+                        uploaded_precip += 1
+                    print(f"  Uploaded composite {name} ({len(data):,} bytes)")
+
+            print(
+                f"  Composite upload summary: {uploaded_phase} phase, "
+                f"{uploaded_precip} precip-type"
+            )
         except Exception as exc:
-            print(f"  WARNING: per-scan phase generation failed: {type(exc).__name__}: {exc}")
+            print(
+                f"  WARNING: composite batch failed: {type(exc).__name__}: {exc}. "
+                "Radar remains archived; missing composites will be retried on the next run."
+            )
         finally:
             for path in phase_grib_paths:
                 path.unlink(missing_ok=True)
@@ -1325,6 +1346,16 @@ def run_archive() -> None:
         "precip_type_remaining_missing": sum(
             1 for obs in recent_observations
             if f"preciptype_conus_{obs.timestamp_key}.webp" not in precip_type_assets
+        ),
+        "complete_composite_pairs": sum(
+            1 for obs in recent_observations
+            if f"phase_conus_{obs.timestamp_key}.webp" in phase_assets
+            and f"preciptype_conus_{obs.timestamp_key}.webp" in precip_type_assets
+        ),
+        "composite_pairs_remaining_missing": sum(
+            1 for obs in recent_observations
+            if f"phase_conus_{obs.timestamp_key}.webp" not in phase_assets
+            or f"preciptype_conus_{obs.timestamp_key}.webp" not in precip_type_assets
         ),
         "oldest_stored_utc": manifest["frames"][0]["timestamp_utc"] if manifest.get("frames") else None,
         "newest_stored_utc": manifest["frames"][-1]["timestamp_utc"] if manifest.get("frames") else None,
