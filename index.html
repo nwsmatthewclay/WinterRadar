@@ -2084,74 +2084,38 @@ body { min-height: 100vh; }
 }
 
 
-
 /* ===================== Map control row below the map ===================== */
 .map-control-row {
-    display: grid;
-    grid-template-columns: 252px minmax(0, 1fr);
-    gap: 14px;
-    align-items: stretch;
-    margin-top: 8px;
-    padding: 8px 10px;
-    border: 1px solid rgba(79,126,154,.42);
-    border-radius: 8px;
-    background: rgba(4,20,32,.72);
-    box-shadow: 0 8px 20px rgba(0,0,0,.22);
+    display:grid;
+    grid-template-columns:252px minmax(0,1fr);
+    gap:14px;
+    align-items:stretch;
+    margin-top:8px;
+    padding:8px 10px;
+    border:1px solid rgba(79,126,154,.42);
+    border-radius:8px;
+    background:rgba(4,20,32,.72);
+    box-shadow:0 8px 20px rgba(0,0,0,.22);
 }
-.map-control-row .map-control-opacity {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-}
+.map-control-row .map-control-opacity { display:flex; align-items:center; min-width:0; }
 .map-control-row .opacity-control {
-    position: static;
-    left: auto;
-    right: auto;
-    bottom: auto;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-    backdrop-filter: none;
+    position:static; left:auto; right:auto; bottom:auto;
+    width:100%; margin:0; padding:0;
+    border:0; background:transparent; box-shadow:none; backdrop-filter:none;
 }
 .map-control-row .map-history-control {
-    position: static;
-    left: auto;
-    right: auto;
-    bottom: auto;
-    min-width: 0;
-    width: 100%;
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-    backdrop-filter: none;
+    position:static; left:auto; right:auto; bottom:auto;
+    min-width:0; width:100%; margin:0;
+    border:0; border-radius:0; background:transparent;
+    box-shadow:none; backdrop-filter:none;
 }
-.map-control-row .opacity-control label {
-    color: #9eb5c3;
-}
-.map-control-row .opacity-control input {
-    flex: 1;
-    min-width: 80px;
-}
-.map-control-row .opacity-value {
-    color: #38b8ff;
-}
-@media (max-width: 800px) {
-    .map-control-row {
-        grid-template-columns: 1fr;
-        gap: 6px;
-        padding: 8px;
-    }
-    .map-control-row .map-control-opacity {
-        min-height: 34px;
-    }
-    .map-control-row .map-history-control {
-        grid-template-columns: 1fr;
-    }
+.map-control-row .opacity-control label { color:#9eb5c3; }
+.map-control-row .opacity-control input { flex:1; min-width:80px; }
+.map-control-row .opacity-value { color:#38b8ff; }
+@media (max-width:800px) {
+    .map-control-row { grid-template-columns:1fr; gap:6px; padding:8px; }
+    .map-control-row .map-control-opacity { min-height:34px; }
+    .map-control-row .map-history-control { grid-template-columns:1fr; }
 }
 
 /* ===================== Three-column operational viewer ===================== */
@@ -2643,15 +2607,17 @@ body { min-height: 100vh; }
                 </div>
             </div>
 
-            <div class="map-history-control" aria-label="MRMS history timeline">
-                <div class="history-transport">
-                    <button id="mapHistoryPrev" class="map-history-btn" type="button"
-                        onclick="historyStep(-1)" title="Previous frame">◀</button>
-                    <button id="mapHistoryPlay" class="map-history-btn map-history-play" type="button"
-                        onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
-                    <button id="mapHistoryNext" class="map-history-btn" type="button"
-                        onclick="historyStep(1)" title="Next frame">▶</button>
-                         <button type="button" onclick="quickRegion('conus')">CONUS</button>
+            <aside class="viewer-right-data" aria-label="Frame information">
+                <div class="viewer-right-data-title">Frame Information</div>
+                <p><strong>Source:</strong> MRMS national merged reflectivity</p>
+                <p><strong>Products:</strong> radar, precipitation type, RAP phase and radar evidence</p>
+                <p><strong>History:</strong> use the timeline to inspect archived scans</p>
+            </aside>
+
+            <aside class="viewer-quicklinks" aria-label="Regional quick links">
+                <div class="viewer-quicklinks-title">Quick Links</div>
+                <div class="viewer-quicklinks-grid">
+                    <button type="button" onclick="quickRegion('conus')">CONUS</button>
                     <button type="button" onclick="quickRegion('northeast')">Northeast</button>
                     <button type="button" onclick="quickRegion('midwest')">Midwest</button>
                     <button type="button" onclick="quickRegion('plains')">Plains</button>
@@ -2664,8 +2630,6 @@ body { min-height: 100vh; }
             </aside>
 
             <div id="searchResults" class="search-results"></div>
-
-        </div>
 
         </div>
 
@@ -2731,7 +2695,9 @@ body { min-height: 100vh; }
             </div>
         </div>
 
-ass="map-toolbar">
+
+
+        <div class="map-toolbar">
 
             <div class="toolbar-group">
                 <form class="search-form" onsubmit="searchPlace(event)">
