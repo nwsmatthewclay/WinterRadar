@@ -3347,27 +3347,30 @@ async function loadRasterWithFallback(urls, bounds, opacity, zIndex, className, 
 
 function radarDisplaySpec() {
     return {
-        mode: "national",
-        url: "./outputs/mrms_current_web.png?v=" + Date.now(),
-        bounds: MRMS_NATIONAL_BOUNDS
+        mode: "regional",
+        url: "./outputs/mrms_current_regional_web.webp?v=" + Date.now(),
+        fallback: "./outputs/mrms_current_regional_web.png?v=" + Date.now(),
+        bounds: MRMS_REGIONAL_BOUNDS
     };
 }
 
 
 function phaseDisplaySpec() {
     return {
-        mode: "national",
-        url: "./outputs/winter_phase_mask_web.png?v=" + Date.now(),
-        bounds: MRMS_NATIONAL_BOUNDS
+        mode: "regional",
+        url: "./outputs/winter_phase_mask_regional_web.webp?v=" + Date.now(),
+        fallback: "./outputs/winter_phase_mask_regional_web.png?v=" + Date.now(),
+        bounds: MRMS_REGIONAL_BOUNDS
     };
 }
 
 
 function precipTypeDisplaySpec() {
     return {
-        mode: "national",
-        url: "./outputs/winter_radar_composite_web.png?v=" + Date.now(),
-        bounds: MRMS_NATIONAL_BOUNDS
+        mode: "regional",
+        url: "./outputs/winter_radar_composite_regional_web.webp?v=" + Date.now(),
+        fallback: "./outputs/winter_radar_composite_regional_web.png?v=" + Date.now(),
+        bounds: MRMS_REGIONAL_BOUNDS
     };
 }
 
@@ -3387,7 +3390,12 @@ function loadCurrentPrecipTypeOverlay(force = false) {
     precipTypeDisplayMode = spec.mode;
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
     loadRasterWithFallback(
-        ["./outputs/winter_radar_composite_web.webp?v=" + stamp, "./outputs/winter_radar_composite_web.png?v=" + stamp, "./outputs/winter_precip_type_web.webp?v=" + stamp, "./outputs/winter_precip_type_web.png?v=" + stamp],
+        [
+            "./outputs/winter_radar_composite_regional_web.webp?v=" + stamp,
+            "./outputs/winter_radar_composite_regional_web.png?v=" + stamp,
+            "./outputs/winter_precip_type_regional_web.webp?v=" + stamp,
+            "./outputs/winter_precip_type_regional_web.png?v=" + stamp
+        ],
         spec.bounds, overlayOpacity, 540, "winter-raster-sharp",
         function(layer) {
             precipTypeOverlay = layer;
@@ -3407,7 +3415,7 @@ function loadCurrentPrecipTypeOverlay(force = false) {
 
 
 function refreshPrecipTypeResolutionOnView() {
-    // The live composite is always the full national MRMS mosaic.
+    // The compact NEUS browser raster is already the sharp operational layer.
     return;
 }
 
