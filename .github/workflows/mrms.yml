@@ -273,6 +273,9 @@ jobs:
           cp outputs/phase_probability.png site/outputs/phase_probability.png
           cp outputs/phase_diagnostics.png site/outputs/phase_diagnostics.png
           cp outputs/phase_qc.json site/outputs/phase_qc.json
+          if [ -s outputs/precip_obs_qc.json ]; then
+            cp outputs/precip_obs_qc.json site/outputs/precip_obs_qc.json
+          fi
           cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
           cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
           cp outputs/main.log site/outputs/main.log
