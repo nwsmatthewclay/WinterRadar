@@ -5833,8 +5833,9 @@ async function refreshData() {
             healthMRMSDetail.textContent = "Valid " + display;
         }
 
-        // Radar display is driven exclusively by the history manifest.
-        // Do not load the separate live raster path.
+        // The current operational map is driven directly by the freshly
+        // generated live MRMS rasters. The history manifest is only for the
+        // optional timestamped timeline.
         updateDynamicMapLegend();
 
         if (document.getElementById("phaseToggle")?.checked && phaseOverlay) {
