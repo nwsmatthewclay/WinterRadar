@@ -1727,6 +1727,484 @@ html, body {
     }
 }
 
+
+/* ------------------------------------------------------------------
+   WinterRadar viewer redesign
+   Preserve the existing history/radar engine; restyle the presentation
+   as a full-screen operational viewer inspired by the approved mockup.
+   ------------------------------------------------------------------ */
+:root {
+    --bg: #061522;
+    --panel: rgba(5, 22, 35, .94);
+    --panel-strong: #071b2b;
+    --panel-soft: rgba(11, 35, 53, .90);
+    --line: rgba(93, 137, 164, .42);
+    --text: #f4f8fb;
+    --muted: #9eb2c0;
+    --accent: #1598ff;
+    --accent-bright: #38b8ff;
+}
+
+html, body {
+    background:
+        radial-gradient(circle at 50% -20%, rgba(24, 91, 130, .32), transparent 42%),
+        #061522;
+    color: var(--text);
+}
+
+body { min-height: 100vh; }
+
+.topbar {
+    position: sticky;
+    min-height: 76px;
+    padding: 10px 18px;
+    background: linear-gradient(180deg, #071d30 0%, #061522 100%);
+    border-bottom: 1px solid rgba(71, 125, 160, .42);
+    box-shadow: 0 5px 20px rgba(0,0,0,.28);
+}
+
+.brand { gap: 12px; min-width: 270px; }
+.brand-mark {
+    width: 48px;
+    height: 48px;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    display: grid;
+    place-items: center;
+}
+.brand-mark::before {
+    content: "❄";
+    color: #168fff;
+    font-size: 42px;
+    line-height: 1;
+    text-shadow: 0 0 18px rgba(22,143,255,.25);
+}
+.brand-title {
+    color: #f7fbff;
+    font-size: 27px;
+    letter-spacing: -.04em;
+}
+.brand-title::first-letter { color: #f7fbff; }
+.brand-subtitle {
+    color: #9db2c0;
+    font-size: 10px;
+    letter-spacing: .02em;
+}
+
+.viewer-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    flex: 1;
+}
+.viewer-nav button {
+    min-height: 42px;
+    padding: 0 17px;
+    border: 1px solid rgba(89, 131, 157, .45);
+    border-radius: 7px;
+    background: rgba(7, 27, 43, .84);
+    color: #dce8ef;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .01em;
+}
+.viewer-nav button:hover,
+.viewer-nav button.active {
+    background: linear-gradient(180deg, #138ff1, #0872cb);
+    border-color: #1ba4ff;
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(0, 125, 230, .25);
+}
+
+.top-actions { gap: 6px; }
+.top-actions .status { display: none; }
+.top-actions .button {
+    min-height: 38px;
+    border-color: rgba(89, 131, 157, .45);
+    background: rgba(7, 27, 43, .84);
+    color: #dce8ef;
+}
+.top-actions .button:hover { background: #0d3550; color: #fff; }
+
+.container {
+    width: min(1900px, calc(100% - 16px));
+    margin: 8px auto 22px;
+}
+.heading, .map-header, .map-toolbar, .info-strip, .history-panel { display: none !important; }
+
+.map-card {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.map-wrap {
+    overflow: hidden;
+    border: 1px solid rgba(72, 122, 154, .44);
+    border-radius: 9px;
+    background: #061522;
+    box-shadow: 0 10px 30px rgba(0,0,0,.32);
+}
+#map {
+    height: min(78vh, 860px);
+    min-height: 560px;
+    background: #071b2a;
+}
+
+/* Left operational layer panel */
+.layer-box {
+    top: 16px;
+    left: 16px;
+    right: auto;
+    width: 252px;
+}
+.layer-toggle { display: none; }
+.layer-panel,
+.layer-panel.open {
+    display: block;
+    margin: 0;
+    padding: 14px;
+    border: 1px solid rgba(91, 138, 166, .45);
+    border-radius: 9px;
+    background: rgba(4, 20, 32, .94);
+    color: #e9f2f7;
+    box-shadow: 0 8px 22px rgba(0,0,0,.34);
+    backdrop-filter: blur(8px);
+}
+.layer-panel::before {
+    content: "MAP LAYERS";
+    display: block;
+    margin-bottom: 11px;
+    color: #f3f8fb;
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: .02em;
+}
+.layer-panel .layer-menu-note {
+    border-left-color: #138ff1;
+    background: rgba(19, 84, 123, .22);
+    color: #9db4c3;
+}
+.layer-panel .layer-title {
+    color: #7fa4b9;
+    font-size: 8px;
+}
+.layer-panel .layer-row {
+    min-height: 32px;
+    color: #e3edf3;
+    font-size: 11px;
+}
+.layer-panel .layer-row:hover {
+    color: #fff;
+}
+.layer-panel .diagnostic-toggle {
+    border-color: rgba(86, 137, 167, .45);
+    background: #0a293e;
+    color: #d9e8f0;
+}
+.layer-panel .diagnostic-toggle.active {
+    background: #0c4770;
+    border-color: #168fff;
+}
+
+/* Right timestamp/legend/quick-link stack */
+.viewer-time-panel,
+.viewer-quicklinks {
+    position: absolute;
+    right: 16px;
+    z-index: 1305;
+    width: 252px;
+    border: 1px solid rgba(91, 138, 166, .45);
+    border-radius: 9px;
+    background: rgba(4, 20, 32, .94);
+    box-shadow: 0 8px 22px rgba(0,0,0,.34);
+    backdrop-filter: blur(8px);
+}
+.viewer-time-panel {
+    top: 16px;
+    padding: 13px 15px;
+}
+.viewer-time-date {
+    color: #a7bbc8;
+    font-size: 10px;
+}
+.viewer-time-utc {
+    margin-top: 2px;
+    color: #fff;
+    font-size: 26px;
+    font-weight: 900;
+    line-height: 1.08;
+    letter-spacing: -.03em;
+}
+.viewer-time-local {
+    margin-top: 3px;
+    color: #a7bbc8;
+    font-size: 10px;
+}
+.viewer-time-status {
+    display: inline-flex;
+    margin-top: 9px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: #15915c;
+    color: #fff;
+    font-size: 8px;
+    font-weight: 900;
+}
+.viewer-time-scan {
+    margin-top: 8px;
+    color: #8da7b6;
+    font-size: 8px;
+    line-height: 1.4;
+}
+
+.map-legend {
+    top: 146px;
+    right: 16px;
+    left: auto;
+    bottom: auto;
+    width: 252px;
+    max-height: 43%;
+    padding: 13px;
+    border: 1px solid rgba(91, 138, 166, .45);
+    border-radius: 9px;
+    background: rgba(4, 20, 32, .94);
+    color: #dfeaf0;
+    box-shadow: 0 8px 22px rgba(0,0,0,.34);
+    backdrop-filter: blur(8px);
+}
+.map-legend-title,
+.map-legend-label {
+    color: #f0f6fa;
+}
+.map-legend-section + .map-legend-section { border-color: rgba(91,138,166,.28); }
+.map-legend-item,
+.map-legend-note,
+.map-legend .legend-state-note,
+.map-legend .legend-confidence span { color: #a9bcc8; }
+.reflectivity-label-row { color: #9ab0bd; }
+
+.viewer-quicklinks {
+    bottom: 132px;
+    padding: 11px;
+}
+.viewer-quicklinks-title {
+    margin-bottom: 8px;
+    color: #f0f6fa;
+    font-size: 11px;
+    font-weight: 900;
+}
+.viewer-quicklinks-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+.viewer-quicklinks button {
+    min-height: 42px;
+    border: 1px solid rgba(78, 128, 158, .42);
+    border-radius: 6px;
+    background: #09263a;
+    color: #cfe0e9;
+    cursor: pointer;
+    font: inherit;
+    font-size: 8px;
+    font-weight: 800;
+}
+.viewer-quicklinks button:hover {
+    background: #0d4770;
+    border-color: #168fff;
+    color: #fff;
+}
+
+/* Clean bottom timeline: no thumbnails. */
+.map-history-control {
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 13px;
+    padding: 12px 14px 10px;
+    border: 1px solid rgba(91, 138, 166, .48);
+    border-radius: 9px;
+    background: rgba(4, 20, 32, .95);
+    box-shadow: 0 8px 22px rgba(0,0,0,.38);
+    backdrop-filter: blur(8px);
+}
+.history-transport {
+    display: flex;
+    gap: 5px;
+}
+.map-history-btn {
+    min-width: 36px;
+    height: 34px;
+    border-color: rgba(91, 138, 166, .5);
+    border-radius: 6px;
+    background: #09263a;
+    color: #e7f1f6;
+}
+.map-history-btn:hover:not(:disabled) { background: #0d4770; }
+.map-history-btn.map-history-play {
+    min-width: 42px;
+    background: #138ff1;
+    border-color: #1598ff;
+    color: #fff;
+}
+.history-timeline {
+    min-width: 0;
+}
+.history-current-time {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 3px;
+    color: #fff;
+}
+.history-current-time strong {
+    font-size: 18px;
+    font-weight: 900;
+}
+.history-current-time span {
+    color: #9eb5c3;
+    font-size: 10px;
+}
+#mapHistorySlider {
+    height: 24px;
+}
+#mapHistorySlider::-webkit-slider-runnable-track {
+    height: 7px;
+    background: #29485d;
+}
+#mapHistorySlider::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+    margin-top: -5.5px;
+    border: 3px solid #061522;
+    background: #1598ff;
+    box-shadow: 0 0 0 2px #1598ff;
+}
+#mapHistorySlider::-moz-range-track { height: 7px; background: #29485d; }
+#mapHistorySlider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 3px solid #061522;
+    background: #1598ff;
+}
+.history-scale {
+    display: flex;
+    justify-content: space-between;
+    color: #7893a3;
+    font-size: 8px;
+    font-weight: 700;
+}
+.history-jumps {
+    display: flex;
+    gap: 5px;
+}
+.history-jumps button {
+    min-width: 42px;
+    height: 32px;
+    border: 1px solid rgba(91, 138, 166, .45);
+    border-radius: 5px;
+    background: #09263a;
+    color: #cfe0e9;
+    cursor: pointer;
+    font: inherit;
+    font-size: 8px;
+    font-weight: 800;
+}
+.history-jumps button:hover { background: #0d4770; color: #fff; }
+.map-history-readout { display: none; }
+
+/* Timestamp badge on map is redundant in the new layout. */
+.radar-time { display: none; }
+.loading {
+    top: 16px;
+    left: 286px;
+    border-color: rgba(91,138,166,.5);
+    background: rgba(4,20,32,.92);
+    color: #cfe0e9;
+}
+.opacity-control {
+    left: 286px;
+    right: auto;
+    bottom: 104px;
+    border-color: rgba(91,138,166,.5);
+    background: rgba(4,20,32,.92);
+    color: #dfeaf0;
+}
+.opacity-control label { color: #9eb5c3; }
+.opacity-value { color: #38b8ff; }
+
+.diagnostic-readout {
+    right: 286px;
+    bottom: 108px;
+    border-color: rgba(91,138,166,.5);
+    background: rgba(4,20,32,.96);
+    color: #dfeaf0;
+}
+.diagnostic-readout-title,
+.diagnostic-readout-value { color: #f0f6fa; }
+.diagnostic-readout-label { color: #8fa8b7; }
+.diagnostic-readout-assessment { background: #0a293e; color: #b9cbd5; }
+
+.search-results {
+    left: 286px;
+    bottom: 108px;
+    border-color: rgba(91,138,166,.5);
+    background: rgba(4,20,32,.96);
+    color: #dfeaf0;
+}
+.result-row { border-color: rgba(91,138,166,.25); }
+.result-row:hover { background: #0a293e; }
+.result-row span { color: #9eb5c3; }
+
+.footer { color: #7893a3; background: transparent; border-color: rgba(91,138,166,.25); }
+
+@media (max-width: 1100px) {
+    .viewer-nav button { padding: 0 10px; font-size: 9px; }
+    .brand { min-width: 230px; }
+    .brand-title { font-size: 23px; }
+    .layer-box { width: 220px; }
+    .viewer-time-panel, .map-legend, .viewer-quicklinks { width: 220px; }
+    .loading, .opacity-control { left: 246px; }
+    .diagnostic-readout, .search-results { right: 246px; }
+}
+@media (max-width: 800px) {
+    .topbar { flex-wrap: wrap; }
+    .viewer-nav { order: 3; width: 100%; overflow-x: auto; justify-content: flex-start; }
+    .top-actions { margin-left: auto; }
+    .brand { min-width: 0; }
+    .viewer-time-panel, .map-legend, .viewer-quicklinks, .layer-box { width: 200px; }
+    .map-history-control {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
+    .history-transport, .history-jumps { justify-content: center; }
+    .history-jumps { flex-wrap: wrap; }
+    .loading, .opacity-control { left: 12px; }
+    .opacity-control { bottom: 165px; }
+    .diagnostic-readout, .search-results { right: 12px; }
+}
+@media (max-width: 600px) {
+    #map { min-height: 520px; height: 68vh; }
+    .layer-box { top: 10px; left: 10px; width: 180px; }
+    .viewer-time-panel { top: 10px; right: 10px; width: 180px; }
+    .map-legend { top: 128px; right: 10px; width: 180px; }
+    .viewer-quicklinks { display: none; }
+    .layer-panel { padding: 10px; }
+    .layer-panel .layer-row { min-height: 28px; font-size: 9px; }
+    .viewer-time-utc { font-size: 20px; }
+    .history-jumps button { min-width: 38px; }
+}
+
 </style>
 </head>
 
@@ -1741,10 +2219,16 @@ html, body {
         </div>
     </div>
 
+    <nav class="viewer-nav" aria-label="WinterRadar products">
+        <button type="button" class="active" data-view="radar" onclick="setPrimaryView('radar')">◉ Radar</button>
+        <button type="button" data-view="precip" onclick="setPrimaryView('precip')">◒ Precip Type</button>
+        <button type="button" data-view="phase" onclick="setPrimaryView('phase')">✳ Phase (RAP)</button>
+        <button type="button" data-view="composite" onclick="setPrimaryView('composite')">▱ Composite</button>
+        <button type="button" data-view="comparison" onclick="setPrimaryView('comparison')">⇄ Comparison</button>
+    </nav>
     <div class="top-actions">
-        <div class="status">Auto-refresh every 5 min</div>
         <button class="button export-button" type="button" onclick="openExportModal()">Export</button>
-        <button class="button" type="button" onclick="refreshData()">Refresh</button>
+        <button class="button" type="button" onclick="refreshHistoryManifest()">Refresh</button>
     </div>
 </header>
 
@@ -1789,6 +2273,13 @@ html, body {
                 <span class="radar-time-label">MRMS</span>
                 <span id="radarTime">Loading…</span>
             </div>
+            <aside id="viewerTimePanel" class="viewer-time-panel" aria-label="Current frame time">
+                <div id="viewerTimeDate" class="viewer-time-date">Loading…</div>
+                <div id="viewerTimeUtc" class="viewer-time-utc">--:-- UTC</div>
+                <div id="viewerTimeLocal" class="viewer-time-local">Loading local time…</div>
+                <div id="viewerTimeStatus" class="viewer-time-status">Latest Available</div>
+                <div id="viewerTimeScan" class="viewer-time-scan">MRMS scan: Loading…<br>History frame: Loading…</div>
+            </aside>
 
             <div class="map-legend" aria-label="WinterRadar map legend">
                 <div class="map-legend-title">Map Legend</div>
@@ -1989,34 +2480,64 @@ html, body {
                 <span id="opacityValue" class="opacity-value">0%</span>
             </div>
 
-            <div class="map-history-control" aria-label="8-hour CONUS MRMS history controls">
-                <button id="mapHistoryPrev" class="map-history-btn" type="button"
-                    onclick="historyStep(-1)" title="Previous frame">◀</button>
-                <button id="mapHistoryPlay" class="map-history-btn" type="button"
-                    onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
-
-                <div class="map-history-slider-wrap">
-                    <input
-                        id="mapHistorySlider"
-                        type="range"
-                        min="0"
-                        max="0"
-                        value="0"
-                        step="1"
-                        disabled
-                        oninput="selectHistoryFrame(Number(this.value), true)"
-                        aria-label="MRMS history time"
-                    >
+            <div class="map-history-control" aria-label="MRMS history timeline">
+                <div class="history-transport">
+                    <button id="mapHistoryPrev" class="map-history-btn" type="button"
+                        onclick="historyStep(-1)" title="Previous frame">◀</button>
+                    <button id="mapHistoryPlay" class="map-history-btn map-history-play" type="button"
+                        onclick="toggleHistoryPlayback()" title="Play / pause">▶</button>
+                    <button id="mapHistoryNext" class="map-history-btn" type="button"
+                        onclick="historyStep(1)" title="Next frame">▶</button>
                 </div>
-
-                <button id="mapHistoryNext" class="map-history-btn" type="button"
-                    onclick="historyStep(1)" title="Next frame">▶</button>
-
-                <button class="map-history-btn map-history-live" type="button"
-                    onclick="showLiveMap()" title="Return to latest MRMS scan">LIVE</button>
-
-                <div id="mapHistoryReadout" class="map-history-readout">LIVE</div>
+                <div class="history-timeline">
+                    <div class="history-current-time">
+                        <strong id="mapHistoryCurrentTime">--:-- UTC</strong>
+                        <span id="mapHistoryCurrentLocal"></span>
+                    </div>
+                    <div class="map-history-slider-wrap">
+                        <input
+                            id="mapHistorySlider"
+                            type="range"
+                            min="0"
+                            max="0"
+                            value="0"
+                            step="1"
+                            disabled
+                            oninput="selectHistoryFrame(Number(this.value), true)"
+                            aria-label="MRMS history time"
+                        >
+                    </div>
+                    <div class="history-scale">
+                        <span id="historyScaleStart">--:--</span>
+                        <span id="historyScaleMid">--:--</span>
+                        <span id="historyScaleEnd">--:--</span>
+                    </div>
+                </div>
+                <div class="history-jumps" aria-label="History time jumps">
+                    <button type="button" onclick="historyJumpMinutes(-60)">−1h</button>
+                    <button type="button" onclick="historyJumpMinutes(-30)">−30m</button>
+                    <button type="button" onclick="historyJumpMinutes(-10)">−10m</button>
+                    <button type="button" onclick="historyJumpMinutes(10)">+10m</button>
+                    <button type="button" onclick="historyJumpMinutes(30)">+30m</button>
+                    <button type="button" onclick="historyJumpMinutes(60)">+1h</button>
+                </div>
+                <div id="mapHistoryReadout" class="map-history-readout">History unavailable</div>
             </div>
+
+            <aside class="viewer-quicklinks" aria-label="Regional quick links">
+                <div class="viewer-quicklinks-title">Quick Links</div>
+                <div class="viewer-quicklinks-grid">
+                    <button type="button" onclick="quickRegion('conus')">CONUS</button>
+                    <button type="button" onclick="quickRegion('northeast')">Northeast</button>
+                    <button type="button" onclick="quickRegion('midwest')">Midwest</button>
+                    <button type="button" onclick="quickRegion('plains')">Plains</button>
+                    <button type="button" onclick="quickRegion('west')">West</button>
+                    <button type="button" onclick="quickRegion('southeast')">Southeast</button>
+                    <button type="button" onclick="quickRegion('alaska')">Alaska</button>
+                    <button type="button" onclick="quickRegion('hawaii')">Hawaii</button>
+                    <button type="button" onclick="quickRegion('pr')">Puerto Rico</button>
+                </div>
+            </aside>
 
             <div id="searchResults" class="search-results"></div>
 
@@ -4080,6 +4601,77 @@ function setOverlayOpacity(percent) {
 }
 
 
+function setPrimaryView(view) {
+    const ids = {
+        radar: ["radarToggle"],
+        precip: ["radarToggle", "precipTypeToggle"],
+        phase: ["radarToggle", "phaseToggle"],
+        composite: ["radarToggle", "precipTypeToggle"],
+        comparison: ["radarToggle", "phaseAgreementToggle"]
+    };
+
+    const targetIds = ids[view] || ids.radar;
+    const allProductIds = [
+        "radarToggle",
+        "precipTypeToggle",
+        "phaseToggle",
+        "radarFusionToggle",
+        "phaseAgreementToggle"
+    ];
+
+    allProductIds.forEach(function(id) {
+        const checkbox = document.getElementById(id);
+        if (!checkbox) return;
+        const shouldBeChecked = targetIds.includes(id);
+        if (checkbox.checked !== shouldBeChecked) {
+            checkbox.click();
+        }
+    });
+
+    document.querySelectorAll(".viewer-nav button[data-view]").forEach(function(button) {
+        button.classList.toggle("active", button.dataset.view === view);
+    });
+}
+
+function quickRegion(region) {
+    if (!map) return;
+    const bounds = {
+        conus: [[24.0, -125.0], [50.0, -66.0]],
+        northeast: [[39.5, -80.5], [47.8, -66.0]],
+        midwest: [[36.0, -103.0], [49.5, -80.0]],
+        plains: [[28.0, -112.0], [49.5, -95.0]],
+        west: [[30.0, -125.0], [49.5, -102.0]],
+        southeast: [[24.0, -94.0], [39.0, -74.0]],
+        alaska: [[51.0, -170.0], [72.0, -130.0]],
+        hawaii: [[18.5, -161.0], [22.5, -154.0]],
+        pr: [[17.5, -68.5], [18.7, -65.0]]
+    }[region];
+
+    if (bounds) {
+        map.fitBounds(bounds, {padding: [24, 24], animate: true});
+    }
+}
+
+function historyJumpMinutes(minutes) {
+    if (!historyFrames.length) return;
+    const current = historyFrames[historyIndex];
+    if (!current) return;
+
+    const target = new Date(current.timestamp_utc).getTime() + (minutes * 60 * 1000);
+    let bestIndex = historyIndex;
+    let bestDistance = Infinity;
+
+    historyFrames.forEach(function(frame, index) {
+        const distance = Math.abs(new Date(frame.timestamp_utc).getTime() - target);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+        }
+    });
+
+    renderHistoryFrame(bestIndex, false);
+}
+
 function formatUtcTime(value) {
     const dt = new Date(value);
     if (!Number.isFinite(dt.getTime())) return "Invalid time";
@@ -4215,8 +4807,65 @@ function updateHistoryReadout() {
     }
 
     const frame = historyFrames[historyIndex];
+    const frameDate = new Date(frame.timestamp_utc);
     main.textContent = formatUtcTime(frame.timestamp_utc);
     count.textContent = "  •  Frame " + (historyIndex + 1) + " of " + historyFrames.length;
+
+    const viewerDate = document.getElementById("viewerTimeDate");
+    const viewerUtc = document.getElementById("viewerTimeUtc");
+    const viewerLocal = document.getElementById("viewerTimeLocal");
+    const viewerStatus = document.getElementById("viewerTimeStatus");
+    const viewerScan = document.getElementById("viewerTimeScan");
+    const currentTime = document.getElementById("mapHistoryCurrentTime");
+    const currentLocal = document.getElementById("mapHistoryCurrentLocal");
+    const scaleStart = document.getElementById("historyScaleStart");
+    const scaleMid = document.getElementById("historyScaleMid");
+    const scaleEnd = document.getElementById("historyScaleEnd");
+
+    if (viewerDate && Number.isFinite(frameDate.getTime())) {
+        viewerDate.textContent = new Intl.DateTimeFormat("en-US", {
+            weekday: "short", month: "short", day: "numeric", year: "numeric",
+            timeZone: "UTC"
+        }).format(frameDate);
+    }
+    if (viewerUtc && Number.isFinite(frameDate.getTime())) {
+        viewerUtc.textContent = new Intl.DateTimeFormat("en-US", {
+            hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC"
+        }).format(frameDate) + " UTC";
+    }
+    if (viewerLocal) viewerLocal.textContent = formatLocalTime(frame.timestamp_utc);
+    if (viewerStatus) {
+        const latest = historyIndex === historyFrames.length - 1;
+        viewerStatus.textContent = latest ? "Latest Available" : "Archived Frame";
+        viewerStatus.style.background = latest ? "#15915c" : "#23658c";
+    }
+    if (viewerScan) {
+        viewerScan.innerHTML =
+            "MRMS scan: " + formatUtcTime(frame.timestamp_utc) +
+            "<br>Frame " + (historyIndex + 1) + " of " + historyFrames.length;
+    }
+    if (currentTime && Number.isFinite(frameDate.getTime())) {
+        currentTime.textContent = new Intl.DateTimeFormat("en-US", {
+            hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC"
+        }).format(frameDate) + " UTC";
+    }
+    if (currentLocal) currentLocal.textContent = formatLocalTime(frame.timestamp_utc);
+
+    if (historyFrames.length) {
+        const first = new Date(historyFrames[0].timestamp_utc);
+        const last = new Date(historyFrames[historyFrames.length - 1].timestamp_utc);
+        const mid = new Date(
+            (first.getTime() + last.getTime()) / 2
+        );
+        const label = function(dt) {
+            return new Intl.DateTimeFormat("en-US", {
+                hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC"
+            }).format(dt);
+        };
+        if (scaleStart) scaleStart.textContent = label(first) + "Z";
+        if (scaleMid) scaleMid.textContent = label(mid) + "Z";
+        if (scaleEnd) scaleEnd.textContent = label(last) + "Z";
+    }
 
     const phaseTime = frame.phase_timestamp_utc
         ? formatUtcTime(frame.phase_timestamp_utc)
@@ -4251,8 +4900,8 @@ function updateHistoryReadout() {
         status.textContent = "History mode";
         status.className = "history-status";
     } else {
-        status.textContent = "LIVE";
-        status.className = "history-status live";
+        status.textContent = "History viewer";
+        status.className = "history-status";
     }
 }
 
