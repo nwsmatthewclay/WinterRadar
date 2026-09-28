@@ -5166,37 +5166,30 @@ function loadHistoricalOverlay(options) {
 
                 assignPending(overlay);
 
-                overlay.once("load", function() {
-                    if (requestId !== historyRenderRequest || !historyMode) {
-                        removeMapOverlay(overlay);
-                        resolve(null);
-                        return;
-                    }
-                    // History is a discrete sequence of observed scans.
-                    // Replace the active frame immediately after the new image
-                    // is decoded; never cross-fade or briefly stack two scans.
-                    overlay.setOpacity(opacity);
-
-                    if (requestId !== historyRenderRequest || !historyMode) {
-                        removeMapOverlay(overlay);
-                        resolve(null);
-                        return;
-                    }
-
-                    // Remove the previous active frame only after the replacement
-                    // is ready, so a slow network request cannot leave the map blank.
-                    onLoaded(overlay);
-                    resolve(overlay);
-                });
-
                 overlay.once("error", function() {
                     removeMapOverlay(overlay);
                     overlay = null;
                     tryNext().catch(reject);
                 });
 
+                // The image bytes have already been fetched and explicitly
+                // browser-decoded above. Do not wait for a second Leaflet image
+                // load event; that event can be unreliable with Blob URLs and
+                // otherwise leaves a perfectly valid raster invisible.
                 overlay.addTo(map);
-                overlay.setOpacity(0);
+                overlay.setOpacity(opacity);
+
+                if (requestId !== historyRenderRequest || !historyMode) {
+                    removeMapOverlay(overlay);
+                    resolve(null);
+                    return;
+                }
+
+                // History is a discrete sequence of observed scans. Replace the
+                // active frame immediately after browser decode; never cross-fade
+                // or briefly stack two scans.
+                onLoaded(overlay);
+                resolve(overlay);
             } catch (error) {
                 console.warn("Historical raster load attempt failed:", url, error);
                 revokeHistoryObjectUrl();
@@ -6502,9 +6495,9 @@ document.addEventListener("pointerup", function() {
     syncHistorySliderValues();
 });
 
-// Start with the winter radar composite visible. The opacity slider can
-// still be used to fade it down for comparison with the underlying radar.
-setOverlayOpacity(0.85);
+// Start with the winter radar composite at 85% opacity. The UI value
+// is transparency, so 15% transparency gives a strong but readable overlay.
+setOverlayOpacity(15);
 
 // The composite is intentionally the default visual product on first load.
 // The checkbox state is established in initializeMap(); this call makes the
