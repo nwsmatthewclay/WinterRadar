@@ -3530,28 +3530,28 @@ function loadCurrentPhaseOverlay(force = false) {
 
     removeMapOverlay(phaseOverlay);
     phaseOverlay = null;
-    phaseDisplayMode = "national";
+    phaseDisplayMode = "regional";
     setPhaseLayerIndicator(
         "loading",
         "Loading…",
-        "Loading national winter phase raster."
+        "Loading compact Northeast U.S. winter phase raster."
     );
 
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
 
     loadRasterWithFallback(
         [
-            "./outputs/winter_phase_mask_web.webp?v=" + stamp,
-            "./outputs/winter_phase_mask_web.png?v=" + stamp
+            "./outputs/winter_phase_mask_regional_web.webp?v=" + stamp,
+            "./outputs/winter_phase_mask_regional_web.png?v=" + stamp
         ],
-        MRMS_NATIONAL_BOUNDS,
+        MRMS_REGIONAL_BOUNDS,
         overlayOpacity,
         550,
         "winter-raster-sharp",
         function(layer, url, bytes, decoded) {
             phaseOverlay = layer;
             updateDynamicMapLegend();
-            phaseDisplayMode = "national";
+            phaseDisplayMode = "regional";
             updatePhaseLayerStatusFromMetadata(currentMRMSMetadata, decoded);
         },
         function() {
@@ -3561,7 +3561,7 @@ function loadCurrentPhaseOverlay(force = false) {
             setPhaseLayerIndicator(
                 "failed",
                 "Load failed",
-                "The national winter phase raster could not be fetched or rendered."
+                "The compact Northeast U.S. winter phase raster could not be fetched or rendered."
             );
             updateDynamicMapLegend();
         },
@@ -3570,7 +3570,7 @@ function loadCurrentPhaseOverlay(force = false) {
 }
 
 function refreshPhaseResolutionOnView() {
-    // The live phase mask is always the full national MRMS mosaic.
+    // The compact Northeast U.S. browser raster is already the sharp operational layer.
     return;
 }
 
@@ -3600,9 +3600,9 @@ function loadCurrentRadarOverlay(force = false) {
 
     loadRasterWithFallback(
         [
-            "./outputs/mrms_current_web.webp?v=" + Date.now(),
-            spec.url
-        ],
+            spec.url,
+            spec.fallback
+        ].filter(Boolean),
         spec.bounds,
         overlayOpacity,
         500,
@@ -3632,7 +3632,7 @@ function loadCurrentRadarOverlay(force = false) {
 }
 
 function refreshRadarResolutionOnView() {
-    // The live MRMS reflectivity layer is always the full national mosaic.
+    // The compact Northeast U.S. browser raster is already the sharp operational layer.
     return;
 }
 
