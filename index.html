@@ -5231,6 +5231,7 @@ async function refreshHistoryManifest() {
     if (historyRefreshBusy) return;
     historyRefreshBusy = true;
 
+    const wasInHistoryMode = historyMode;
     const wasAtLatest =
         !historyFrames.length ||
         historyIndex < 0 ||
@@ -5304,10 +5305,17 @@ async function refreshHistoryManifest() {
             return;
         }
 
-        // The history slider is now the only radar display path.
-        // Always render the newest frame on initial load.
-        historyMode = true;
-        renderHistoryFrame(historyIndex, false);
+        // The live map and the history timeline are separate display paths.
+        // The current operational map stays on the freshly generated MRMS
+        // rasters; only an explicit history interaction switches to a stored
+        // timestamped frame.
+        if (wasInHistoryMode || historyMode) {
+            historyMode = true;
+            renderHistoryFrame(historyIndex, false);
+        } else {
+            historyMode = false;
+            setHistoryStatus("History ready");
+        }
 
     } catch (error) {
         console.warn("MRMS history update failed:", error);
@@ -5690,6 +5698,64 @@ function toggleHistoryPlayback() {
 }
 
 
+function setCurrentBoundsFromMetadata(metadata) {
+    if (!metadata || !Array.isArray(metadata.bounds) || metadata.bounds.length !== 4) {
+        return false;
+    }
+
+    const south = Number(metadata.bounds[0]);
+    const west = Number(metadata.bounds[1]);
+    const north = Number(metadata.bounds[2]);
+    const east = Number(metadata.bounds[3]);
+
+    if (!Number.isFinite(south) || !Number.isFinite(west) ||
+        !Number.isFinite(north) || !Number.isFinite(east) ||
+        south >= north || west >= east) {
+        return false;
+    }
+
+    currentBounds = [[south, west], [north, east]];
+    historyBounds = historyBounds || currentBounds;
+    return true;
+}
+
+function loadOperationalLiveLayers(force = true) {
+    if (!map || historyMode || !currentBounds) return;
+
+    // Invalidate any historical render that is still in flight so an older
+    // frame can never replace the newly generated live products.
+    ++historyRenderRequest;
+    cancelPendingHistoryLayers();
+
+    if (document.getElementById("radarToggle")?.checked) {
+        loadCurrentRadarOverlay(force);
+    } else {
+        removeMapOverlay(radarOverlay);
+        radarOverlay = null;
+        radarDisplayMode = null;
+    }
+
+    if (document.getElementById("precipTypeToggle")?.checked) {
+        loadCurrentPrecipTypeOverlay(force);
+    } else {
+        removeMapOverlay(precipTypeOverlay);
+        precipTypeOverlay = null;
+        precipTypeDisplayMode = null;
+    }
+
+    if (document.getElementById("phaseToggle")?.checked) {
+        loadCurrentPhaseOverlay(force);
+    } else {
+        removeMapOverlay(phaseOverlay);
+        phaseOverlay = null;
+        phaseDisplayMode = null;
+        setPhaseLayerIndicator("", "", "");
+    }
+
+    updateDynamicMapLegend();
+}
+
+
 async function refreshData() {
 
     try {
@@ -5714,6 +5780,7 @@ async function refreshData() {
             await response.json();
 
         currentMRMSMetadata = metadata;
+        setCurrentBoundsFromMetadata(metadata);
 
         const mrmsTime =
             metadata.mrms_time_utc
@@ -5762,6 +5829,14 @@ async function refreshData() {
 
                 refreshPhaseQC();
         refreshAgreementStatus();
+
+        // The operational product is independent of history publication. As
+        // soon as the fresh metadata are available, display the new live MRMS
+        // and winter composite unless the user is intentionally viewing history.
+        if (!historyMode) {
+            loadOperationalLiveLayers(true);
+        }
+
         refreshHistoryManifest();
 
         document.getElementById(
