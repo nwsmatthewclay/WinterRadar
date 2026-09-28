@@ -3704,6 +3704,12 @@ function loadRadarLayers(metadata) {
 
     loadRadarFusionLayer();
     loadPhaseAgreementLayer();
+
+    // Surface observations are optional and default OFF. If the user has
+    // enabled them, refresh the point overlay to the newest QC bundle.
+    if (document.getElementById("surfaceObsToggle")?.checked) {
+        loadSurfaceObsOverlay(true);
+    }
 }
 
 
