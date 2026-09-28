@@ -2,6 +2,15 @@ name: MRMS Phase Evidence Diagnostics
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/mrms_phase_diagnostics.yml"
+      - "src/build_phase_radar_fusion.py"
+      - "src/download_vertical_dualpol.py"
+      - "src/publish_phase_diagnostics.py"
+      - "src/config.py"
   schedule:
     # Run independently from the 5-minute operational radar pipeline.
     - cron: "4,14,24,34,44,54 * * * *"
