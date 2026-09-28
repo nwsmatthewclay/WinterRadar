@@ -5384,11 +5384,16 @@ function renderHistoryFrame(index, fitView) {
         radarOverlay = null;
     }
 
-    if (
-        document.getElementById("precipTypeToggle")?.checked &&
-        (frame.precip_type_url || frame.precip_type_asset || frame.phase_url || frame.phase_asset)
-    ) {
-        loadHistoricalOverlay({
+    if (document.getElementById("precipTypeToggle")?.checked) {
+        const precipUrl = historyAssetUrl(frame, "precipType");
+
+        if (precipUrl) {
+            // Every archived radar frame should be eligible for the matching
+            // per-scan composite. historyAssetUrl() derives the exact
+            // preciptype_YYYYMMDD-HHMMSS.webp name when older manifests omit
+            // explicit composite fields.
+            loadHistoricalOverlay({
+                nativeUrl: precipUrl,
             nativeUrl: historyAssetUrl(frame, "precipType"),
             bounds: bounds,
             opacity: overlayOpacity,
@@ -5420,7 +5425,13 @@ function renderHistoryFrame(index, fitView) {
                     historyAssetUrl(frame, "precipType")
                 );
             }
-        }).catch(function() {});
+                }).catch(function() {});
+        } else {
+            pendingHistoryPrecipType = null;
+            removeMapOverlay(precipTypeOverlay);
+            precipTypeOverlay = null;
+            precipTypeDisplayMode = null;
+        }
     } else {
         removeMapOverlay(precipTypeOverlay);
         precipTypeOverlay = null;
