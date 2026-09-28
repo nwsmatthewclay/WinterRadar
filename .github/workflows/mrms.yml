@@ -84,6 +84,31 @@ jobs:
           mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/main.log
 
+      - name: Download vertical dual-pol inputs for phase evidence
+        continue-on-error: true
+        working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u download_vertical_dualpol.py 2>&1 | tee ../outputs/vertical_dualpol_download.log
+
+      - name: Build radar phase evidence and phase agreement
+        continue-on-error: true
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u build_phase_radar_fusion.py 2>&1 | tee ../outputs/phase_radar_fusion.log
+
       - name: Verify live MRMS outputs immediately
         run: |
           set -euo pipefail
