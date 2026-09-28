@@ -56,6 +56,26 @@ OPTIONAL_DIAGNOSTIC_PRODUCTS = {
     "reflectivity_0c": "Reflectivity_0C",
 }
 
+
+# Northeast U.S. operational presentation domain. The full-CONUS MRMS grids
+# remain the scientific source of record; this smaller domain is used for the
+# browser-facing live radar/phase/composite layers and observational QC.
+NEUS_BOUNDS = (37.0, -84.5, 48.5, -66.0)  # south, west, north, east
+
+# Surface precipitation observation QC.
+# METARs are queried from AWC and mPING reports from the OU/NSSL API. Both are
+# point observations and therefore only influence nearby MRMS precipitation
+# pixels; they never alter radar reflectivity itself.
+PRECIP_OBS_QC_ENABLED = True
+METAR_MAX_AGE_MINUTES = 90
+METAR_INFLUENCE_RADIUS_KM = 35.0
+MPING_MAX_AGE_MINUTES = 30
+MPING_INFLUENCE_RADIUS_KM = 15.0
+OBS_QC_GRID_STRIDE = 5
+AWC_METAR_URL = "https://aviationweather.gov/api/data/metar"
+MPING_REPORTS_URL = "https://mping.ou.edu/mping/api/v2/reports"
+
+
 # Product-specific units and MRMS sentinel values.
 FIELD_INFO = {
     "MergedReflectivityQCComposite": {
