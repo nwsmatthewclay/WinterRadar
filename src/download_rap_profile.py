@@ -23,6 +23,8 @@ from config import DATA_DIR
 
 RAP_FILTER_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_rap.pl"
 RAP_PROFILE_FILE = DATA_DIR / "RAP_profile_latest.grib2"
+RAP_PROFILE_CACHE_DIR = DATA_DIR / "rap_profile_cache"
+RAP_CACHE_MAX_AGE_HOURS = 6
 
 LEFT_LON, RIGHT_LON = -130.0, -60.0
 BOTTOM_LAT, TOP_LAT = 20.0, 55.0
@@ -68,6 +70,7 @@ def download_rap_profile(valid_time_utc: str) -> Path:
     """Download one compact RAP pressure-level subset."""
     target = datetime.fromisoformat(valid_time_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RAP_PROFILE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     part = RAP_PROFILE_FILE.with_suffix(".part")
     headers = {"User-Agent": "WinterRadar/phase-profile (NWS operational decision support)"}
     last_error: Exception | None = None
@@ -123,6 +126,9 @@ def download_rap_profile(valid_time_utc: str) -> Path:
 
             print(f"  RAP subset download complete: {total / 1024 / 1024:.2f} MiB", flush=True)
             part.replace(RAP_PROFILE_FILE)
+            cache_path = RAP_PROFILE_CACHE_DIR / f"rap_{cycle:%Y%m%d%H}_f{fhr:02d}.grib2"
+            import shutil
+            shutil.copy2(RAP_PROFILE_FILE, cache_path)
             return RAP_PROFILE_FILE
         except Exception as exc:
             last_error = exc
@@ -130,7 +136,37 @@ def download_rap_profile(valid_time_utc: str) -> Path:
             print(f"  RAP candidate failed: {type(exc).__name__}: {exc}", flush=True)
             time.sleep(5.0)
 
-    raise RuntimeError(f"No usable RAP pressure-level subset found in the last 7 hours: {last_error}")
+    # NOMADS can briefly lag or return transient gateway failures. Reuse the
+    # newest successful profile from the persistent Actions cache rather than
+    # dropping every composite for the hour.
+    target_hour = target.replace(minute=0, second=0, microsecond=0)
+    cached: list[tuple[datetime, Path]] = []
+    for cache_path in RAP_PROFILE_CACHE_DIR.glob("rap_*.grib2"):
+        try:
+            stamp = cache_path.name.split("_", 1)[1].split("_f", 1)[0]
+            cache_time = datetime.strptime(stamp, "%Y%m%d%H").replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        age_hours = (target_hour - cache_time).total_seconds() / 3600.0
+        if 0.0 <= age_hours <= RAP_CACHE_MAX_AGE_HOURS:
+            cached.append((cache_time, cache_path))
+
+    if cached:
+        cached.sort(key=lambda item: item[0], reverse=True)
+        cache_time, cache_path = cached[0]
+        import shutil
+        shutil.copy2(cache_path, RAP_PROFILE_FILE)
+        print(
+            f"  RAP FALLBACK: NOMADS unavailable; reusing cached {cache_time:%Y-%m-%d %H}Z "
+            f"profile ({cache_path.name}) for target {target_hour:%Y-%m-%d %H}Z.",
+            flush=True,
+        )
+        return RAP_PROFILE_FILE
+
+    raise RuntimeError(
+        f"No usable RAP pressure-level subset found in the last 7 hours and no cached profile "
+        f"within {RAP_CACHE_MAX_AGE_HOURS:g} hours: {last_error}"
+    )
 
 
 def _grb_get(grb, key, default=None):
