@@ -4479,6 +4479,11 @@ async function refreshHistoryManifest() {
     if (historyRefreshBusy) return;
     historyRefreshBusy = true;
 
+    const wasAtLatest =
+        !historyFrames.length ||
+        historyIndex < 0 ||
+        historyIndex === historyFrames.length - 1;
+
     const previouslySelected =
         historyFrames[historyIndex]
             ? historyFrames[historyIndex].timestamp_utc
@@ -4514,7 +4519,7 @@ async function refreshHistoryManifest() {
             ]
             : null;
 
-        if (previouslySelected) {
+        if (previouslySelected && !wasAtLatest) {
             const found = historyFrames.findIndex(function(frame) {
                 return frame.timestamp_utc === previouslySelected;
             });
