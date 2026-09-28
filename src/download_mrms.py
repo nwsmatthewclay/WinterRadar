@@ -95,13 +95,23 @@ def _download_to_gz(
             if part.stat().st_size < 32:
                 raise RuntimeError(f"Downloaded payload is unexpectedly small: {part}")
 
-            # Validate the compressed stream before making it the live file.
+            # Validate the ENTIRE compressed stream before making it the live file.
+            # MRMS can occasionally terminate a gzip transfer early while still
+            # returning a successful HTTP response. Reading only the first four
+            # bytes verifies the header but misses the truncated-stream case that
+            # later raises EOFError during decompression.
+            uncompressed_bytes = 0
             with gzip.open(part, "rb") as fh:
-                magic = fh.read(4)
-            if magic != b"GRIB":
-                raise RuntimeError(
-                    f"Compressed response does not contain a GRIB payload: {url}"
-                )
+                first = fh.read(4)
+                if first != b"GRIB":
+                    raise RuntimeError(
+                        f"Compressed response does not contain a GRIB payload: {url}"
+                    )
+                while fh.read(1024 * 1024):
+                    uncompressed_bytes += 1
+
+            if uncompressed_bytes <= 0:
+                raise RuntimeError(f"Compressed response contains no GRIB data: {url}")
 
             os.replace(part, gz_path)
             return
