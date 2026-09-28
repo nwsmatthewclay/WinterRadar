@@ -177,8 +177,8 @@ def fetch_metar_reports(
     session.headers.update({"User-Agent": USER_AGENT})
 
     south, west, north, east = NEUS_BOUNDS
-    # AviationWeather.gov expects bbox as minLon,minLat,maxLon,maxLat.
-    bbox = f"{west},{south},{east},{north}"
+    # AviationWeather.gov documents bbox as lat0,lon0,lat1,lon1.
+    bbox = f"{south},{west},{north},{east}"
 
     payload = _request_json(
         session,
