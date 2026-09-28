@@ -2542,7 +2542,7 @@ body { min-height: 100vh; }
                         <input
                             id="phaseToggle"
                             type="checkbox"
-                            onchange="togglePhase(this.checked)"
+                            onclick="event.preventDefault(); this.checked = !this.checked; togglePhase(this.checked)"
                             aria-controls="phaseLayerStatus"
                         >
                         <span class="phase-layer-name">Winter Phase Mask</span>
@@ -4056,6 +4056,26 @@ function togglePrecipType(enabled) {
 
 function togglePhase(enabled) {
 
+    const checkbox = document.getElementById("phaseToggle");
+
+    // Keep the control state authoritative. The phase checkbox uses an
+    // explicit click handler because the history viewer is always active and
+    // the old onchange/label interaction could leave the control visually
+    // unchanged when renderHistoryFrame() immediately rebuilt the layers.
+    if (checkbox) {
+        checkbox.checked = !!enabled;
+    }
+
+    if (enabled) {
+        setPhaseLayerIndicator(
+            "loading",
+            "Loading…",
+            "Loading the matching winter phase product for this MRMS history frame."
+        );
+    } else {
+        setPhaseLayerIndicator("", "", "");
+    }
+
     updateDynamicMapLegend();
 
     if (historyMode) {
@@ -5411,6 +5431,12 @@ function renderHistoryFrame(index, fitView) {
         document.getElementById("phaseToggle").checked &&
         historyAssetUrl(frame, "phase")
     ) {
+        setPhaseLayerIndicator(
+            "loading",
+            "Loading…",
+            "Loading the matching historical phase raster."
+        );
+
         loadHistoricalOverlay({
             nativeUrl: historyAssetUrl(frame, "phase"),
             bounds: bounds,
