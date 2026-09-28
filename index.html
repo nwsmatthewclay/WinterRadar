@@ -2523,7 +2523,6 @@ body { min-height: 100vh; }
                         <input
                             id="radarToggle"
                             type="checkbox"
-                            checked
                             onchange="toggleRadar(this.checked)"
                         >
                         <span>MRMS Radar Data</span>
@@ -2533,6 +2532,7 @@ body { min-height: 100vh; }
                         <input
                             id="precipTypeToggle"
                             type="checkbox"
+                            checked
                             onchange="togglePrecipType(this.checked)"
                         >
                         <span>Winter Radar Composite</span>
@@ -2988,9 +2988,10 @@ function initializeMap() {
         // It combines MRMS reflectivity with the winter precipitation-type
         // rendering, so the raw radar and phase mask remain optional analysis
         // layers rather than competing with the default view.
-        ["radarToggle", true],
+        ["radarToggle", false],
         ["precipTypeToggle", true],
         ["phaseToggle", false],
+        ["surfaceObsToggle", false],
         ["radarFusionToggle", false],
         ["phaseAgreementToggle", false],
         ["stateToggle", true]
