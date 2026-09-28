@@ -457,7 +457,7 @@ def apply_observation_qc(
             "mping_influence_radius_km": MPING_INFLUENCE_RADIUS_KM,
             "grid_stride": OBS_QC_GRID_STRIDE,
             "rain_report": "nearby observed rain forces local classified phase to rain",
-            "winter_report": "nearby observed snow/sleet/freezing-rain/mixed can replace rain/unknown and validate winter types",
+            "surface_report": "nearest valid ASOS/AWOS or mPING precipitation-type report overrides the modeled phase within its source-specific influence radius",
             "no_precip_report": "not used as negative evidence",
         },
     }
@@ -576,22 +576,26 @@ def apply_observation_qc(
         if not np.any(cells):
             continue
 
+        # Within the local observation influence radius, a valid surface
+        # precipitation-type report is the observational check of the gridded
+        # phase solution.  It therefore overrides a conflicting modeled phase
+        # rather than only promoting rain/unknown/clear cases.
+        changed = cells & (phase != code)
+        phase[changed] = code
+        confidence[changed] = np.maximum(
+            confidence[changed],
+            0.78 if code in (SNOW, SLEET, FZRA, MIXED) else 0.74,
+        )
         if code == RAIN:
-            changed = cells & (phase != RAIN)
-            phase[changed] = RAIN
-            confidence[changed] = np.maximum(confidence[changed], 0.72)
             intensity[changed] = rain_intensity_dbz(ref[changed])
             adjustments["rain_forced"] += int(np.count_nonzero(changed))
         else:
-            changed = cells & ((phase == RAIN) | (phase == UNKNOWN) | (phase == CLEAR))
-            phase[changed] = code
-            confidence[changed] = np.maximum(confidence[changed], 0.66)
             intensity[changed] = 0
             adjustments["winter_promoted"] += int(np.count_nonzero(changed))
 
-            confirmed = cells & (phase == code) & ~changed
-            confidence[confirmed] = np.maximum(confidence[confirmed], 0.72)
-            adjustments["winter_confirmed"] += int(np.count_nonzero(confirmed))
+        confirmed = cells & (phase == code) & ~changed
+        confidence[confirmed] = np.maximum(confidence[confirmed], 0.82)
+        adjustments["winter_confirmed"] += int(np.count_nonzero(confirmed))
 
     # Never invent precipitation where MRMS does not show precipitation.
     phase[~precip] = CLEAR
