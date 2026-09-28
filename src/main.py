@@ -16,6 +16,7 @@ from config import DATA_DIR, OUTPUT_DIR, PRODUCTS  # noqa: E402
 from download_rap_profile import download_rap_profile, load_rap_profile, sample_profile_to_mrms  # noqa: E402
 from download_mrms import download_optional_live_products, download_required_live_products  # noqa: E402
 from phase_profile import classify_from_vertical_profile, probabilities_to_phase  # noqa: E402
+from precip_obs_qc import apply_observation_qc, write_diagnostics  # noqa: E402
 from read_mrms import get_values  # noqa: E402
 from render import (  # noqa: E402
     reflectivity_to_rgba,
@@ -25,7 +26,7 @@ from render import (  # noqa: E402
     write_metadata,
 )
 
-MAIN_VERSION = "9.5-national-mrms-composite"
+MAIN_VERSION = "9.6-observation-qc-neus-browser"
 PROFILE_CHUNK_ROWS = 40  # keep chunk boundaries aligned with the 10x diagnostic grid
 DIAG_Y_FACTOR = 10
 DIAG_X_FACTOR = 10
@@ -417,6 +418,42 @@ def main() -> None:
             "prob_ice": np.full((diag_h, diag_w), np.nan, dtype=np.float32),
         }
 
+    # Surface-observation sanity check. This is deliberately applied after
+    # the gridded RAP/MRMS phase diagnosis but before either winter mask or
+    # precipitation-type composite is rendered, so both products use the same
+    # observation-adjusted phase field.
+    obs_qc = {}
+    if mrms_time_utc:
+        try:
+            print("Applying ASOS/AWOS + mPING precipitation-type observation QC...")
+            result, obs_qc = apply_observation_qc(
+                result,
+                ref,
+                lats,
+                lons_norm,
+                mrms_time_utc,
+            )
+            write_diagnostics(obs_qc)
+            print(
+                "  Observation QC status: "
+                f"{obs_qc.get('status', 'unknown')} | "
+                f"METAR reports={obs_qc.get('metar_reports', 0)} | "
+                f"mPING reports={obs_qc.get('mping_reports', 0)} | "
+                f"cells affected={obs_qc.get('cells_affected', 0)}"
+            )
+        except Exception as exc:
+            obs_qc = {
+                "enabled": True,
+                "status": "failed_open",
+                "mrms_time_utc": mrms_time_utc,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            write_diagnostics(obs_qc)
+            print(
+                "  WARNING: precipitation observation QC failed open; "
+                f"retaining the gridded MRMS/RAP phase: {type(exc).__name__}: {exc}"
+            )
+
     np.savez_compressed(OUTPUT_DIR / "phase_probabilities.npz", **phase_probability_data)
 
     save_rgba_png(
@@ -458,6 +495,7 @@ def main() -> None:
     }
     metadata["reflectivity_product"] = source_meta.get("source_product", PRODUCTS["reflectivity"])
     metadata["reflectivity_configured_product"] = PRODUCTS["reflectivity"]
+    metadata["precip_observation_qc"] = obs_qc
     metadata["phase_support_fields"] = {
         "precip_flag": bool(live_status.get("precip_flag")),
         "bb_top": bool(live_status.get("bb_top")),
