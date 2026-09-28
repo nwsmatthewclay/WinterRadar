@@ -5204,6 +5204,49 @@ function loadHistoricalOverlay(options) {
             } catch (error) {
                 console.warn("Historical raster load attempt failed:", url, error);
                 revokeHistoryObjectUrl();
+
+                // GitHub Release downloads do not provide CORS headers. A normal
+                // cross-origin <img> request does not require CORS, so use a
+                // direct Leaflet image fallback instead of fetch()+Blob for
+                // persistent Release history.
+                if (/^https?:\\/\\//i.test(url) && !url.includes("wsrv.nl")) {
+                    const directImage = new Image();
+                    directImage.decoding = "async";
+                    directImage.onload = function() {
+                        if (requestId !== historyRenderRequest || !historyMode) {
+                            return;
+                        }
+
+                        overlay = createImageOverlay(
+                            url,
+                            bounds,
+                            0,
+                            zIndex,
+                            false,
+                            className || ""
+                        );
+
+                        assignPending(overlay);
+                        overlay.addTo(map);
+                        overlay.setOpacity(opacity);
+
+                        if (requestId !== historyRenderRequest || !historyMode) {
+                            removeMapOverlay(overlay);
+                            overlay = null;
+                            resolve(null);
+                            return;
+                        }
+
+                        onLoaded(overlay);
+                        resolve(overlay);
+                    };
+                    directImage.onerror = function() {
+                        tryNext().catch(reject);
+                    };
+                    directImage.src = url;
+                    return;
+                }
+
                 tryNext().catch(reject);
             }
         }
