@@ -2552,6 +2552,15 @@ body { min-height: 100vh; }
 
                     <label class="layer-row">
                         <input
+                            id="surfaceObsToggle"
+                            type="checkbox"
+                            onchange="toggleSurfaceObs(this.checked)"
+                        >
+                        <span>Surface Obs (METAR / mPING)</span>
+                    </label>
+
+                    <label class="layer-row">
+                        <input
                             id="radarFusionToggle"
                             type="checkbox"
                             onchange="toggleRadarFusion(this.checked)"
@@ -2912,6 +2921,9 @@ let precipTypeOverlay = null;
 let currentMRMSMetadata = null;
 let radarFusionOverlay = null;
 let phaseAgreementOverlay = null;
+let surfaceObsOverlay = null;
+let surfaceObsData = null;
+let surfaceObsPromise = null;
 let diagnosticMode = false;
 let diagnosticGrid = null;
 let diagnosticGridPromise = null;
@@ -4021,6 +4033,110 @@ function updateDynamicMapLegend() {
     }
 }
 
+
+function surfaceObservationColor(phase) {
+    return {
+        1: "#2b7a4b",   // rain
+        2: "#3a83c1",   // snow
+        3: "#9b59b6",   // sleet
+        4: "#d23f3f",   // freezing rain
+        5: "#b36b9e",   // mixed / unknown precipitation
+        9: "#7f8c8d"
+    }[Number(phase)] || "#7f8c8d";
+}
+
+function surfaceObservationName(phase) {
+    return {
+        1: "Rain",
+        2: "Snow",
+        3: "Sleet",
+        4: "Freezing rain",
+        5: "Mixed / unknown precipitation"
+    }[Number(phase)] || "Unknown";
+}
+
+async function loadSurfaceObsOverlay(force = false) {
+    if (!map || !document.getElementById("surfaceObsToggle")?.checked) return;
+
+    if (!force && surfaceObsOverlay) {
+        if (!map.hasLayer(surfaceObsOverlay)) surfaceObsOverlay.addTo(map);
+        return;
+    }
+
+    if (!surfaceObsData) {
+        if (!surfaceObsPromise) {
+            surfaceObsPromise = fetch("./outputs/precip_obs_qc.json?v=" + Date.now(), { cache: "no-store" })
+                .then(function(response) {
+                    if (!response.ok) throw new Error("Surface observation QC unavailable: " + response.status);
+                    return response.json();
+                })
+                .then(function(payload) {
+                    surfaceObsData = payload;
+                    return payload;
+                })
+                .catch(function(error) {
+                    console.warn("Surface observation overlay unavailable:", error);
+                    surfaceObsPromise = null;
+                    return null;
+                });
+        }
+        surfaceObsData = await surfaceObsPromise;
+    }
+
+    if (!surfaceObsData || !Array.isArray(surfaceObsData.stations)) {
+        return;
+    }
+
+    removeMapOverlay(surfaceObsOverlay);
+    surfaceObsOverlay = L.layerGroup();
+
+    surfaceObsData.stations.forEach(function(report) {
+        const lat = Number(report.lat);
+        const lon = Number(report.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+        const phase = Number(report.phase);
+        const source = String(report.source || "");
+        const isMping = source.toLowerCase() === "mping";
+        const color = surfaceObservationColor(phase);
+        const radius = isMping ? 4.5 : 6;
+
+        const marker = L.circleMarker([lat, lon], {
+            radius: radius,
+            color: "#ffffff",
+            weight: 1.2,
+            opacity: 1,
+            fillColor: color,
+            fillOpacity: 0.95
+        });
+
+        const observed = formatUtcTime(report.timestamp_utc || "");
+        const station = escapeHtml(String(report.station || source));
+        const description = escapeHtml(String(report.description || ""));
+        marker.bindPopup(
+            "<strong>" + station + "</strong><br>" +
+            "<b>Source:</b> " + escapeHtml(source) + "<br>" +
+            "<b>Present wx:</b> " + description + "<br>" +
+            "<b>Phase:</b> " + escapeHtml(surfaceObservationName(phase)) + "<br>" +
+            "<b>Time:</b> " + escapeHtml(observed)
+        );
+
+        surfaceObsOverlay.addLayer(marker);
+    });
+
+    surfaceObsOverlay.addTo(map);
+}
+
+function toggleSurfaceObs(enabled) {
+    if (!map) return;
+
+    if (enabled) {
+        loadSurfaceObsOverlay(true);
+    } else {
+        removeMapOverlay(surfaceObsOverlay);
+        surfaceObsOverlay = null;
+    }
+}
 
 function toggleRadar(enabled) {
 
@@ -5835,6 +5951,8 @@ function loadOperationalLiveLayers(force = true) {
 
 
 async function refreshData() {
+    surfaceObsData = null;
+    surfaceObsPromise = null;
 
     try {
 
