@@ -2205,6 +2205,224 @@ body { min-height: 100vh; }
     .history-jumps button { min-width: 38px; }
 }
 
+
+/* ===================== Three-column operational viewer ===================== */
+.topbar {
+    min-height: 68px;
+    padding: 8px 16px;
+}
+.topbar .viewer-nav { display:none; }
+.topbar .top-actions { margin-left:auto; }
+.container {
+    width: min(1900px, calc(100% - 12px));
+    margin: 6px auto 18px;
+}
+.heading, .map-header, .map-toolbar, .info-strip, .history-panel { display:none !important; }
+
+.map-card { border:0; box-shadow:none; background:transparent; }
+.map-wrap {
+    position:relative;
+    min-height: min(82vh, 900px);
+    height: min(82vh, 900px);
+    overflow:hidden;
+    border:1px solid rgba(79,126,154,.48);
+    border-radius:10px;
+    background:#061522;
+    box-shadow:0 12px 34px rgba(0,0,0,.34);
+}
+#map {
+    position:absolute;
+    top:0;
+    bottom:0;
+    left:278px;
+    right:286px;
+    width:auto;
+    height:auto;
+    min-height:0;
+    margin:0;
+    background:#071b2a;
+}
+.leaflet-control-container .leaflet-top { margin-top:10px; }
+.leaflet-control-container .leaflet-left { margin-left:8px; }
+.leaflet-control-container .leaflet-right { margin-right:8px; }
+
+/* Left column */
+.layer-box {
+    position:absolute;
+    top:12px;
+    left:12px;
+    right:auto;
+    width:252px;
+    z-index:1300;
+}
+.layer-toggle { display:none; }
+.layer-panel,
+.layer-panel.open {
+    display:block;
+    width:100%;
+    margin:0;
+    padding:12px;
+    border:1px solid rgba(91,138,166,.45);
+    border-radius:9px;
+    background:rgba(4,20,32,.96);
+    color:#e8f1f6;
+    box-shadow:0 8px 22px rgba(0,0,0,.34);
+    backdrop-filter:blur(8px);
+}
+.layer-panel::before {
+    content:"DATA & MAP CONTROLS";
+    display:block;
+    margin-bottom:10px;
+    color:#f5f9fc;
+    font-size:14px;
+    font-weight:900;
+}
+.layer-panel .layer-menu-note { display:none; }
+.layer-panel .layer-title { color:#6f94aa; margin:0 0 7px; }
+.layer-panel .layer-row {
+    min-height:31px;
+    color:#dbe8ef;
+    font-size:10px;
+}
+.layer-panel .layer-row:hover { color:#fff; }
+.layer-panel .diagnostic-toggle {
+    width:100%;
+    margin-bottom:7px;
+    border-color:rgba(86,137,167,.45);
+    background:#09283d;
+    color:#dbe8ef;
+}
+.layer-panel .diagnostic-toggle.active {
+    background:#0b4c77;
+    border-color:#1598ff;
+}
+.viewer-data-panel {
+    position:absolute;
+    top:calc(12px + 390px);
+    left:12px;
+    width:252px;
+    z-index:1290;
+    padding:12px;
+    border:1px solid rgba(91,138,166,.45);
+    border-radius:9px;
+    background:rgba(4,20,32,.96);
+    box-shadow:0 8px 22px rgba(0,0,0,.34);
+}
+.viewer-data-title {
+    margin-bottom:9px;
+    color:#f5f9fc;
+    font-size:13px;
+    font-weight:900;
+}
+.viewer-data-grid { display:grid; gap:6px; }
+.viewer-data-row {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    padding:7px 8px;
+    border:1px solid rgba(75,121,148,.28);
+    border-radius:6px;
+    background:#09263a;
+}
+.viewer-data-name { color:#9fb5c3; font-size:9px; font-weight:800; }
+.viewer-data-value { color:#dceaf2; font-size:9px; font-weight:900; }
+.viewer-data-dot {
+    display:inline-block;
+    width:7px; height:7px;
+    margin-right:5px;
+    border-radius:50%;
+    background:#15915c;
+}
+.viewer-data-dot.warn { background:#c99427; }
+.viewer-data-dot.off { background:#617887; }
+
+/* Right column */
+.viewer-time-panel {
+    top:12px;
+    right:12px;
+    width:262px;
+    padding:13px 15px;
+}
+.map-legend {
+    top:184px;
+    right:12px;
+    width:262px;
+    max-height:calc(100% - 350px);
+    overflow-y:auto;
+}
+.viewer-quicklinks {
+    right:12px;
+    bottom:112px;
+    width:262px;
+}
+.viewer-right-data {
+    position:absolute;
+    right:12px;
+    bottom:112px;
+    width:262px;
+    z-index:1300;
+    padding:11px;
+    border:1px solid rgba(91,138,166,.45);
+    border-radius:9px;
+    background:rgba(4,20,32,.96);
+    box-shadow:0 8px 22px rgba(0,0,0,.34);
+}
+.viewer-right-data-title {
+    margin-bottom:7px;
+    color:#f3f8fb;
+    font-size:11px;
+    font-weight:900;
+}
+.viewer-right-data p {
+    margin:4px 0;
+    color:#91a9b7;
+    font-size:8px;
+    line-height:1.4;
+}
+.viewer-right-data strong { color:#dbe8ef; }
+
+/* Timeline belongs to the center map column */
+.map-history-control {
+    left:290px;
+    right:298px;
+    bottom:12px;
+}
+.loading { left:290px; }
+.opacity-control { left:290px; }
+.diagnostic-readout { right:298px; }
+.search-results { left:290px; }
+
+/* Hide the old redundant full-width diagnostics intro/probability material. */
+.phase-qc { display:none !important; }
+.diagnostic-grid .diag-card:nth-child(1),
+.diagnostic-grid .diag-card:nth-child(2) { display:none !important; }
+
+@media (max-width:1100px) {
+    #map { left:232px; right:240px; }
+    .layer-box, .viewer-data-panel { width:208px; }
+    .viewer-time-panel, .map-legend, .viewer-quicklinks, .viewer-right-data { width:218px; }
+    .viewer-data-panel { top:400px; }
+    .map-history-control { left:244px; right:252px; }
+    .loading, .opacity-control { left:244px; }
+    .diagnostic-readout { right:252px; }
+    .search-results { left:244px; }
+}
+@media (max-width:800px) {
+    #map { left:0; right:0; top:0; bottom:250px; }
+    .map-wrap { min-height:760px; height:auto; }
+    .layer-box { top:10px; left:10px; width:200px; }
+    .viewer-data-panel { top:10px; left:auto; right:10px; width:200px; }
+    .viewer-time-panel { top:auto; bottom:135px; right:10px; width:200px; }
+    .map-legend { top:auto; bottom:135px; left:10px; right:auto; width:200px; max-height:180px; }
+    .viewer-quicklinks, .viewer-right-data { display:none; }
+    .map-history-control { left:10px; right:10px; bottom:10px; }
+    .loading, .opacity-control { left:10px; }
+    .opacity-control { bottom:260px; }
+    .diagnostic-readout { right:10px; bottom:260px; }
+    .search-results { left:10px; bottom:260px; }
+}
+
 </style>
 </head>
 
@@ -2264,6 +2482,17 @@ body { min-height: 100vh; }
         <div class="map-wrap">
 
             <div id="map"></div>
+
+            <aside class="viewer-data-panel" aria-label="Current data status">
+                <div class="viewer-data-title">Current Data</div>
+                <div class="viewer-data-grid">
+                    <div class="viewer-data-row"><span class="viewer-data-name"><i class="viewer-data-dot"></i>MRMS Radar</span><span id="viewerDataMRMS" class="viewer-data-value">Ready</span></div>
+                    <div class="viewer-data-row"><span class="viewer-data-name"><i class="viewer-data-dot"></i>RAP Phase</span><span id="viewerDataRAP" class="viewer-data-value">Ready</span></div>
+                    <div class="viewer-data-row"><span class="viewer-data-name"><i class="viewer-data-dot"></i>Dual-Pol</span><span id="viewerDataDualPol" class="viewer-data-value">Ready</span></div>
+                    <div class="viewer-data-row"><span class="viewer-data-name"><i class="viewer-data-dot"></i>Phase Agreement</span><span id="viewerDataAgreement" class="viewer-data-value">Ready</span></div>
+                    <div class="viewer-data-row"><span class="viewer-data-name"><i class="viewer-data-dot"></i>Composite</span><span id="viewerDataComposite" class="viewer-data-value">Ready</span></div>
+                </div>
+            </aside>
 
             <div id="loading" class="loading">
                 Loading MRMS…
@@ -2524,6 +2753,13 @@ body { min-height: 100vh; }
                 <div id="mapHistoryReadout" class="map-history-readout">History unavailable</div>
             </div>
 
+            <aside class="viewer-right-data" aria-label="Frame information">
+                <div class="viewer-right-data-title">Frame Information</div>
+                <p><strong>Source:</strong> MRMS national merged reflectivity</p>
+                <p><strong>Products:</strong> radar, precipitation type, RAP phase and radar evidence</p>
+                <p><strong>History:</strong> use the timeline to inspect archived scans</p>
+            </aside>
+
             <aside class="viewer-quicklinks" aria-label="Regional quick links">
                 <div class="viewer-quicklinks-title">Quick Links</div>
                 <div class="viewer-quicklinks-grid">
@@ -2637,44 +2873,7 @@ body { min-height: 100vh; }
         <summary>Diagnostics</summary>
 
 
-        <section class="phase-qc">
-            <div class="phase-qc-head">
-                <div>
-                    <div class="phase-qc-title">Winter Phase Engine QC</div>
-                    <div class="diag-desc">Modified Bourgouin probabilities from the synchronized RAP vertical profile.</div>
-                </div>
-                <div id="phaseQCStatus" class="phase-qc-status">Loading…</div>
-            </div>
-            <div class="phase-qc-grid">
-                <div class="phase-qc-cell"><div class="phase-qc-label">Rain</div><div class="phase-qc-value" id="qcRain">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Snow</div><div class="phase-qc-value" id="qcSnow">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Sleet</div><div class="phase-qc-value" id="qcSleet">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">FZRA</div><div class="phase-qc-value" id="qcFzra">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Mean ME</div><div class="phase-qc-value" id="qcME">—</div></div>
-                <div class="phase-qc-cell"><div class="phase-qc-label">Mean RE</div><div class="phase-qc-value" id="qcRE">—</div></div>
-            </div>
-            <div class="phase-qc-note" id="phaseQCNote">Loading phase diagnostics…</div>
-        </section>
-
         <div class="diagnostic-grid">
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Phase Probability Layer</div>
-                    <div class="diag-desc">Dominant precipitation type shaded by the model probability. Transparency increases with probability.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_probability.png" alt="Phase probability layer">
-                <div class="diag-open"><a href="./outputs/phase_probability.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Phase Probability / Energy QC</div>
-                    <div class="diag-desc">Rain, snow, sleet, freezing-rain probabilities plus melting/refreezing energy.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_diagnostics.png" alt="Phase probability and energy diagnostics">
-                <div class="diag-open"><a href="./outputs/phase_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
 
             <section class="diag-card">
                 <div class="diag-head">
@@ -4844,6 +5043,17 @@ function updateHistoryReadout() {
             "MRMS scan: " + formatUtcTime(frame.timestamp_utc) +
             "<br>Frame " + (historyIndex + 1) + " of " + historyFrames.length;
     }
+
+    const dataValues = {
+        viewerDataMRMS: "Ready",
+        viewerDataDualPol: document.getElementById("statusDualPol")?.textContent || "Ready",
+        viewerDataAgreement: document.getElementById("statusAgreement")?.textContent || "Ready",
+        viewerDataComposite: document.getElementById("statusComposite")?.textContent || "Ready"
+    };
+    Object.keys(dataValues).forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = dataValues[id];
+    });
     if (currentTime && Number.isFinite(frameDate.getTime())) {
         currentTime.textContent = new Intl.DateTimeFormat("en-US", {
             hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC"
@@ -5732,12 +5942,12 @@ async function refreshPhaseQC() {
         if (!response.ok) throw new Error("Phase QC unavailable: " + response.status);
         const qc = await response.json();
 
-        const status = document.getElementById("phaseQCStatus");
         const phaseStatus = String(qc.phase_status || "unknown");
-        const good = qc.status === "ok" && (phaseStatus === "modified_bourgouin_rap" || phaseStatus === "modified_bourgouin_hrrr");
-        status.textContent = good ? "RAP + Bourgouin" : phaseStatus.replaceAll("_", " ");
-        status.className = "phase-qc-status " + (good ? "good" : "warn");
+        const good = qc.status === "ok" &&
+            (phaseStatus === "modified_bourgouin_rap" || phaseStatus === "modified_bourgouin_hrrr");
+
         setStatusChip("statusRAP", good, good ? "RAP ready" : "RAP phase limited");
+
         const rapDetail = document.getElementById("healthRAPDetail");
         if (rapDetail) {
             rapDetail.textContent = qc.rap_valid_time_utc
@@ -5745,26 +5955,19 @@ async function refreshPhaseQC() {
                 : "Synchronized vertical profile";
         }
 
-        const means = qc.mean_probability_percent || {};
-        document.getElementById("qcRain").textContent = means.rain == null ? "—" : Number(means.rain).toFixed(0) + "%";
-        document.getElementById("qcSnow").textContent = means.snow == null ? "—" : Number(means.snow).toFixed(0) + "%";
-        document.getElementById("qcSleet").textContent = means.sleet == null ? "—" : Number(means.sleet).toFixed(0) + "%";
-        document.getElementById("qcFzra").textContent = means.freezing_rain == null ? "—" : Number(means.freezing_rain).toFixed(0) + "%";
-        document.getElementById("qcME").textContent = qc.mean_melting_energy_jkg == null ? "—" : Number(qc.mean_melting_energy_jkg).toFixed(1) + " J/kg";
-        document.getElementById("qcRE").textContent = qc.mean_refreezing_energy_jkg == null ? "—" : Number(qc.mean_refreezing_energy_jkg).toFixed(1) + " J/kg";
+        const rapValue = document.getElementById("viewerDataRAP");
+        if (rapValue) rapValue.textContent = good ? "Ready" : "Limited";
 
-        const levels = Array.isArray(qc.pressure_levels_hpa) ? qc.pressure_levels_hpa.join(", ") : "not reported";
-        document.getElementById("phaseQCNote").textContent =
-            "High-confidence definition: dominant probability ≥70% and ≥15 points above the runner-up. " +
-            "Profile levels: " + levels + " hPa.";
+        const rapDot = rapValue?.parentElement?.querySelector(".viewer-data-dot");
+        if (rapDot) rapDot.classList.toggle("warn", !good);
     } catch (error) {
         console.warn("Phase QC update failed:", error);
-        const status = document.getElementById("phaseQCStatus");
-        status.textContent = "Unavailable";
-        status.className = "phase-qc-status warn";
-        document.getElementById("phaseQCNote").textContent = "Phase QC is temporarily unavailable; the radar and existing winter mask remain available.";
+        setStatusChip("statusRAP", false, "RAP unavailable");
+        const rapValue = document.getElementById("viewerDataRAP");
+        if (rapValue) rapValue.textContent = "Unavailable";
     }
 }
+
 
 function refreshDiagnosticImages() {
     const stamp = Date.now();
