@@ -3094,7 +3094,8 @@ function initializeScientificPanes() {
         ["winterPrecipTypePane", 540],
         ["winterPhasePane", 550],
         ["winterRadarFusionPane", 575],
-        ["winterPhaseAgreementPane", 585]
+        ["winterPhaseAgreementPane", 585],
+        ["surfaceObservationPane", 650]
     ];
 
     panes.forEach(function(item) {
@@ -3141,7 +3142,8 @@ function createImageOverlay(
             540: "winterPrecipTypePane",
             550: "winterPhasePane",
             575: "winterRadarFusionPane",
-            585: "winterPhaseAgreementPane"
+            585: "winterPhaseAgreementPane",
+            650: "surfaceObservationPane"
         };
 
         const paneName =
@@ -4122,7 +4124,8 @@ async function loadSurfaceObsOverlay(force = false) {
             weight: 1.2,
             opacity: 1,
             fillColor: color,
-            fillOpacity: 0.95
+            fillOpacity: 0.95,
+            pane: "surfaceObservationPane"
         });
 
         const observed = formatUtcTime(report.timestamp_utc || "");
