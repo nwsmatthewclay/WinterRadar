@@ -2542,7 +2542,7 @@ body { min-height: 100vh; }
                         <input
                             id="phaseToggle"
                             type="checkbox"
-                            onclick="event.preventDefault(); this.checked = !this.checked; togglePhase(this.checked)"
+                            onchange="togglePhase(this.checked)"
                             aria-controls="phaseLayerStatus"
                         >
                         <span class="phase-layer-name">Winter Phase Mask</span>
@@ -5073,7 +5073,7 @@ function historyAssetUrl(frame, kind) {
             ? (Date.now() - ts) / 60000
             : Infinity;
 
-        if (ageMinutes >= -1 && ageMinutes <= HISTORY_HOT_WINDOW_MINUTES) {
+        if (ageMinutes >= -2 && ageMinutes <= HISTORY_HOT_WINDOW_MINUTES) {
             return "./history/" + encodeURIComponent(assetName);
         }
     }
@@ -5449,7 +5449,6 @@ function renderHistoryFrame(index, fitView) {
             // explicit composite fields.
             loadHistoricalOverlay({
                 nativeUrl: precipUrl,
-            nativeUrl: historyAssetUrl(frame, "precipType"),
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 540,
