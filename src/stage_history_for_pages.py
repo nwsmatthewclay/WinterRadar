@@ -229,12 +229,22 @@ def main() -> None:
                 continue
 
             # Prefer the newer copy when the same observation exists in more
-            # than one partition.
+            # than one partition, but NEVER let a newer partial/live manifest
+            # erase a composite that an older archive manifest already has.
+            # Live buffering intentionally publishes radar-only frames while
+            # composites are still being backfilled.
             existing = merged_by_timestamp.get(ts)
             if existing is None:
                 merged_by_timestamp[ts] = dict(frame)
             else:
-                merged_by_timestamp[ts] = {**existing, **frame}
+                merged = dict(existing)
+                for key, value in frame.items():
+                    if value is None or value == "":
+                        # Preserve a populated value from another manifest.
+                        if merged.get(key) not in (None, ""):
+                            continue
+                    merged[key] = value
+                merged_by_timestamp[ts] = merged
 
     merged_frames = list(merged_by_timestamp.values())
 
