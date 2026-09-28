@@ -222,9 +222,6 @@ jobs:
           fi
 
           cp index.html site/index.html
-          cp outputs/mrms_current.png site/outputs/mrms_current.png
-          cp outputs/mrms_current_web.png site/outputs/mrms_current_web.png
-          cp outputs/mrms_current_web.webp site/outputs/mrms_current_web.webp
           if [ -s outputs/mrms_current_regional_web.png ]; then
             cp outputs/mrms_current_regional_web.png site/outputs/mrms_current_regional_web.png
             cp outputs/mrms_current_regional_web.webp site/outputs/mrms_current_regional_web.webp
@@ -233,20 +230,11 @@ jobs:
           fi
           cp outputs/mrms_current.json site/outputs/mrms_current.json
           cp outputs/mrms_web.json site/outputs/mrms_web.json
-          cp outputs/winter_phase_mask.png site/outputs/winter_phase_mask.png
-          cp outputs/winter_phase_mask_web.png site/outputs/winter_phase_mask_web.png
-          cp outputs/winter_phase_mask_web.webp site/outputs/winter_phase_mask_web.webp
           if [ -s outputs/winter_phase_mask_regional_web.png ]; then
             cp outputs/winter_phase_mask_regional_web.png site/outputs/winter_phase_mask_regional_web.png
           else
             echo "Regional sharp winter mask is unavailable; full-CONUS mask remains available."
           fi
-          cp outputs/winter_precip_type.png site/outputs/winter_precip_type.png
-          cp outputs/winter_precip_type_web.png site/outputs/winter_precip_type_web.png
-          cp outputs/winter_precip_type_web.webp site/outputs/winter_precip_type_web.webp
-          cp outputs/winter_radar_composite.png site/outputs/winter_radar_composite.png
-          cp outputs/winter_radar_composite_web.png site/outputs/winter_radar_composite_web.png
-          cp outputs/winter_radar_composite_web.webp site/outputs/winter_radar_composite_web.webp
           if [ -s outputs/winter_phase_mask_regional_web.png ]; then
             cp outputs/winter_phase_mask_regional_web.png site/outputs/winter_phase_mask_regional_web.png
             cp outputs/winter_phase_mask_regional_web.webp site/outputs/winter_phase_mask_regional_web.webp
@@ -293,9 +281,12 @@ jobs:
             cp outputs/mrms_archive_status.json site/outputs/mrms_archive_status.json
           fi
 
-          test -s site/outputs/winter_precip_type.png
-          test -s site/outputs/winter_precip_type_web.png
-          test -s site/outputs/winter_radar_composite_web.png
+          test -s site/outputs/winter_radar_composite_regional_web.png
+          test -s site/outputs/winter_radar_composite_regional_web.webp
+          test -s site/outputs/mrms_current_regional_web.png
+          test -s site/outputs/mrms_current_regional_web.webp
+          test -s site/outputs/winter_phase_mask_regional_web.png
+          test -s site/outputs/winter_phase_mask_regional_web.webp
           bash ./src/verify_core_outputs.sh site/outputs
 
           echo "=============================================="
