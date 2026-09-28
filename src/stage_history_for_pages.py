@@ -260,11 +260,10 @@ def main() -> None:
     ]
     merged_frames.sort(key=lambda frame: frame_time(frame) or datetime.min.replace(tzinfo=timezone.utc))
 
-    # The live workflow deliberately publishes a five-scan radar buffer even
-    # before the archive has generated the matching phase composites. Add those
-    # timestamped radar assets directly to the staging manifest so Pages can
-    # advance to the newest scan immediately rather than waiting for the next
-    # archive manifest rebuild.
+    # Only add a new radar timestamp directly when the complete matching
+    # phase and precipitation-type assets are already present in the Release
+    # asset index. Never add radar-only frames to the Pages timeline: those
+    # create an apparent "blank" timestep in the default composite view.
     manifest_timestamps = {
         frame_time(frame)
         for frame in merged_frames
@@ -283,23 +282,42 @@ def main() -> None:
         if radar_time in manifest_timestamps:
             continue
 
+        stamp = radar_time.strftime("%Y%m%d-%H%M%S")
+        phase_name = f"phase_conus_{stamp}.webp"
+        precip_name = f"preciptype_conus_{stamp}.webp"
+        phase_asset = combined_assets.get(phase_name)
+        precip_asset = combined_assets.get(precip_name)
+        if not phase_asset or not precip_asset:
+            continue
+
         merged_frames.append(
             {
                 "timestamp_utc": radar_time.isoformat(),
                 "radar_url": asset.get("browser_download_url"),
                 "radar_asset": asset_name,
                 "radar_api_url": asset.get("url"),
-                "phase_url": None,
-                "phase_asset": None,
-                "phase_api_url": None,
-                "phase_timestamp_utc": None,
-                "precip_type_url": None,
-                "precip_type_asset": None,
-                "precip_type_api_url": None,
-                "precip_type_timestamp_utc": None,
+                "phase_url": phase_asset.get("browser_download_url"),
+                "phase_asset": phase_name,
+                "phase_api_url": phase_asset.get("url"),
+                "phase_timestamp_utc": radar_time.isoformat(),
+                "precip_type_url": precip_asset.get("browser_download_url"),
+                "precip_type_asset": precip_name,
+                "precip_type_api_url": precip_asset.get("url"),
+                "precip_type_timestamp_utc": radar_time.isoformat(),
             }
         )
         manifest_timestamps.add(radar_time)
+
+    # The operational history timeline is a synchronized product timeline.
+    # Keep only frames that have all three assets required to render the
+    # default composite without a blank/missing-data slot.
+    merged_frames = [
+        frame
+        for frame in merged_frames
+        if frame.get("radar_asset")
+        and frame.get("phase_asset")
+        and frame.get("precip_type_asset")
+    ]
 
     merged_frames.sort(key=lambda frame: frame_time(frame) or datetime.min.replace(tzinfo=timezone.utc))
 
@@ -338,7 +356,7 @@ def main() -> None:
         "version": "1.0-history",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "history_hours": history_hours,
-        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. Pages combines all current Release partitions, retains the newest 3 hours, and also surfaces the newest live radar buffer even before phase composites are backfilled.",
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. Pages combines all current Release partitions, retains the newest 3 hours, and publishes only synchronized radar + phase + precipitation-type frames so the timeline contains no blank composite timesteps.",
         "bounds": latest_bounds or [20.005001, -129.995, 54.995, -60.00500199999999],
         "bounds_format": ["south", "west", "north", "east"],
         "frame_count": len(merged_frames),
