@@ -326,15 +326,32 @@ def main() -> None:
         else:
             precip_type_assets[name] = asset
 
+    # Re-read the active Release partitions after all uploads. The live
+    # workflow can run immediately after the archive workflow, so the initial
+    # asset index may have been captured before the archive's newest composite
+    # uploads became visible. Rebuilding the indexes from GitHub here prevents
+    # a fresh live manifest from regressing populated phase/precip fields to
+    # null even though the WebP assets are already present in the Release.
+    refreshed_releases: list = []
+    for date_value, releases_for_date in release_index.items():
+        refreshed_for_date: list = []
+        for release in releases_for_date:
+            refreshed = store.get_release(release.tag)
+            if refreshed is not None:
+                refreshed_for_date.append(refreshed)
+        release_index[date_value] = refreshed_for_date
+        refreshed_releases.extend(refreshed_for_date)
+
+    refreshed_releases.sort(key=lambda rel: rel.tag)
+    radar_assets, phase_assets, precip_type_assets = gather_release_assets_many(
+        refreshed_releases
+    )
+
     # The live publisher adds new timestamped radar/composite assets directly
     # to the Release store. Rebuild and replace the persistent history manifest
     # here as well, otherwise Pages cannot see those new composites until the
-    # slower archive workflow runs. This is the key live-composite fix.
-    release_list = [
-        rel
-        for rels in release_index.values()
-        for rel in rels
-    ]
+    # slower archive workflow runs.
+    release_list = refreshed_releases
     live_manifest = build_manifest(
         observations=fetch_mrms_directory(store.session),
         radar_assets=radar_assets,
