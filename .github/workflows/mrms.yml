@@ -205,7 +205,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MRMS_PAGES_HOT_WINDOW_MINUTES: "30"
+          MRMS_PAGES_HOT_WINDOW_MINUTES: "180"
         run: |
           set -euo pipefail
           python -u src/stage_history_for_pages.py

@@ -10,13 +10,16 @@ site_history_tmp for the Pages build.
 from __future__ import annotations
 
 import concurrent.futures
+import io
 import json
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 import re
 
+from PIL import Image
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +29,57 @@ TOKEN = os.environ.get("GITHUB_TOKEN", "")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
-UA = "WinterRadar/1.4 (Pages history staging)"
+UA = "WinterRadar/1.5 (Pages history staging)"
+
+# History WebPs in the persistent Release store use the full-CONUS Web Mercator
+# geometry. Pages only needs the Northeast browser domain, so every staged
+# history frame is cropped to the same regional bounds used by the live viewer.
+PAGES_HISTORY_BOUNDS = (37.0, -84.5, 48.5, -66.0)
+DEFAULT_FULL_BOUNDS = (20.005001, -129.995, 54.995, -60.00500199999999)
+WEBP_QUALITY = 90
+
+def mercator_y(lat_deg: float) -> float:
+    lat = max(-85.0511287798, min(85.0511287798, float(lat_deg)))
+    return math.log(math.tan(math.pi / 4.0 + math.radians(lat) / 2.0))
+
+
+def crop_history_asset_to_pages(data: bytes, full_bounds: tuple[float, float, float, float]) -> bytes:
+    """Crop a full-CONUS Web Mercator history raster to the Pages NEUS domain."""
+    south, west, north, east = full_bounds
+    tsouth, twest, tnorth, teast = PAGES_HISTORY_BOUNDS
+
+    if not (south < tsouth < tnorth < north and west < twest < teast < east):
+        full_bounds = DEFAULT_FULL_BOUNDS
+        south, west, north, east = full_bounds
+
+    with Image.open(io.BytesIO(data)) as im:
+        image = im.convert("RGBA")
+        width, height = image.size
+
+        full_y_s = mercator_y(south)
+        full_y_n = mercator_y(north)
+        full_y_span = full_y_n - full_y_s
+
+        x0 = int(math.floor((twest - west) / (east - west) * width))
+        x1 = int(math.ceil((teast - west) / (east - west) * width))
+        y0 = int(math.floor((full_y_n - mercator_y(tnorth)) / full_y_span * height))
+        y1 = int(math.ceil((full_y_n - mercator_y(tsouth)) / full_y_span * height))
+
+        x0 = max(0, min(width - 1, x0))
+        x1 = max(x0 + 1, min(width, x1))
+        y0 = max(0, min(height - 1, y0))
+        y1 = max(y0 + 1, min(height, y1))
+
+        cropped = image.crop((x0, y0, x1, y1))
+
+    buffer = io.BytesIO()
+    cropped.save(
+        buffer,
+        format="WEBP",
+        quality=WEBP_QUALITY,
+        method=6,
+    )
+    return buffer.getvalue()
 
 
 def api_url(path: str) -> str:
@@ -356,9 +409,10 @@ def main() -> None:
         "version": "1.0-history",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "history_hours": history_hours,
-        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. Pages combines all current Release partitions, retains the newest 3 hours, and publishes only synchronized radar + phase + precipitation-type frames so the timeline contains no blank composite timesteps.",
-        "bounds": latest_bounds or [20.005001, -129.995, 54.995, -60.00500199999999],
+        "frame_interval_note": "MRMS MergedReflectivityQCComposite observations are timestamped upstream and may be roughly 2 minutes apart. Pages combines current Release partitions, retains the synchronized three-hour window, stages compact Northeast browser rasters same-origin, and publishes only frames containing radar + phase + precipitation-type products.",
+        "bounds": list(PAGES_HISTORY_BOUNDS),
         "bounds_format": ["south", "west", "north", "east"],
+        "source_bounds": latest_bounds or list(DEFAULT_FULL_BOUNDS),
         "frame_count": len(merged_frames),
         "phase_snapshot_count": len(phase_names),
         "precip_type_snapshot_count": len(precip_names),
@@ -394,14 +448,12 @@ def main() -> None:
         if old.is_file():
             old.unlink()
 
-    # GitHub Pages is the hot operational display; do not make every 5-minute
-    # live deployment download the entire 3-hour native raster archive.
-    # Keep the newest 30 minutes (the live publisher's 18-scan hot buffer)
-    # same-origin on Pages. Older frames remain in the manifest and are loaded
-    # on demand from their Release URL by the viewer's proxy fallback.
+    # Pages is the browser-serving tier, so keep the entire synchronized
+    # three-hour history same-origin. Assets are cropped to the much smaller
+    # NEUS browser domain before they are written to site/history/.
     hot_window_minutes = max(
-        10,
-        int(os.environ.get("MRMS_PAGES_HOT_WINDOW_MINUTES", "10")),
+        30,
+        int(os.environ.get("MRMS_PAGES_HOT_WINDOW_MINUTES", "180")),
     )
     hot_cutoff = now - timedelta(minutes=hot_window_minutes)
 
@@ -464,8 +516,11 @@ def main() -> None:
                 if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
                     last_error = f"unexpected payload ({len(data):,} bytes)"
                 else:
+                    data = crop_history_asset_to_pages(data, tuple(
+                        float(v) for v in (manifest.get("bounds") or DEFAULT_FULL_BOUNDS)
+                    ))
                     target.write_bytes(data)
-                    return name, True, f"{len(data):,} bytes"
+                    return name, True, f"{len(data):,} bytes (NEUS)"
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             if attempt < 3:
@@ -501,18 +556,11 @@ def main() -> None:
             if radar_name in unavailable:
                 dropped_radar_frames += 1
                 continue
-            frame = dict(frame)
-            if frame.get("phase_asset") in unavailable:
-                frame["phase_asset"] = None
-                frame["phase_url"] = None
-                frame["phase_api_url"] = None
-                frame["phase_timestamp_utc"] = None
-            if frame.get("precip_type_asset") in unavailable:
-                frame["precip_type_asset"] = None
-                frame["precip_type_url"] = None
-                frame["precip_type_api_url"] = None
-                frame["precip_type_timestamp_utc"] = None
-            sanitized_frames.append(frame)
+            # A history frame is only useful to the composite viewer when
+            # radar + phase + precipitation-type are all present. Drop the
+            # entire frame on staging failure rather than publishing a blank
+            # timestep with a null phase/ptype product.
+            continue
 
         manifest["frames"] = sanitized_frames
         manifest["frame_count"] = len(sanitized_frames)
