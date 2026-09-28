@@ -75,6 +75,16 @@ def _utc_now() -> datetime:
 def _parse_time(value: object) -> datetime | None:
     if value is None:
         return None
+
+    # AviationWeather.gov JSON currently returns obsTime as Unix seconds.
+    # Accept that form as well as ISO-8601 strings so the QC remains tolerant
+    # of feed/schema variations.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+
     text = str(value).strip()
     if not text:
         return None
@@ -167,8 +177,8 @@ def fetch_metar_reports(
     session.headers.update({"User-Agent": USER_AGENT})
 
     south, west, north, east = NEUS_BOUNDS
-    # AviationWeather.gov expects bbox as minLat,minLon,maxLat,maxLon.
-    bbox = f"{south},{west},{north},{east}"
+    # AviationWeather.gov expects bbox as minLon,minLat,maxLon,maxLat.
+    bbox = f"{west},{south},{east},{north}"
 
     payload = _request_json(
         session,
@@ -176,7 +186,7 @@ def fetch_metar_reports(
         params={
             "bbox": bbox,
             "format": "json",
-            "hoursBeforeNow": 2,
+            "hours": 2,
         },
     )
 
