@@ -12,7 +12,9 @@ permissions:
 
 concurrency:
   group: mrms-radar
-  cancel-in-progress: false
+  # The live product is disposable work: favor the newest scheduled scan
+  # rather than allowing a slow cycle to delay fresh MRMS data.
+  cancel-in-progress: true
 
 jobs:
   build:
