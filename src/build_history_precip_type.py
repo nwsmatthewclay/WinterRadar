@@ -153,47 +153,84 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     profile_cache: dict[str, dict] = {}
+    failed_hours: set[str] = set()
+    completed = 0
+    failed = 0
+
     for raw in args.paths:
         path = Path(raw)
         stamp = parse_stamp(path)
         hour_key = stamp.strftime("%Y%m%d%H")
         print(f"  HIST PHASE: {stamp.isoformat()} -> {path.name}", flush=True)
 
+        # Cache RAP by valid hour.  This is important: launching one isolated
+        # RAP download for every MRMS scan made the archive unnecessarily slow
+        # and exposed every scan to independent NOMADS failures.
+        if hour_key in failed_hours:
+            print(
+                f"  HIST PHASE SKIP: RAP profile for {hour_key}Z is unavailable; "
+                "leaving this timestamp queued for the next archive run.",
+                flush=True,
+            )
+            failed += 1
+            continue
+
         profile = profile_cache.get(hour_key)
         if profile is None:
-            profile_path = download_rap_profile(stamp.isoformat())
-            profile = load_rap_profile(profile_path)
-            profile_cache[hour_key] = profile
+            try:
+                profile_path = download_rap_profile(stamp.isoformat())
+                profile = load_rap_profile(profile_path)
+                profile_cache[hour_key] = profile
+                print(
+                    f"  HIST PHASE RAP: using {profile.get('valid_time_utc')} for {hour_key}Z scans",
+                    flush=True,
+                )
+            except Exception as exc:
+                failed_hours.add(hour_key)
+                failed += 1
+                print(
+                    f"  HIST PHASE RAP FAILED for {hour_key}Z: {type(exc).__name__}: {exc}. "
+                    "Other hours will continue; this hour will retry on the next archive run.",
+                    flush=True,
+                )
+                continue
+
+        try:
+            ref, lats, lons = get_values(path, product="MergedReflectivityQCComposite")
+            rgba, phase_rgba = phase_for_scan(ref, lats, lons, profile)
+
+            # The browser map is Web Mercator. Do the same native->Web Mercator
+            # row projection used by the live MRMS raster so the historical
+            # composite overlays the radar exactly instead of being stretched as
+            # a geographic lat/lon image inside a Web Mercator map.
+            rgba_web = project_native_mrms_to_webmercator(rgba, lats, lons)
+            phase_web = project_native_mrms_to_webmercator(phase_rgba, lats, lons)
+
+            phase_name = f"phase_conus_{stamp:%Y%m%d-%H%M%S}.webp"
+            Image.fromarray(phase_web, mode="RGBA").save(
+                output_dir / phase_name,
+                format="WEBP",
+                quality=95,
+                method=6,
+            )
+            out_name = f"preciptype_conus_{stamp:%Y%m%d-%H%M%S}.webp"
+            Image.fromarray(rgba_web, mode="RGBA").save(
+                output_dir / out_name,
+                format="WEBP",
+                quality=95,
+                method=6,
+            )
+            completed += 1
+            print(f"  HIST PHASE READY: {out_name} ({(output_dir / out_name).stat().st_size:,} bytes)", flush=True)
+        except Exception as exc:
+            failed += 1
             print(
-                f"  HIST PHASE RAP: using {profile.get('valid_time_utc')} for {hour_key}Z scans",
+                f"  HIST PHASE FAILED for {stamp.isoformat()}: {type(exc).__name__}: {exc}. "
+                "The radar scan remains archived and this composite will be retried later.",
                 flush=True,
             )
 
-        ref, lats, lons = get_values(path, product="MergedReflectivityQCComposite")
-        rgba, phase_rgba = phase_for_scan(ref, lats, lons, profile)
-
-        # The browser map is Web Mercator. Do the same native->Web Mercator
-        # row projection used by the live MRMS raster so the historical
-        # composite overlays the radar exactly instead of being stretched as
-        # a geographic lat/lon image inside a Web Mercator map.
-        rgba_web = project_native_mrms_to_webmercator(rgba, lats, lons)
-        phase_web = project_native_mrms_to_webmercator(phase_rgba, lats, lons)
-
-        phase_name = f"phase_conus_{stamp:%Y%m%d-%H%M%S}.webp"
-        Image.fromarray(phase_web, mode="RGBA").save(
-            output_dir / phase_name,
-            format="WEBP",
-            quality=95,
-            method=6,
-        )
-        out_name = f"preciptype_conus_{stamp:%Y%m%d-%H%M%S}.webp"
-        Image.fromarray(rgba_web, mode="RGBA").save(
-            output_dir / out_name,
-            format="WEBP",
-            quality=95,
-            method=6,
-        )
-        print(f"  HIST PHASE READY: {out_name} ({(output_dir / out_name).stat().st_size:,} bytes)", flush=True)
+    print(f"  HIST PHASE SUMMARY: {completed} completed, {failed} deferred/failed", flush=True)
 
 
 if __name__ == "__main__":
