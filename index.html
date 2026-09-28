@@ -1546,129 +1546,6 @@ html, body {
     min-height: 560px;
 }
 
-.diagnostics-dock {
-    grid-column: 2;
-    grid-row: 1;
-    min-width: 0;
-    height: min(72vh, 860px);
-    min-height: 560px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 0;
-    background: #07131c;
-    border-left: 1px solid #29404f;
-    scrollbar-width: thin;
-    scrollbar-color: #3c6478 #0b1822;
-}
-
-.diagnostics-dock::-webkit-scrollbar { width: 10px; }
-.diagnostics-dock::-webkit-scrollbar-track { background: #0b1822; }
-.diagnostics-dock::-webkit-scrollbar-thumb {
-    background: #3c6478;
-    border-radius: 999px;
-    border: 2px solid #0b1822;
-}
-
-.diagnostics-dock > details.diagnostics {
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-}
-
-.diagnostics-dock details.diagnostics > summary {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    padding: 12px 13px;
-    background: linear-gradient(180deg, #102532, #0c1b25);
-    border-bottom: 1px solid #29404f;
-    color: #e8f4f8;
-    font-size: 12px;
-    letter-spacing: .05em;
-    text-transform: uppercase;
-}
-
-.diagnostics-dock .phase-qc {
-    margin: 9px;
-}
-
-.diagnostics-dock .diagnostic-grid {
-    grid-template-columns: 1fr;
-    gap: 9px;
-    padding: 0 9px 12px;
-}
-
-.diagnostics-dock .diag-card {
-    border-color: #294958;
-    border-radius: 7px;
-}
-
-.diagnostics-dock .diag-head {
-    min-height: auto;
-    padding: 9px 10px;
-}
-
-.diagnostics-dock .diag-title {
-    font-size: 11px;
-}
-
-.diagnostics-dock .diag-desc {
-    font-size: 8px;
-}
-
-.diagnostics-dock .diag-card img {
-    min-height: 0;
-    max-height: none;
-    width: 100%;
-    object-fit: contain;
-    background: #07131c;
-}
-
-.diagnostics-dock .diag-open {
-    padding: 6px 9px;
-    background: #0b1b25;
-    border-top: 1px solid #203744;
-}
-
-.diagnostics-dock .diag-open a {
-    color: #62c7ee;
-    font-size: 8px;
-}
-
-.diagnostics-dock .phase-qc-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.diagnostics-dock .phase-qc-cell {
-    padding: 6px;
-}
-
-.diagnostics-dock .phase-qc-value {
-    font-size: 11px;
-}
-
-.map-wrap .layer-box {
-    right: calc(var(--diagnostic-width) + 9px);
-}
-
-.map-wrap .opacity-control {
-    right: calc(var(--diagnostic-width) + 9px);
-}
-
-.map-wrap .map-history-control {
-    right: calc(var(--diagnostic-width) + 12px);
-}
-
-.map-wrap .diagnostic-readout {
-    right: calc(var(--diagnostic-width) + 9px);
-}
-
-.map-wrap .map-legend {
-    max-width: min(295px, calc(100% - var(--diagnostic-width) - 27px));
-}
-
 /* Keep the legend tied to actual Leaflet overlays, not merely checked boxes. */
 .map-legend.map-legend-empty {
     display: none !important;
@@ -1919,15 +1796,16 @@ body { min-height: 100vh; }
     right: 16px;
     z-index: 1305;
     width: 252px;
-    border: 1px solid rgba(91, 138, 166, .45);
-    border-radius: 9px;
-    background: rgba(4, 20, 32, .94);
-    box-shadow: 0 8px 22px rgba(0,0,0,.34);
-    backdrop-filter: blur(8px);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
 }
 .viewer-time-panel {
-    top: 16px;
-    padding: 13px 15px;
+    top: 12px;
+    padding: 5px 0 10px;
+    border-bottom: 1px solid rgba(91,138,166,.24);
 }
 .viewer-time-date {
     color: #a7bbc8;
@@ -1964,19 +1842,19 @@ body { min-height: 100vh; }
 }
 
 .map-legend {
-    top: 146px;
-    right: 16px;
+    top: 150px;
+    right: 12px;
     left: auto;
     bottom: auto;
-    width: 252px;
+    width: 262px;
     max-height: 43%;
-    padding: 13px;
-    border: 1px solid rgba(91, 138, 166, .45);
-    border-radius: 9px;
-    background: rgba(4, 20, 32, .94);
+    padding: 8px 0 10px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: #dfeaf0;
-    box-shadow: 0 8px 22px rgba(0,0,0,.34);
-    backdrop-filter: blur(8px);
+    box-shadow: none;
+    backdrop-filter: none;
 }
 .map-legend-title,
 .map-legend-label {
@@ -2261,13 +2139,13 @@ body { min-height: 100vh; }
     display:block;
     width:100%;
     margin:0;
-    padding:12px;
-    border:1px solid rgba(91,138,166,.45);
-    border-radius:9px;
-    background:rgba(4,20,32,.96);
+    padding:4px 0 0;
+    border:0;
+    border-radius:0;
+    background:transparent;
     color:#e8f1f6;
-    box-shadow:0 8px 22px rgba(0,0,0,.34);
-    backdrop-filter:blur(8px);
+    box-shadow:none;
+    backdrop-filter:none;
 }
 .layer-panel::before {
     content:"DATA & MAP CONTROLS";
@@ -2302,11 +2180,11 @@ body { min-height: 100vh; }
     left:12px;
     width:252px;
     z-index:1290;
-    padding:12px;
-    border:1px solid rgba(91,138,166,.45);
-    border-radius:9px;
-    background:rgba(4,20,32,.96);
-    box-shadow:0 8px 22px rgba(0,0,0,.34);
+    padding:0 0 2px;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    box-shadow:none;
 }
 .viewer-data-title {
     margin-bottom:9px;
@@ -2320,10 +2198,11 @@ body { min-height: 100vh; }
     align-items:center;
     justify-content:space-between;
     gap:8px;
-    padding:7px 8px;
-    border:1px solid rgba(75,121,148,.28);
-    border-radius:6px;
-    background:#09263a;
+    padding:7px 0;
+    border:0;
+    border-bottom:1px solid rgba(91,138,166,.18);
+    border-radius:0;
+    background:transparent;
 }
 .viewer-data-name { color:#9fb5c3; font-size:9px; font-weight:800; }
 .viewer-data-value { color:#dceaf2; font-size:9px; font-weight:900; }
@@ -2360,11 +2239,11 @@ body { min-height: 100vh; }
     bottom:12px;
     width:262px;
     z-index:1300;
-    padding:11px;
-    border:1px solid rgba(91,138,166,.45);
-    border-radius:9px;
-    background:rgba(4,20,32,.96);
-    box-shadow:0 8px 22px rgba(0,0,0,.34);
+    padding:0 0 2px;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    box-shadow:none;
 }
 .viewer-right-data-title {
     margin-bottom:7px;
@@ -2373,7 +2252,9 @@ body { min-height: 100vh; }
     font-weight:900;
 }
 .viewer-right-data p {
-    margin:4px 0;
+    margin:0;
+    padding:6px 0;
+    border-bottom:1px solid rgba(91,138,166,.18);
     color:#91a9b7;
     font-size:8px;
     line-height:1.4;
@@ -2775,7 +2656,6 @@ body { min-height: 100vh; }
 
             <div id="searchResults" class="search-results"></div>
 
-            <div id="diagnosticsDock" class="diagnostics-dock" aria-label="Scrollable WinterRadar diagnostics"></div>
         </div>
 
         <div class="map-toolbar">
@@ -2867,59 +2747,7 @@ body { min-height: 100vh; }
 
     </section>
 
-    <details class="diagnostics" open ontoggle="if(this.open) refreshDiagnosticImages()">
-        <summary>Diagnostics</summary>
 
-
-        <div class="diagnostic-grid">
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">MRMS Diagnostics</div>
-                    <div class="diag-desc">Core MRMS fields and precipitation diagnostics.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/mrms_diagnostics.png" alt="MRMS diagnostics">
-                <div class="diag-open"><a href="./outputs/mrms_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Vertical Dual-Pol</div>
-                    <div class="diag-desc">Vertical RHOHV and ZDR profiles from 0.50 through 4.00 km.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/mrms_vertical_dualpol.png" alt="Vertical dual-pol diagnostic">
-                <div class="diag-open"><a href="./outputs/mrms_vertical_dualpol.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Radar Phase Evidence Fusion</div>
-                    <div class="diag-desc">Independent MRMS dual-pol evidence for melting-layer and dry-snow-like signatures; does not replace the RAP phase solution.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_radar_fusion.png" alt="Radar phase evidence fusion diagnostic">
-                <div class="diag-open"><a href="./outputs/phase_radar_fusion.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Winter Precipitation Diagnostic</div>
-                    <div class="diag-desc">Fields used to develop the winter phase mask.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/winter_mask_diagnostics.png" alt="Winter precipitation diagnostic">
-                <div class="diag-open"><a href="./outputs/winter_mask_diagnostics.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-            <section class="diag-card">
-                <div class="diag-head">
-                    <div class="diag-title">Phase Agreement</div>
-                    <div class="diag-desc">Agreement between the primary RAP/Bourgouin phase solution and independent MRMS vertical dual-pol evidence.</div>
-                </div>
-                <img class="diagnostic-image" src="./outputs/phase_agreement.png" alt="Phase agreement diagnostic">
-                <div class="diag-open"><a href="./outputs/phase_agreement.png" target="_blank" rel="noopener">Open diagnostic at full size ↗</a></div>
-            </section>
-
-        </div>
-    </details>
 
     <div class="footer">
         WinterRadar • MRMS Winter Precipitation Research & Diagnostics
@@ -5848,8 +5676,7 @@ async function refreshData() {
             updatePhaseLayerStatusFromMetadata(currentMRMSMetadata);
         }
 
-        refreshDiagnosticImages();
-        refreshPhaseQC();
+                refreshPhaseQC();
         refreshAgreementStatus();
         refreshHistoryManifest();
 
@@ -6498,16 +6325,6 @@ async function startMapExport(){if(exportBusy)return;exportBusy=true;const b=doc
 document.getElementById("exportModalBackdrop")?.addEventListener("click",e=>{if(e.target===e.currentTarget&&!exportBusy)closeExportModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&exportModalOpen&&!exportBusy)closeExportModal();});
 
-
-// Move the diagnostics into the map workspace so the graphics share a
-// dedicated, independently scrollable window beside the map.
-(function mountDiagnosticsDock() {
-    const dock = document.getElementById("diagnosticsDock");
-    const diagnostics = document.querySelector("details.diagnostics");
-    if (dock && diagnostics) {
-        dock.appendChild(diagnostics);
-    }
-})();
 
 initializeMap();
 refreshDiagnosticImages();
