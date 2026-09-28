@@ -167,7 +167,8 @@ def fetch_metar_reports(
     session.headers.update({"User-Agent": USER_AGENT})
 
     south, west, north, east = NEUS_BOUNDS
-    bbox = f"{west},{south},{east},{north}"
+    # AviationWeather.gov expects bbox as minLat,minLon,maxLat,maxLon.
+    bbox = f"{south},{west},{north},{east}"
 
     payload = _request_json(
         session,
@@ -213,7 +214,10 @@ def fetch_metar_reports(
         raw = str(item.get("rawOb") or "")
         phase, description = _phase_from_metar(wx, raw)
         if phase is None:
-            continue
+            # Keep the station for the optional map overlay even when the
+            # current METAR has no precipitating present-weather group.
+            phase = UNKNOWN
+            description = "No precipitating present weather"
 
         reports.append(
             ObsReport(
@@ -479,12 +483,34 @@ def apply_observation_qc(
         mping_reports = []
         diagnostics["mping_error"] = f"{type(exc).__name__}: {exc}"
 
-    reports = metar_reports + mping_reports
-    diagnostics["metar_reports"] = len(metar_reports)
+    metar_all = metar_reports
+    qc_metar_reports = [
+        report for report in metar_all
+        if report.phase in (RAIN, SNOW, SLEET, FZRA, MIXED)
+    ]
+    reports = qc_metar_reports + mping_reports
+    diagnostics["metar_stations"] = len(metar_all)
+    diagnostics["metar_reports"] = len(qc_metar_reports)
     diagnostics["mping_reports"] = len(mping_reports)
+    diagnostics["observations"] = [
+        {
+            "source": report.source,
+            "station": report.station,
+            "timestamp_utc": report.timestamp_utc.isoformat(),
+            "lat": report.lat,
+            "lon": report.lon,
+            "phase": report.phase,
+            "description": report.description,
+        }
+        for report in (metar_all + mping_reports)
+    ]
 
     if not reports:
-        diagnostics["status"] = "no_usable_reports"
+        diagnostics["status"] = (
+            "no_usable_precipitation_reports"
+            if metar_all or mping_reports
+            else "no_observations"
+        )
         diagnostics["reports_used"] = 0
         return result, diagnostics
 
