@@ -89,6 +89,25 @@ jobs:
           echo "=============================================="
           bash ./src/verify_core_outputs.sh
 
+      # Publish the newest live radar scans plus matching phase/precip composites
+      # into the persistent history store. This keeps the viewer's hot history and
+      # composite layers fresh instead of waiting for the 10-minute archive job.
+      - name: Publish buffered live MRMS history
+        continue-on-error: true
+        working-directory: src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MRMS_LIVE_HISTORY_FRAMES: "6"
+          MRMS_LIVE_HISTORY_WINDOW_MINUTES: "15"
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u publish_live_history.py 2>&1 | tee ../outputs/live_history.log
+
       # Keep the scheduled product path focused on the operational core:
       # current MRMS reflectivity, matching winter phase, matching precipitation
       # type composite, history publication, and Pages deployment. Expensive
@@ -221,6 +240,9 @@ jobs:
           cp outputs/mrms_diagnostics.json site/outputs/mrms_diagnostics.json
           cp outputs/winter_mask_diagnostics.json site/outputs/winter_mask_diagnostics.json
           cp outputs/main.log site/outputs/main.log
+          if [ -s outputs/live_history.log ]; then
+            cp outputs/live_history.log site/outputs/live_history.log
+          fi
 
           if [ -s outputs/mrms_history.json ]; then
             cp outputs/mrms_history.json site/outputs/mrms_history.json
