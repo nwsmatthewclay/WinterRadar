@@ -4,7 +4,7 @@ from __future__ import annotations
 
 The live workflow already has the current MRMS scan and the current
 phase/precipitation-type browser products. In addition to those current
-products, this publisher places the newest twelve timestamped MRMS radar scans
+products, this publisher places the newest buffered timestamped MRMS radar scans
 into the GitHub Release history store.
 
 Only the newest scan reuses the already-generated live WebP. The prior
@@ -229,43 +229,64 @@ def main() -> None:
             phase_grib_paths.append(grib_path)
             phase_observations.append(obs)
 
-    # Build matching phase and precipitation-type composites for the buffered
-    # historical scans. This is the live-edge fix: the first ~20 minutes of
-    # history no longer waits for the slower archive workflow.
+    # Build all matching phase and precipitation-type composites in ONE helper
+    # process. build_history_precip_type.py caches RAP profiles by valid hour,
+    # so an 18-scan live buffer normally requires only one RAP download per
+    # model hour instead of one download per scan. A failure on one scan/hour
+    # is isolated by the helper and can be retried by the next workflow run.
     if phase_grib_paths:
         helper_output = Path(tempfile.mkdtemp(prefix="winterradar_live_phase_"))
         try:
             helper = ROOT / "src" / "build_history_precip_type.py"
-            print(f"  Building live-edge phase composites for {len(phase_grib_paths)} buffered scans...")
-            for obs, grib_path in zip(phase_observations, phase_grib_paths):
-                try:
-                    # Process each timestamp independently so one problematic
-                    # MRMS scan cannot suppress composites for the other scans.
-                    scan_output = Path(tempfile.mkdtemp(prefix="winterradar_live_phase_scan_"))
-                    try:
-                        cmd = ["python", str(helper), "--output-dir", str(scan_output), str(grib_path)]
-                        subprocess.run(cmd, check=True)
-                        names = [
-                            f"phase_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
-                            f"preciptype_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
-                        ]
-                        release = ensure_upload_release(store, obs.valid_time.date(), release_index)
-                        for name in names:
-                            source = scan_output / name
-                            if not source.exists():
-                                print(f"  WARNING: live-edge composite missing: {name}")
-                                continue
-                            if name in release.assets:
-                                continue
-                            asset = store.upload_asset(release, name, source.read_bytes(), "image/webp")
-                            release.assets[asset["name"]] = asset
-                            print(f"  Stored live-edge composite {name} ({source.stat().st_size:,} bytes)")
-                    finally:
-                        shutil.rmtree(scan_output, ignore_errors=True)
-                except Exception as exc:
-                    print(f"  WARNING: live-edge composite generation failed for {obs.valid_time.isoformat()}: {type(exc).__name__}: {exc}")
+            print(
+                f"  Building live-edge phase composites for {len(phase_grib_paths)} "
+                "buffered scans with hourly RAP caching..."
+            )
+            cmd = [
+                "python",
+                str(helper),
+                "--output-dir",
+                str(helper_output),
+                *[str(path) for path in phase_grib_paths],
+            ]
+            subprocess.run(cmd, check=True)
+
+            for obs in phase_observations:
+                names = [
+                    f"phase_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
+                    f"preciptype_conus_{obs.valid_time.strftime('%Y%m%d-%H%M%S')}.webp",
+                ]
+                release = ensure_upload_release(
+                    store,
+                    obs.valid_time.date(),
+                    release_index,
+                )
+                for name in names:
+                    source = helper_output / name
+                    if not source.exists():
+                        print(f"  WARNING: live-edge composite deferred/missing: {name}")
+                        continue
+                    if name in release.assets:
+                        continue
+                    asset = store.upload_asset(
+                        release,
+                        name,
+                        source.read_bytes(),
+                        "image/webp",
+                    )
+                    release.assets[asset["name"]] = asset
+                    print(
+                        f"  Stored live-edge composite {name} "
+                        f"({source.stat().st_size:,} bytes)"
+                    )
         except Exception as exc:
-            print(f"  WARNING: live-edge composite generation failed: {type(exc).__name__}: {exc}")
+            # Never let one RAP/MRMS problem prevent the current live products
+            # from publishing. The archive workflow will retry the missing
+            # composite on its next pass.
+            print(
+                "  WARNING: live-edge batch composite generation failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
         finally:
             for path in phase_grib_paths:
                 path.unlink(missing_ok=True)
