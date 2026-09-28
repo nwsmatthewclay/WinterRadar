@@ -4089,14 +4089,22 @@ async function loadSurfaceObsOverlay(force = false) {
         surfaceObsData = await surfaceObsPromise;
     }
 
-    if (!surfaceObsData || !Array.isArray(surfaceObsData.stations)) {
+    if (
+        !surfaceObsData ||
+        (!Array.isArray(surfaceObsData.observations) &&
+         !Array.isArray(surfaceObsData.stations))
+    ) {
         return;
     }
 
     removeMapOverlay(surfaceObsOverlay);
     surfaceObsOverlay = L.layerGroup();
 
-    surfaceObsData.stations.forEach(function(report) {
+    const observations = Array.isArray(surfaceObsData.observations)
+        ? surfaceObsData.observations
+        : surfaceObsData.stations;
+
+    observations.forEach(function(report) {
         const lat = Number(report.lat);
         const lon = Number(report.lon);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
