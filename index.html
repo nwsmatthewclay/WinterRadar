@@ -2980,9 +2980,9 @@ const quickPlaces = [
 
 function initializeMap() {
 
-    // Start clean: only the MRMS reflectivity layer is enabled on page load.
-    // Keep the legend synchronized immediately so the other legend sections
-    // never flash on screen while the live data are loading.
+    // Start clean: only the winter radar composite and state boundaries are
+    // enabled on page load. Keep the legend synchronized immediately so the
+    // optional analysis layers never flash on screen while live data load.
     const startupLayerDefaults = [
         // The winter radar composite is the default map presentation.
         // It combines MRMS reflectivity with the winter precipitation-type
