@@ -30,6 +30,7 @@ from archive_mrms_history import (
     crop_indices,
     download_and_render_observation,
     ensure_upload_release,
+    build_manifest,
     fetch_mrms_directory,
     gather_release_assets_many,
     load_source_coordinates,
@@ -275,6 +276,10 @@ def main() -> None:
                         "image/webp",
                     )
                     release.assets[asset["name"]] = asset
+                    if name.startswith("phase_conus_"):
+                        phase_assets[name] = asset
+                    else:
+                        precip_type_assets[name] = asset
                     print(
                         f"  Stored live-edge composite {name} "
                         f"({source.stat().st_size:,} bytes)"
@@ -316,6 +321,50 @@ def main() -> None:
             content_type,
         )
         current_release.assets[asset["name"]] = asset
+        if name.startswith("phase_conus_"):
+            phase_assets[name] = asset
+        else:
+            precip_type_assets[name] = asset
+
+    # The live publisher adds new timestamped radar/composite assets directly
+    # to the Release store. Rebuild and replace the persistent history manifest
+    # here as well, otherwise Pages cannot see those new composites until the
+    # slower archive workflow runs. This is the key live-composite fix.
+    release_list = [
+        rel
+        for rels in release_index.values()
+        for rel in rels
+    ]
+    live_manifest = build_manifest(
+        observations=fetch_mrms_directory(store.session),
+        radar_assets=radar_assets,
+        phase_assets=phase_assets,
+        precip_type_assets=precip_type_assets,
+        now=current_dt,
+        bounds=crop_bounds,
+        releases=release_list,
+    )
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    live_manifest_path = OUTPUT / "mrms_history.json"
+    live_manifest_path.write_text(
+        json.dumps(live_manifest, indent=2),
+        encoding="utf-8",
+    )
+    manifest_release = ensure_upload_release(store, current_dt.date(), release_index)
+    manifest_asset = store.upload_asset(
+        manifest_release,
+        "mrms_history.json",
+        live_manifest_path.read_bytes(),
+        "application/json",
+        replace=True,
+    )
+    manifest_release.assets[manifest_asset["name"]] = manifest_asset
+    print(
+        "  Live history manifest refreshed: "
+        f"{live_manifest['frame_count']} frames, "
+        f"{live_manifest['phase_snapshot_count']} phase, "
+        f"{live_manifest['precip_type_snapshot_count']} precip-type"
+    )
 
     watermark = {
         "generated_at_utc": utc_now().isoformat(),
