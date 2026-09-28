@@ -5031,6 +5031,8 @@ function cancelPendingHistoryLayers() {
 }
 
 
+const HISTORY_HOT_WINDOW_MINUTES = 30;
+
 function historyAssetUrl(frame, kind) {
     if (!frame) return null;
 
@@ -5038,20 +5040,14 @@ function historyAssetUrl(frame, kind) {
     let directUrl = null;
 
     const radarAsset = frame.radar_asset || "";
-    const radarMatch = radarAsset.match(/radar_qc_conus_(\\d{8}-\\d{6})\\.webp$/i);
+    const radarMatch = radarAsset.match(/radar_qc_conus_(\d{8}-\d{6})\.webp$/i);
     const radarStamp = radarMatch ? radarMatch[1] : null;
 
     if (kind === "phase") {
-        // Prefer the explicit manifest reference. If an older/incomplete
-        // manifest omitted it, derive the exact archived filename from the
-        // radar timestamp. The Pages staging layer already contains these
-        // phase assets when the composite pair is complete.
         assetName = frame.phase_asset ||
             (radarStamp ? "phase_conus_" + radarStamp + ".webp" : null);
         directUrl = frame.phase_url;
     } else if (kind === "precipType") {
-        // New manifests archive the composite separately. For older manifests,
-        // derive the exact composite filename before falling back to phase.
         assetName = frame.precip_type_asset ||
             (radarStamp ? "preciptype_conus_" + radarStamp + ".webp" : null) ||
             frame.phase_asset;
@@ -5061,10 +5057,18 @@ function historyAssetUrl(frame, kind) {
         directUrl = frame.radar_url;
     }
 
-    // Archived frames are copied into the GitHub Pages deployment. Using a
-    // same-origin URL lets the browser render WebP normally.
+    // Keep the newest 30-minute hot buffer on Pages for reliable same-origin
+    // rendering. Older frames remain available through their GitHub Release
+    // URLs and are fetched on demand when the user scrubs back in history.
     if (assetName) {
-        return "./history/" + encodeURIComponent(assetName);
+        const ts = Date.parse(frame.timestamp_utc || "");
+        const ageMinutes = Number.isFinite(ts)
+            ? (Date.now() - ts) / 60000
+            : Infinity;
+
+        if (ageMinutes >= -1 && ageMinutes <= HISTORY_HOT_WINDOW_MINUTES) {
+            return "./history/" + encodeURIComponent(assetName);
+        }
     }
 
     return directUrl;
