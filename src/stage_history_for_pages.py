@@ -366,8 +366,26 @@ def main() -> None:
         if old.is_file():
             old.unlink()
 
+    # GitHub Pages is the hot operational display; do not make every 5-minute
+    # live deployment download the entire 3-hour native raster archive.
+    # Keep the newest 30 minutes (the live publisher's 18-scan hot buffer)
+    # same-origin on Pages. Older frames remain in the manifest and are loaded
+    # on demand from their Release URL by the viewer's proxy fallback.
+    hot_window_minutes = max(
+        20,
+        int(os.environ.get("MRMS_PAGES_HOT_WINDOW_MINUTES", "30")),
+    )
+    hot_cutoff = now - timedelta(minutes=hot_window_minutes)
+
     files: dict[str, dict] = {}
+    hot_frame_count = 0
     for frame in manifest.get("frames", []):
+        frame_ts = frame_time(frame)
+        if frame_ts is None or frame_ts < hot_cutoff:
+            continue
+
+        hot_frame_count += 1
+
         for key in ("radar_asset", "phase_asset", "precip_type_asset"):
             name = frame.get(key)
             if name and name in combined_assets:
@@ -386,7 +404,15 @@ def main() -> None:
             if name and name not in files and url:
                 files[name] = {"url": url}
 
-    print(f"  Combined manifest: {manifest.get('frame_count', len(manifest.get('frames', [])))} frames across {len(manifest_candidates)} manifests")
+    print(
+        f"  Combined manifest: "
+        f"{manifest.get('frame_count', len(manifest.get('frames', [])))} frames "
+        f"across {len(manifest_candidates)} manifests"
+    )
+    print(
+        f"  Pages hot buffer: {hot_frame_count} frames / "
+        f"{hot_window_minutes} minutes"
+    )
     if manifest.get("frames"):
         first_ts = manifest["frames"][0].get("timestamp_utc")
         last_ts = manifest["frames"][-1].get("timestamp_utc")
