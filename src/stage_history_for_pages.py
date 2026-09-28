@@ -372,8 +372,8 @@ def main() -> None:
     # same-origin on Pages. Older frames remain in the manifest and are loaded
     # on demand from their Release URL by the viewer's proxy fallback.
     hot_window_minutes = max(
-        20,
-        int(os.environ.get("MRMS_PAGES_HOT_WINDOW_MINUTES", "30")),
+        10,
+        int(os.environ.get("MRMS_PAGES_HOT_WINDOW_MINUTES", "10")),
     )
     hot_cutoff = now - timedelta(minutes=hot_window_minutes)
 
