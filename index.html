@@ -6454,8 +6454,9 @@ document.addEventListener("pointerup", function() {
     syncHistorySliderValues();
 });
 
-// Explicit startup state requested for the overlay opacity control.
-setOverlayOpacity(0);
+// Start with the winter radar composite visible. The opacity slider can
+// still be used to fade it down for comparison with the underlying radar.
+setOverlayOpacity(0.85);
 
 // The composite is intentionally the default visual product on first load.
 // The checkbox state is established in initializeMap(); this call makes the
