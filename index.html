@@ -2298,7 +2298,7 @@ body { min-height: 100vh; }
 }
 .viewer-data-panel {
     position:absolute;
-    top:calc(12px + 390px);
+    bottom:12px;
     left:12px;
     width:252px;
     z-index:1290;
@@ -2352,14 +2352,12 @@ body { min-height: 100vh; }
     overflow-y:auto;
 }
 .viewer-quicklinks {
-    right:12px;
-    bottom:112px;
-    width:262px;
+    display:none !important;
 }
 .viewer-right-data {
     position:absolute;
     right:12px;
-    bottom:112px;
+    bottom:12px;
     width:262px;
     z-index:1300;
     padding:11px;
@@ -2402,7 +2400,7 @@ body { min-height: 100vh; }
     #map { left:232px; right:240px; }
     .layer-box, .viewer-data-panel { width:208px; }
     .viewer-time-panel, .map-legend, .viewer-quicklinks, .viewer-right-data { width:218px; }
-    .viewer-data-panel { top:400px; }
+
     .map-history-control { left:244px; right:252px; }
     .loading, .opacity-control { left:244px; }
     .diagnostic-readout { right:252px; }
