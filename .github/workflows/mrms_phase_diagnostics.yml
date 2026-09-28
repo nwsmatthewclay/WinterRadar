@@ -1,0 +1,120 @@
+name: MRMS Phase Evidence Diagnostics
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run independently from the 5-minute operational radar pipeline.
+    - cron: "4,14,24,34,44,54 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mrms-phase-diagnostics
+  # Diagnostics are allowed to finish; a newer run must not interrupt a
+  # dual-pol/phase build that is already underway.
+  cancel-in-progress: false
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeccodes-dev \
+            libeccodes-tools
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            numpy \
+            requests \
+            Pillow \
+            xarray \
+            cfgrib \
+            matplotlib \
+            pygrib \
+            scipy \
+            metpy \
+            pyproj
+
+      - name: Diagnostics syntax QC
+        run: |
+          python -m py_compile \
+            src/config.py \
+            src/download_mrms.py \
+            src/read_mrms.py \
+            src/classifier.py \
+            src/render.py \
+            src/main.py \
+            src/download_vertical_dualpol.py \
+            src/build_phase_radar_fusion.py \
+            src/publish_phase_diagnostics.py
+
+      - name: Build current MRMS phase inputs
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p ../outputs
+          python -u main.py 2>&1 | tee ../outputs/diagnostic_main.log
+
+      - name: Download vertical dual-pol inputs
+        working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u download_vertical_dualpol.py 2>&1 | tee ../outputs/vertical_dualpol_download.log
+
+      - name: Build phase evidence and agreement
+        working-directory: src
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u build_phase_radar_fusion.py 2>&1 | tee ../outputs/phase_radar_fusion.log
+
+      - name: Verify diagnostic outputs
+        run: |
+          set -euo pipefail
+          test -s outputs/mrms_current.json
+          test -s outputs/phase_radar_fusion_overlay_web.png
+          test -s outputs/phase_agreement_overlay_web.png
+          test -s outputs/phase_radar_fusion.json
+          test -s outputs/phase_agreement.json
+          echo "Phase evidence and agreement outputs verified."
+
+      - name: Publish latest phase diagnostics
+        working-directory: src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python -u publish_phase_diagnostics.py 2>&1 | tee ../outputs/publish_phase_diagnostics.log

@@ -84,31 +84,6 @@ jobs:
           mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/main.log
 
-      - name: Download vertical dual-pol inputs for phase evidence
-        continue-on-error: true
-        working-directory: src
-        env:
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -euo pipefail
-          python -u download_vertical_dualpol.py 2>&1 | tee ../outputs/vertical_dualpol_download.log
-
-      - name: Build radar phase evidence and phase agreement
-        continue-on-error: true
-        working-directory: src
-        env:
-          MPLBACKEND: Agg
-          OMP_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          set -euo pipefail
-          python -u build_phase_radar_fusion.py 2>&1 | tee ../outputs/phase_radar_fusion.log
-
       - name: Verify live MRMS outputs immediately
         run: |
           set -euo pipefail
@@ -165,7 +140,19 @@ jobs:
                   )
           PY
 
-      # Project browser rasters only after every diagnostic/fusion source has
+      # Phase evidence and agreement are produced by the independent diagnostic
+      # workflow. Pull the newest successful bundle from persistent Release
+      # storage so a slow dual-pol run can never delay or cancel live radar.
+      - name: Restore latest phase evidence diagnostics
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python -u src/fetch_latest_phase_diagnostics.py
+
+      # Project browser rasters only after the newest available diagnostic
       # been created (or replaced by a fallback). The projection script expects
       # these source PNGs to exist on a fresh GitHub runner.
       - name: Project browser MRMS rasters to Web Mercator
