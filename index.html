@@ -4686,6 +4686,13 @@ function setOverlayOpacity(percent) {
 
 
 function setPrimaryView(view) {
+    // Product buttons are also the reliable return-to-live control. History is
+    // entered only by the timeline/loop controls; selecting a product here
+    // always restores the current operational MRMS/composite view.
+    if (historyMode) {
+        showLiveMap();
+    }
+
     const ids = {
         radar: ["radarToggle"],
         precip: ["radarToggle", "precipTypeToggle"],
@@ -5558,6 +5565,13 @@ function showLiveMap() {
     cancelPendingHistoryLayers();
 
     updateHistoryReadout();
+
+    // Restore the actual current MRMS + composite products immediately. Do not
+    // wait for the history manifest, archive, or Release storage.
+    if (currentMRMSMetadata) {
+        setCurrentBoundsFromMetadata(currentMRMSMetadata);
+    }
+    loadOperationalLiveLayers(true);
     updateDynamicMapLegend();
 
     refreshHistoryManifest();
