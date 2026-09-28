@@ -47,10 +47,32 @@ jobs:
             winterradar-rap-profile-
 
       - name: Install Python dependencies
+        env:
+          PIP_DEFAULT_TIMEOUT: "60"
+          PIP_RETRIES: "10"
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install scipy
+          set -euo pipefail
+
+          # GitHub-hosted runners can occasionally time out while pip is resolving
+          # cfgrib's transitive click dependency. Install it explicitly first so
+          # the resolver does not repeatedly rediscover it during backtracking.
+          python -m pip install --disable-pip-version-check \
+            --retries 10 \
+            --timeout 60 \
+            --prefer-binary \
+            "click>=8.1"
+
+          python -m pip install --disable-pip-version-check \
+            --retries 10 \
+            --timeout 60 \
+            --prefer-binary \
+            -r requirements.txt
+
+          python -m pip install --disable-pip-version-check \
+            --retries 10 \
+            --timeout 60 \
+            --prefer-binary \
+            scipy
 
       - name: Archive syntax QC
         run: |
