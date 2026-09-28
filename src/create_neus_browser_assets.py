@@ -14,6 +14,7 @@ from config import NEUS_BOUNDS
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"
 MAX_LAT = 85.0511287798
+WEBP_QUALITY = 90
 
 
 def mercator_y(lat_deg):
@@ -65,8 +66,14 @@ def make_one(source_name, output_name, full_bounds, target_bounds):
     projected = project_array(cropped, target_bounds)
     png = OUT / output_name
     Image.fromarray(projected, "RGBA").save(png, optimize=True)
+    # The regional browser layer is an operational display asset. A high-quality
+    # lossy WebP is substantially smaller than the native/lossless raster while
+    # preserving the categorical radar/phase colors and transparency.
     Image.fromarray(projected, "RGBA").save(
-        png.with_suffix(".webp"), format="WEBP", lossless=True, method=6
+        png.with_suffix(".webp"),
+        format="WEBP",
+        quality=WEBP_QUALITY,
+        method=6,
     )
     print(f"  {png.name}: {projected.shape[1]}x{projected.shape[0]}")
     print(f"    PNG  {png.stat().st_size:,} bytes")
