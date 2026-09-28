@@ -123,8 +123,14 @@ def _phase_from_metar(wx_string: str, raw_ob: str) -> tuple[int | None, str]:
     if "RA" in tokens or "DZ" in tokens:
         return RAIN, "Rain/drizzle"
 
-    # Hail is not a winter-phase surface class for this gate. Unknown/lightly
-    # coded weather is intentionally ignored rather than forcing a phase.
+    # "UP" is unknown precipitation in METAR present weather. For this
+    # observational sanity check it is useful evidence that hydrometeors are
+    # reaching the surface but their phase is unresolved, so treat it as MIXED.
+    if "UP" in tokens:
+        return MIXED, "Unknown precipitation"
+    
+    # Hail is not a winter-phase surface class for this gate. Other
+    # non-precipitation/lightly coded weather is intentionally ignored.
     return None, joined
 
 
@@ -457,7 +463,7 @@ def apply_observation_qc(
             "mping_influence_radius_km": MPING_INFLUENCE_RADIUS_KM,
             "grid_stride": OBS_QC_GRID_STRIDE,
             "rain_report": "nearby observed rain forces local classified phase to rain",
-            "surface_report": "nearest valid ASOS/AWOS or mPING precipitation-type report overrides the modeled phase within its source-specific influence radius",
+            "surface_report": "agreement confirms modeled phase; unresolved model cells can adopt the observation; resolved model/observation conflicts become MIXED; METAR UP is treated as MIXED",
             "no_precip_report": "not used as negative evidence",
         },
     }
@@ -556,6 +562,7 @@ def apply_observation_qc(
         "sleet": 0,
         "freezing_rain": 0,
         "mixed": 0,
+        "unknown_precipitation": 0,
     }
     adjustments = {
         "rain_forced": 0,
@@ -572,30 +579,52 @@ def apply_observation_qc(
     ):
         cells = touched & (obs_full == code)
         report_counts[name] = int(np.count_nonzero(cells))
+        if code == MIXED:
+            report_counts["unknown_precipitation"] = int(
+                report_counts["unknown_precipitation"] +
+                sum(1 for report in reports if report.phase == MIXED and report.description == "Unknown precipitation")
+            )
 
         if not np.any(cells):
             continue
 
-        # Within the local observation influence radius, a valid surface
-        # precipitation-type report is the observational check of the gridded
-        # phase solution.  It therefore overrides a conflicting modeled phase
-        # rather than only promoting rain/unknown/clear cases.
-        changed = cells & (phase != code)
-        phase[changed] = code
-        confidence[changed] = np.maximum(
-            confidence[changed],
-            0.78 if code in (SNOW, SLEET, FZRA, MIXED) else 0.74,
-        )
-        if code == RAIN:
-            intensity[changed] = rain_intensity_dbz(ref[changed])
-            adjustments["rain_forced"] += int(np.count_nonzero(changed))
-        else:
-            intensity[changed] = 0
-            adjustments["winter_promoted"] += int(np.count_nonzero(changed))
+        # Surface observations are a check on phase, not a replacement for
+        # MRMS precipitation. Agreement raises confidence; a real disagreement
+        # is explicitly labeled MIXED rather than allowing a point report to
+        # force one phase over the gridded solution. Unknown precipitation (UP)
+        # is already represented as MIXED.
+        agreeing = cells & (phase == code)
+        conflicting = cells & (phase != code)
 
-        confirmed = cells & (phase == code) & ~changed
-        confidence[confirmed] = np.maximum(confidence[confirmed], 0.82)
-        adjustments["winter_confirmed"] += int(np.count_nonzero(confirmed))
+        confidence[agreeing] = np.maximum(
+            confidence[agreeing],
+            0.82 if code != MIXED else 0.78,
+        )
+        adjustments["winter_confirmed"] += int(np.count_nonzero(agreeing))
+
+        if np.any(conflicting):
+            previous = phase[conflicting]
+            # Unknown/clear modeled cells can legitimately be replaced by a
+            # resolved surface observation. A resolved-vs-resolved disagreement
+            # is the scientifically conservative MIXED flag.
+            unresolved = (previous == UNKNOWN) | (previous == CLEAR)
+            replace = conflicting & unresolved
+            phase[replace] = code
+            confidence[replace] = np.maximum(confidence[replace], 0.74)
+            if code == RAIN:
+                intensity[replace] = rain_intensity_dbz(ref[replace])
+            else:
+                intensity[replace] = 0
+            adjustments["rain_forced"] += int(np.count_nonzero(replace & (code == RAIN)))
+            adjustments["winter_promoted"] += int(np.count_nonzero(replace & (code != RAIN)))
+
+            resolved_conflict = conflicting & ~unresolved
+            phase[resolved_conflict] = MIXED
+            confidence[resolved_conflict] = np.maximum(confidence[resolved_conflict], 0.70)
+            intensity[resolved_conflict] = 0
+            adjustments["conflict_mixed"] = adjustments.get("conflict_mixed", 0) + int(
+                np.count_nonzero(resolved_conflict)
+            )
 
     # Never invent precipitation where MRMS does not show precipitation.
     phase[~precip] = CLEAR
