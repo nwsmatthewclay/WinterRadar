@@ -5050,15 +5050,25 @@ function historyAssetUrl(frame, kind) {
     const radarMatch = radarAsset.match(/radar_qc_conus_(\d{8}-\d{6})\.webp$/i);
     const radarStamp = radarMatch ? radarMatch[1] : null;
 
+    // A manifest can explicitly contain a null phase/precip asset when
+    // the radar scan arrived before its matching composite. In that case,
+    // DO NOT invent a filename from the radar timestamp: doing so creates
+    // repeated 404s and can make the newest history frame look broken.
+    // Only derive legacy filenames when the manifest predates the explicit
+    // asset fields entirely.
+    const hasPhaseAssetField = Object.prototype.hasOwnProperty.call(frame, "phase_asset");
+    const hasPrecipAssetField = Object.prototype.hasOwnProperty.call(frame, "precip_type_asset");
+
     if (kind === "phase") {
-        assetName = frame.phase_asset ||
-            (radarStamp ? "phase_conus_" + radarStamp + ".webp" : null);
-        directUrl = frame.phase_url;
+        assetName = hasPhaseAssetField
+            ? frame.phase_asset
+            : (radarStamp ? "phase_conus_" + radarStamp + ".webp" : null);
+        directUrl = frame.phase_url || null;
     } else if (kind === "precipType") {
-        assetName = frame.precip_type_asset ||
-            (radarStamp ? "preciptype_conus_" + radarStamp + ".webp" : null) ||
-            frame.phase_asset;
-        directUrl = frame.precip_type_url || frame.phase_url;
+        assetName = hasPrecipAssetField
+            ? frame.precip_type_asset
+            : (radarStamp ? "preciptype_conus_" + radarStamp + ".webp" : null);
+        directUrl = frame.precip_type_url || null;
     } else {
         assetName = frame.radar_asset;
         directUrl = frame.radar_url;
