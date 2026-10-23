@@ -25,3 +25,13 @@ The native raster is written as `outputs/winter_radar_composite.png`. The Web Me
 ## Design intent
 
 The interactive map is styled as a dark meteorological workstation. The default layer is the Winter Radar Composite; raw MRMS, Winter Phase Mask, radar phase evidence, and phase agreement remain available as separate analysis layers.
+
+
+## Regional display and interpolation
+
+The browser-facing operational layers use an expanded Northeast domain
+(35.0–50.5°N, 88.0–63.0°W). The continuous MRMS reflectivity display uses
+gentle bilinear upsampling for presentation only; native scientific values
+and categorical winter-phase masks are not smoothed. Radar phase evidence and
+phase agreement have regional browser copies so their controls do not need to
+fetch full national diagnostic images.
