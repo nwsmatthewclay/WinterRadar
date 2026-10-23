@@ -172,6 +172,8 @@ jobs:
           test -s outputs/winter_phase_mask_regional_web.png
           test -s outputs/winter_precip_type_regional_web.png
           test -s outputs/winter_radar_composite_regional_web.png
+          test -s outputs/phase_radar_fusion_overlay_regional_web.png
+          test -s outputs/phase_agreement_overlay_regional_web.png
 
       # Publish the newest live radar scans plus matching phase/precip composites
       # AFTER WebP projection. publish_live_history.py requires the browser WebP
@@ -247,6 +249,10 @@ jobs:
           else
             echo "Regional sharp precipitation-type composite is unavailable; full-CONUS composite remains available."
           fi
+          cp outputs/phase_radar_fusion_overlay_regional_web.png site/outputs/phase_radar_fusion_overlay_regional_web.png
+          cp outputs/phase_radar_fusion_overlay_regional_web.webp site/outputs/phase_radar_fusion_overlay_regional_web.webp
+          cp outputs/phase_agreement_overlay_regional_web.png site/outputs/phase_agreement_overlay_regional_web.png
+          cp outputs/phase_agreement_overlay_regional_web.webp site/outputs/phase_agreement_overlay_regional_web.webp
           cp outputs/mrms_diagnostics.png site/outputs/mrms_diagnostics.png
           cp outputs/mrms_vertical_dualpol.png site/outputs/mrms_vertical_dualpol.png
           cp outputs/phase_radar_fusion.png site/outputs/phase_radar_fusion.png
@@ -287,6 +293,10 @@ jobs:
           test -s site/outputs/mrms_current_regional_web.webp
           test -s site/outputs/winter_phase_mask_regional_web.png
           test -s site/outputs/winter_phase_mask_regional_web.webp
+          test -s site/outputs/phase_radar_fusion_overlay_regional_web.png
+          test -s site/outputs/phase_radar_fusion_overlay_regional_web.webp
+          test -s site/outputs/phase_agreement_overlay_regional_web.png
+          test -s site/outputs/phase_agreement_overlay_regional_web.webp
           # The full-CONUS source rasters are verified earlier against outputs/.
           # Pages intentionally ships only the compact NEUS browser rasters, so do
           # not run the full-CONUS verifier against site/outputs here.
