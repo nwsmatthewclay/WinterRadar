@@ -5258,6 +5258,7 @@ function loadHistoricalOverlay(options) {
     return new Promise(function(resolve, reject) {
         const {
             nativeUrl,
+            fallbackUrl,
             bounds,
             opacity,
             zIndex,
@@ -5274,10 +5275,17 @@ function loadHistoricalOverlay(options) {
             return;
         }
 
+        // Prefer the same-origin hot-buffer file, but if it was not staged
+        // successfully, fall back to the exact persistent Release asset URL
+        // recorded in the manifest before trying the image proxy.
         const urls = [
             nativeUrl,
-            historyImageProxyUrl(nativeUrl)
-        ].filter(Boolean);
+            fallbackUrl,
+            historyImageProxyUrl(nativeUrl),
+            fallbackUrl ? historyImageProxyUrl(fallbackUrl) : null
+        ].filter(function(url, index, all) {
+            return Boolean(url) && all.indexOf(url) === index;
+        });
         let attempt = 0;
         let overlay = null;
         let objectUrl = null;
@@ -5611,6 +5619,7 @@ function renderHistoryFrame(index, fitView) {
 
         loadHistoricalOverlay({
             nativeUrl: historyAssetUrl(frame, "radar"),
+            fallbackUrl: frame.radar_url || null,
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 500,
@@ -5657,6 +5666,7 @@ function renderHistoryFrame(index, fitView) {
             // explicit composite fields.
             loadHistoricalOverlay({
                 nativeUrl: precipUrl,
+            fallbackUrl: frame.precip_type_url || null,
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 540,
@@ -5712,6 +5722,7 @@ function renderHistoryFrame(index, fitView) {
 
         loadHistoricalOverlay({
             nativeUrl: historyAssetUrl(frame, "phase"),
+            fallbackUrl: frame.phase_url || null,
             bounds: bounds,
             opacity: overlayOpacity,
             zIndex: 550,
