@@ -173,15 +173,11 @@ html, body {
     background: #dce6eb;
 }
 
-/* Keep the MRMS raster visually crisp when Leaflet enlarges it.
-   This does not add information; it prevents browser interpolation from
-   softening the native radar pixels. */
+/* Allow gentle browser interpolation for continuous reflectivity imagery.
+   Categorical phase assets remain nearest-neighbour in their source raster. */
 .leaflet-image-layer.winter-radar-raster,
 .leaflet-image-layer.winter-raster-sharp {
-    image-rendering: -moz-crisp-edges !important;
-    image-rendering: -webkit-optimize-contrast !important;
-    image-rendering: crisp-edges !important;
-    image-rendering: pixelated !important;
+    image-rendering: auto !important;
 }
 
 .leaflet-image-layer.winter-smooth-radar {
@@ -2958,8 +2954,8 @@ const MRMS_NATIONAL_BOUNDS = [
     [54.995, -60.005002]
 ];
 const MRMS_REGIONAL_BOUNDS = [
-    [37.0, -84.5],
-    [48.5, -66.0]
+    [35.0, -88.0],
+    [50.5, -63.0]
 ];
 let radarDisplayMode = null;
 let phaseDisplayMode = null;
@@ -3739,8 +3735,11 @@ function loadRadarFusionLayer() {
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
 
     loadRasterWithFallback(
-        ["./outputs/phase_radar_fusion_overlay_web.png?v=" + stamp],
-        MRMS_NATIONAL_BOUNDS,
+        [
+            "./outputs/phase_radar_fusion_overlay_regional_web.webp?v=" + stamp,
+            "./outputs/phase_radar_fusion_overlay_regional_web.png?v=" + stamp
+        ],
+        MRMS_REGIONAL_BOUNDS,
         overlayOpacity,
         575,
         "winter-raster-sharp",
@@ -3780,8 +3779,11 @@ function loadPhaseAgreementLayer() {
     const stamp = encodeURIComponent(window.currentMRMSTimeUtc || Date.now());
 
     loadRasterWithFallback(
-        ["./outputs/phase_agreement_overlay_web.png?v=" + stamp],
-        MRMS_NATIONAL_BOUNDS,
+        [
+            "./outputs/phase_agreement_overlay_regional_web.webp?v=" + stamp,
+            "./outputs/phase_agreement_overlay_regional_web.png?v=" + stamp
+        ],
+        MRMS_REGIONAL_BOUNDS,
         overlayOpacity,
         585,
         "winter-raster-sharp",
