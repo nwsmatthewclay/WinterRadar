@@ -204,6 +204,9 @@ jobs:
       # on the 5-minute live path; the 10-minute archive workflow owns history.
       - name: Stage hot MRMS history for Pages
         continue-on-error: true
+        # Optional history enrichment must never hold up live radar deployment.
+        # If Release downloads are slow, skip this stage and publish current MRMS.
+        timeout-minutes: 3
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
