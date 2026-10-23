@@ -473,11 +473,32 @@ def load_lat_lon_bounds(metadata: dict, shape: tuple[int, int]) -> tuple[float, 
     return 20.005001, -129.995, 54.995, -60.005002
 
 
-def resize_nearest_rgba(arr: np.ndarray, out_size: tuple[int, int]) -> np.ndarray:
-    image = Image.fromarray(arr, mode="RGBA")
-    image = image.resize(out_size, Image.Resampling.NEAREST)
-    return np.asarray(image, dtype=np.uint8)
+def resize_categorical_overlay(arr: np.ndarray, out_size: tuple[int, int]) -> np.ndarray:
+    """Upscale sparse categorical overlays with antialiased edges.
 
+    The evidence calculation runs on a reduced grid for efficiency. Nearest-
+    neighbour enlargement turns each evidence cell into a conspicuous square.
+    Instead, interpolate each class's alpha mask independently while keeping
+    its RGB class color fixed. This softens only the display boundary: it does
+    not change the underlying category arrays or create blended class colors.
+    """
+    source = np.asarray(arr, dtype=np.uint8)
+    out_w, out_h = out_size
+    result = np.zeros((out_h, out_w, 4), dtype=np.uint8)
+    colors = np.unique(source[source[:, :, 3] > 0, :3].reshape(-1, 3), axis=0)
+
+    for color in colors:
+        selected = np.all(source[:, :, :3] == color, axis=2) & (source[:, :, 3] > 0)
+        alpha = np.where(selected, source[:, :, 3], 0).astype(np.uint8)
+        alpha_image = Image.fromarray(alpha, mode="L").resize(
+            out_size, Image.Resampling.BILINEAR
+        )
+        resized_alpha = np.asarray(alpha_image, dtype=np.uint8)
+        visible = resized_alpha > 0
+        result[visible, :3] = color
+        result[visible, 3] = resized_alpha[visible]
+
+    return result
 
 def make_map_overlay(evidence: dict[str, np.ndarray]) -> np.ndarray:
     """Create a sparse RGBA evidence overlay on the reduced grid."""
@@ -740,12 +761,12 @@ def main() -> None:
     write_summary(evidence, dominant, top, second, level_summaries, metadata, agreement_stats)
 
     reduced_rgba = make_map_overlay(evidence)
-    full_rgba = resize_nearest_rgba(reduced_rgba, (reflectivity.shape[1], reflectivity.shape[0]))
+    full_rgba = resize_categorical_overlay(reduced_rgba, (reflectivity.shape[1], reflectivity.shape[0]))
     native_fusion_path = OUTPUT_DIR / "phase_radar_fusion_overlay.png"
     Image.fromarray(full_rgba, mode="RGBA").save(native_fusion_path, optimize=True)
 
     agreement_reduced = make_agreement_overlay(evaluation)
-    agreement_full = resize_nearest_rgba(agreement_reduced, (reflectivity.shape[1], reflectivity.shape[0]))
+    agreement_full = resize_categorical_overlay(agreement_reduced, (reflectivity.shape[1], reflectivity.shape[0]))
     native_agreement_path = OUTPUT_DIR / "phase_agreement_overlay.png"
     Image.fromarray(agreement_full, mode="RGBA").save(native_agreement_path, optimize=True)
 
