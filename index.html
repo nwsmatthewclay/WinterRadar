@@ -173,11 +173,16 @@ html, body {
     background: #dce6eb;
 }
 
-/* Allow gentle browser interpolation for continuous reflectivity imagery.
-   Categorical phase assets remain nearest-neighbour in their source raster. */
-.leaflet-image-layer.winter-radar-raster,
-.leaflet-image-layer.winter-raster-sharp {
+/* Smooth only the continuous reflectivity display. Keep phase/category layers
+   crisp so interpolation does not blend snow, sleet, rain, and ice colors. */
+.leaflet-image-layer.winter-radar-raster {
     image-rendering: auto !important;
+}
+.leaflet-image-layer.winter-raster-sharp {
+    image-rendering: -moz-crisp-edges !important;
+    image-rendering: -webkit-optimize-contrast !important;
+    image-rendering: crisp-edges !important;
+    image-rendering: pixelated !important;
 }
 
 .leaflet-image-layer.winter-smooth-radar {
