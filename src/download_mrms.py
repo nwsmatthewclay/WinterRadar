@@ -167,14 +167,6 @@ def download_product(product: str, *, required: bool) -> Path | None:
         _decompress_atomic(gz_path, grib_path)
         print(f"  OK -> {grib_path} ({grib_path.stat().st_size:,} bytes)")
 
-        # Compatibility alias for older diagnostic/fusion scripts that still
-        # request the former reflectivity filename. The bytes are the same
-        # authoritative QC composite used by the live radar.
-        if product in {"MergedReflectivityComposite", "MergedReflectivityQCComposite"}:
-            legacy = DATA_DIR / "MRMS_ReflectivityAtLowestAltitude.latest.grib2"
-            shutil.copyfile(grib_path, legacy)
-            print(f"  Compatibility alias -> {legacy}")
-
         return grib_path
     except Exception as exc:
         if required:
@@ -259,5 +251,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Also download best-effort non-critical diagnostic 2-D products.",
     )
+    parser.add_argument(
+        "--rala-only",
+        action="store_true",
+        help="Download the actual ReflectivityAtLowestAltitude product only.",
+    )
     args = parser.parse_args()
-    main(include_diagnostics=args.diagnostics)
+    if args.rala_only:
+        download_product("ReflectivityAtLowestAltitude", required=True)
+    else:
+        main(include_diagnostics=args.diagnostics)
