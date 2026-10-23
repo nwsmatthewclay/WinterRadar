@@ -15,9 +15,9 @@ permissions:
 
 concurrency:
   group: mrms-radar
-  # The live product is disposable work: favor the newest scheduled scan
-  # rather than allowing a slow cycle to delay fresh MRMS data.
-  cancel-in-progress: true
+  # Let an active build finish; GitHub retains only the newest pending run for
+  # this group, avoiding a half-built Pages deployment when a cycle runs long.
+  cancel-in-progress: false
 
 jobs:
   build:
