@@ -32,6 +32,9 @@ The interactive map is styled as a dark meteorological workstation. The default 
 The browser-facing operational layers use an expanded Northeast domain
 (35.0–50.5°N, 88.0–63.0°W). The continuous MRMS reflectivity display uses
 gentle bilinear upsampling for presentation only; native scientific values
-and categorical winter-phase masks are not smoothed. Radar phase evidence and
-phase agreement have regional browser copies so their controls do not need to
-fetch full national diagnostic images.
+and categorical winter-phase masks are not smoothed. Sparse radar phase evidence
+and phase-agreement overlays use per-class alpha interpolation when expanded
+from the reduced diagnostic grid. This anti-aliases square edges while retaining
+fixed class colors and leaving the scientific category arrays unchanged. Radar
+phase evidence and phase agreement have regional browser copies so their controls
+do not need to fetch full national diagnostic images.
