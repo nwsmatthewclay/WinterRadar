@@ -86,6 +86,17 @@ jobs:
           mkdir -p ../outputs
           python -u main.py 2>&1 | tee ../outputs/diagnostic_main.log
 
+      - name: Download actual RALA reflectivity input
+        working-directory: src
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          python -u download_mrms.py --rala-only 2>&1 | tee ../outputs/rala_download.log
+          test -s ../data/MRMS_ReflectivityAtLowestAltitude.latest.grib2
+
       - name: Download vertical dual-pol inputs
         working-directory: src
         env:
