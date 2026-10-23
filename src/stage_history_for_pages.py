@@ -31,10 +31,11 @@ API = "https://api.github.com"
 API_VERSION = "2026-03-10"
 UA = "WinterRadar/1.5 (Pages history staging)"
 
-# History WebPs in the persistent Release store use the full-CONUS Web Mercator
-# geometry. Pages only needs the Northeast browser domain, so every staged
-# history frame is cropped to the same regional bounds used by the live viewer.
-PAGES_HISTORY_BOUNDS = (37.0, -84.5, 48.5, -66.0)
+# History WebPs in the persistent Release store use full-CONUS Web Mercator
+# geometry. Crop staged frames to the same expanded Northeast domain used by
+# the live browser rasters and Leaflet overlays. Keep this synchronized with
+# src/config.py:NEUS_BOUNDS and index.html:MRMS_REGIONAL_BOUNDS.
+PAGES_HISTORY_BOUNDS = (35.0, -88.0, 50.5, -63.0)
 DEFAULT_FULL_BOUNDS = (20.005001, -129.995, 54.995, -60.00500199999999)
 WEBP_QUALITY = 90
 
