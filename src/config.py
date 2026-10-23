@@ -60,7 +60,7 @@ OPTIONAL_DIAGNOSTIC_PRODUCTS = {
 # Northeast U.S. operational presentation domain. The full-CONUS MRMS grids
 # remain the scientific source of record; this smaller domain is used for the
 # browser-facing live radar/phase/composite layers and observational QC.
-NEUS_BOUNDS = (37.0, -84.5, 48.5, -66.0)  # south, west, north, east
+NEUS_BOUNDS = (35.0, -88.0, 50.5, -63.0)  # south, west, north, east; expanded NEUS display domain
 
 # Surface precipitation observation QC.
 # METARs are queried from AWC and mPING reports from the OU/NSSL API. Both are
