@@ -557,11 +557,16 @@ def main() -> None:
             if radar_name in unavailable:
                 dropped_radar_frames += 1
                 continue
-            # A history frame is only useful to the composite viewer when
-            # radar + phase + precipitation-type are all present. Drop the
-            # entire frame on staging failure rather than publishing a blank
-            # timestep with a null phase/ptype product.
-            continue
+
+            # Keep the timestamp and radar frame if its required raster staged
+            # successfully. Optional composite rasters may fail to stage
+            # transiently; clear only those local-asset references so the
+            # browser can try the original Release URL recorded in the frame.
+            cleaned = dict(frame)
+            for key in ("phase_asset", "precip_type_asset"):
+                if cleaned.get(key) in unavailable:
+                    cleaned[key] = None
+            sanitized_frames.append(cleaned)
 
         manifest["frames"] = sanitized_frames
         manifest["frame_count"] = len(sanitized_frames)
