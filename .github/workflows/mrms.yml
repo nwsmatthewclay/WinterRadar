@@ -263,6 +263,7 @@ jobs:
           cp outputs/phase_agreement_overlay.png site/outputs/phase_agreement_overlay.png
           cp outputs/phase_agreement_overlay_web.png site/outputs/phase_agreement_overlay_web.png
           cp outputs/phase_agreement.json site/outputs/phase_agreement.json
+          cp outputs/phase_agreement_click.json site/outputs/phase_agreement_click.json
           cp outputs/winter_mask_diagnostics.png site/outputs/winter_mask_diagnostics.png
           cp outputs/phase_probability.png site/outputs/phase_probability.png
           cp outputs/phase_diagnostics.png site/outputs/phase_diagnostics.png
@@ -297,6 +298,7 @@ jobs:
           test -s site/outputs/phase_radar_fusion_overlay_regional_web.webp
           test -s site/outputs/phase_agreement_overlay_regional_web.png
           test -s site/outputs/phase_agreement_overlay_regional_web.webp
+          test -s site/outputs/phase_agreement_click.json
           # The full-CONUS source rasters are verified earlier against outputs/.
           # Pages intentionally ships only the compact NEUS browser rasters, so do
           # not run the full-CONUS verifier against site/outputs here.
