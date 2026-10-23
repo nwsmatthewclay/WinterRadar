@@ -26,7 +26,7 @@ def inverse_mercator_lat(y):
     return np.rad2deg(2.0 * np.arctan(np.exp(y)) - np.pi / 2.0)
 
 
-def project_array(src, bounds):
+def project_array(src, bounds, smooth=False):
     south, west, north, east = bounds
     h, w = src.shape[:2]
     y_s = float(mercator_y(south))
@@ -37,7 +37,19 @@ def project_array(src, bounds):
     lat_centers = inverse_mercator_lat(y_centers)
     rows = (north - lat_centers) / (north - south) * (h - 1)
     rows = np.rint(np.clip(rows, 0, h - 1)).astype(np.int32)
-    return src[rows]
+    projected = src[rows]
+
+    if smooth:
+        # Presentation-only smoothing for continuous reflectivity. This does
+        # not add meteorological detail; it softens hard nearest-neighbour
+        # blocks when the browser enlarges the raster.
+        image = Image.fromarray(projected, "RGBA")
+        target = (
+            max(w, int(round(w * 1.5))),
+            max(output_h, int(round(output_h * 1.5))),
+        )
+        projected = np.asarray(image.resize(target, Image.Resampling.BILINEAR))
+    return projected
 
 
 def crop_source(src, full_bounds, target_bounds):
@@ -58,12 +70,12 @@ def crop_source(src, full_bounds, target_bounds):
     return src[y0:y1, x0:x1, :]
 
 
-def make_one(source_name, output_name, full_bounds, target_bounds):
+def make_one(source_name, output_name, full_bounds, target_bounds, smooth=False):
     source = OUT / source_name
     with Image.open(source) as im:
         src = np.asarray(im.convert("RGBA"))
     cropped = crop_source(src, full_bounds, target_bounds)
-    projected = project_array(cropped, target_bounds)
+    projected = project_array(cropped, target_bounds, smooth=smooth)
     png = OUT / output_name
     Image.fromarray(projected, "RGBA").save(png, optimize=True)
     # The regional browser layer is an operational display asset. A high-quality
@@ -87,14 +99,20 @@ def main():
     target_bounds = tuple(float(v) for v in NEUS_BOUNDS)
 
     specs = (
-        ("mrms_current.png", "mrms_current_regional_web.png"),
-        ("winter_phase_mask.png", "winter_phase_mask_regional_web.png"),
-        ("winter_precip_type.png", "winter_precip_type_regional_web.png"),
-        ("winter_radar_composite.png", "winter_radar_composite_regional_web.png"),
+        # Smooth only continuous reflectivity. Categorical phase rasters must
+        # keep nearest-neighbour sampling so colors do not imply new classes.
+        ("mrms_current.png", "mrms_current_regional_web.png", True),
+        ("winter_phase_mask.png", "winter_phase_mask_regional_web.png", False),
+        ("winter_precip_type.png", "winter_precip_type_regional_web.png", False),
+        ("winter_radar_composite.png", "winter_radar_composite_regional_web.png", False),
+        # Regional copies prevent browsers from needing to decode national-size
+        # phase overlays when a user clicks a diagnostic layer.
+        ("phase_radar_fusion_overlay.png", "phase_radar_fusion_overlay_regional_web.png", False),
+        ("phase_agreement_overlay.png", "phase_agreement_overlay_regional_web.png", False),
     )
 
-    for source_name, output_name in specs:
-        make_one(source_name, output_name, full_bounds, target_bounds)
+    for source_name, output_name, smooth in specs:
+        make_one(source_name, output_name, full_bounds, target_bounds, smooth=smooth)
 
     regional = {
         "bounds": list(target_bounds),
